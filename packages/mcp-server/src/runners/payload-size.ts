@@ -1,4 +1,16 @@
-import { JSONSchemaFaker } from "json-schema-faker";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+
+function loadJsonSchemaFaker():
+  | typeof import("json-schema-faker")
+  | null {
+  try {
+    return require("json-schema-faker") as typeof import("json-schema-faker");
+  } catch {
+    return null;
+  }
+}
 
 export type RunnerResult = {
   ok: boolean;
@@ -18,16 +30,24 @@ export function runPayloadSize(
   options: PayloadSizeOptions = {},
 ): RunnerResult {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
+  const faker = loadJsonSchemaFaker();
+  if (!faker) {
+    return {
+      ok: false,
+      error:
+        "payload-size runner unavailable: install json-schema-faker (dev dependency)",
+    };
+  }
 
   try {
     if (options.seed !== undefined) {
       // json-schema-faker supports randomSeed at runtime; typings are incomplete.
-      (JSONSchemaFaker.option as (opts: { randomSeed: number }) => void)({
+      (faker.JSONSchemaFaker.option as (opts: { randomSeed: number }) => void)({
         randomSeed: options.seed,
       });
     }
 
-    const payload = JSONSchemaFaker.generate(schema);
+    const payload = faker.JSONSchemaFaker.generate(schema);
     const json = JSON.stringify(payload);
     const byteLength = Buffer.byteLength(json, "utf8");
 

@@ -9,8 +9,11 @@ import { resolvePackageBin } from "./resolve-package-bin.js";
 
 const execFileAsync = promisify(execFile);
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const defaultSpectralBin = resolvePackageBin("@stoplight/spectral-cli", "spectral");
 const defaultRulesetPath = join(moduleDir, "spectral-ruleset.yaml");
+
+function resolveDefaultSpectralBin(): string {
+  return resolvePackageBin("@stoplight/spectral-cli", "spectral");
+}
 
 export type RunnerResult = {
   ok: boolean;
@@ -27,7 +30,19 @@ export async function runSpectral(
   openApiDoc: OpenApiDocument,
   options: SpectralOptions = {},
 ): Promise<RunnerResult> {
-  const spectralBin = options.spectralBin ?? defaultSpectralBin;
+  let spectralBin = options.spectralBin;
+  if (!spectralBin) {
+    try {
+      spectralBin = resolveDefaultSpectralBin();
+    } catch {
+      return {
+        ok: false,
+        error:
+          "spectral runner unavailable: install @stoplight/spectral-cli (dev dependency)",
+      };
+    }
+  }
+
   const workDir = await mkdtemp(join(tmpdir(), "agentpair-spectral-"));
 
   try {

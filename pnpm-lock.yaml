@@ -18,23 +18,14 @@ importers:
   packages/mcp-server:
     dependencies:
       '@agentpair/protocol':
-        specifier: workspace:*
-        version: link:../protocol
+        specifier: ^0.1.1
+        version: 0.1.1
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.1
         version: 1.29.0(zod@3.25.76)
       '@noble/ciphers':
         specifier: ^2.2.0
         version: 2.2.0
-      '@stoplight/spectral-cli':
-        specifier: ^6.15.0
-        version: 6.16.1
-      json-schema-faker:
-        specifier: ^0.5.9
-        version: 0.5.9
-      quicktype:
-        specifier: ^23.3.21
-        version: 23.3.21
       zod:
         specifier: ^3.25.67
         version: 3.25.76
@@ -45,9 +36,18 @@ importers:
       '@hono/node-server':
         specifier: ^1.14.4
         version: 1.19.14(hono@4.12.28)
+      '@stoplight/spectral-cli':
+        specifier: ^6.15.0
+        version: 6.16.1
       '@types/node':
         specifier: ^22.15.0
         version: 22.20.0
+      json-schema-faker:
+        specifier: ^0.5.9
+        version: 0.5.9
+      quicktype:
+        specifier: ^23.3.21
+        version: 23.3.21
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
@@ -96,6 +96,10 @@ importers:
   packages/runner-esp32: {}
 
 packages:
+
+  '@agentpair/protocol@0.1.1':
+    resolution: {integrity: sha512-K0u18/v4SlbsXYQH9TjG+IacDI2Obwio2yE6kzeDvCbofvp/P4ov4ARcqy+UIxR0KIRlTRx/KaAzAo2gSmavcw==}
+    engines: {node: '>=22'}
 
   '@asyncapi/specs@6.11.1':
     resolution: {integrity: sha512-A3WBLqAKGoJ2+6FWFtpjBlCQ1oFCcs4GxF7zsIGvNqp/klGUHjlA3aAcZ9XMMpLGE8zPeYDz2x9FmO6DSuKraQ==}
@@ -2247,6 +2251,12 @@ packages:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
+
+  '@agentpair/protocol@0.1.1':
+    dependencies:
+      '@noble/ciphers': 2.2.0
+      '@noble/curves': 2.2.0
+      '@noble/hashes': 2.2.0
 
   '@asyncapi/specs@6.11.1':
     dependencies:
