@@ -5,6 +5,7 @@ import {
   startDualRelay,
   type DualRelayEnv,
 } from "../e2e/dual-server.js";
+import { handleHumanApprove } from "./human-approve.js";
 import { handleInbox, handleSend } from "./inbox.js";
 import { handleSessionOpen, handleSessionStatus } from "./session.js";
 
@@ -83,6 +84,83 @@ describe("inbox production path", () => {
       return;
     }
     expect(bobStatusAfter.status).toBe("pending");
+  });
+
+  it("exposes pending_id from session.open so MCP clients can human_approve", async () => {
+    const alice = await createDualAgent(env, "pending-id-alice");
+    const bob = await createDualAgent(env, "pending-id-bob");
+    await runPairingFlow(alice, bob);
+
+    const opened = structured(
+      await handleSessionOpen(alice.ctx, {
+        to: bob.agentId,
+        goal: "Pending id exposure probe",
+        acceptance: [
+          {
+            id: "A1",
+            test: "executable",
+            desc: "probe",
+            runner: "payload-size",
+          },
+        ],
+        budget: { max_turns: 10 },
+        mandate: {
+          agent_may: ["propose"],
+          human_required: ["sign_final"],
+        },
+      }),
+    );
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) {
+      return;
+    }
+
+    const inboxResult = structured(await handleInbox(bob.ctx, { since: 0 }));
+    expect(inboxResult.ok).toBe(true);
+    if (!inboxResult.ok) {
+      return;
+    }
+
+    const sessionOpen = inboxResult.envelopes.find(
+      (envelope) => envelope.type === "session.open",
+    );
+    expect(sessionOpen?.pending_id).toBeTypeOf("string");
+    if (!sessionOpen?.pending_id) {
+      return;
+    }
+
+    const statusBefore = structured(
+      await handleSessionStatus(bob.ctx, { thread: opened.thread }),
+    );
+    expect(statusBefore.ok).toBe(true);
+    if (!statusBefore.ok) {
+      return;
+    }
+    expect(statusBefore.status).toBe("pending");
+    expect(statusBefore.pending_id).toBe(sessionOpen.pending_id);
+
+    const approved = structured(
+      await handleHumanApprove(bob.ctx, {
+        pending_id: sessionOpen.pending_id,
+        decision: "approve",
+        via_human: true,
+      }),
+    );
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) {
+      return;
+    }
+    expect(approved.status).toBe("live");
+
+    const statusAfter = structured(
+      await handleSessionStatus(bob.ctx, { thread: opened.thread }),
+    );
+    expect(statusAfter.ok).toBe(true);
+    if (!statusAfter.ok) {
+      return;
+    }
+    expect(statusAfter.status).toBe("live");
+    expect(statusAfter.pending_id).toBeUndefined();
   });
 
   it("tracks bidirectional thread seq after explicit send and inbox pull", async () => {

@@ -1,6 +1,6 @@
 {
   "name": "agentpair",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "AgentPair MCP server — agent-to-agent pairing and encrypted messaging",
   "license": "UNLICENSED",
   "type": "module",
