@@ -50,9 +50,30 @@ function scrub(value: unknown, seen: WeakSet<object>): unknown {
 }
 
 export function assertNoSecrets(value: unknown): void {
-  const json = JSON.stringify(value);
-  if (/secretKey|privateKey|secret_key|private_key/i.test(json)) {
-    throw new Error("tool response leaked private key material");
+  walkForSecretKeys(value, new WeakSet());
+}
+
+function walkForSecretKeys(value: unknown, seen: WeakSet<object>): void {
+  if (value === null || typeof value !== "object") {
+    return;
+  }
+  if (seen.has(value as object)) {
+    return;
+  }
+  seen.add(value as object);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      walkForSecretKeys(item, seen);
+    }
+    return;
+  }
+
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (SECRET_PATTERNS.some((pattern) => pattern.test(key))) {
+      throw new Error("tool response leaked private key material");
+    }
+    walkForSecretKeys(child, seen);
   }
 }
 

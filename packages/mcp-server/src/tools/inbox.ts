@@ -49,7 +49,6 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
         payload = new TextDecoder().decode(plaintext);
 
         if (envelope.type.startsWith("session.") && !seen.has(envelope.id)) {
-          seen.add(envelope.id);
           const processed = await processSessionInboxEnvelope(ctx, {
             from: envelope.from,
             type: envelope.type,
@@ -57,6 +56,9 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
             payload,
           });
           const effect = processed.structuredContent;
+          if (effect.ok === true) {
+            seen.add(envelope.id);
+          }
           if (
             effect.ok === true &&
             typeof effect.pending_id === "string"

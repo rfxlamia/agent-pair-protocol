@@ -39,6 +39,13 @@ export interface TestReport {
   details?: string;
 }
 
+export interface PeerNegotiationMessage {
+  from: "initiator" | "recipient";
+  type: string;
+  body: string;
+  turn: number;
+}
+
 export interface SessionRecord {
   thread: string;
   initiator: string;
@@ -53,6 +60,7 @@ export interface SessionRecord {
   expiresAt: number;
   rejectReason?: string;
   turnCount: number;
+  peerMessages: PeerNegotiationMessage[];
   lockedSections: string[];
   testReports: Record<
     string,
@@ -280,6 +288,7 @@ export function createSessionStateMachine(
       createdAt,
       expiresAt: input.expires_at,
       turnCount: preserveProgress ? existing.turnCount : 0,
+      peerMessages: preserveProgress ? existing.peerMessages : [],
       lockedSections: preserveProgress ? existing.lockedSections : [],
       testReports: preserveProgress ? existing.testReports : {},
       challenges: preserveProgress ? existing.challenges : {},
@@ -335,6 +344,7 @@ export function createSessionStateMachine(
         createdAt,
         expiresAt: createdAt + SESSION_OPEN_TTL_MS,
         turnCount: 0,
+        peerMessages: [],
         lockedSections: [],
         testReports: {},
         challenges: {},
@@ -596,9 +606,34 @@ export function createSessionStateMachine(
             return result(found);
           }
           const turnCount = Number(parsed.turn_count ?? found.session.turnCount);
+          const nextTurnCount = Math.max(found.session.turnCount, turnCount);
+          const msgType =
+            typeof parsed.msg_type === "string" ? parsed.msg_type : undefined;
+          const msgBody = typeof parsed.body === "string" ? parsed.body : undefined;
+          let lockedSections = found.session.lockedSections;
+          let peerMessages = found.session.peerMessages;
+
+          if (msgType && msgBody) {
+            const role = roleFor(found.session, input.from);
+            peerMessages = [
+              ...peerMessages,
+              { from: role, type: msgType, body: msgBody, turn: nextTurnCount },
+            ];
+            if (msgType === "accept") {
+              const acceptBody = parseJsonBody<{ section_id?: string }>(msgBody);
+              if (!("error" in acceptBody) && acceptBody.section_id) {
+                lockedSections = [
+                  ...new Set([...lockedSections, acceptBody.section_id]),
+                ];
+              }
+            }
+          }
+
           upsert({
             ...found.session,
-            turnCount: Math.max(found.session.turnCount, turnCount),
+            turnCount: nextTurnCount,
+            peerMessages,
+            lockedSections,
           });
           return result({ ok: true, thread: input.thread, type: "turn" });
         }
@@ -714,6 +749,8 @@ export function createSessionStateMachine(
         await notifyPeer(updated, "session.peer_turn", {
           thread: updated.thread,
           turn_count: updated.turnCount,
+          msg_type: input.type,
+          body: input.body,
         });
         return result({
           ok: true,
@@ -727,6 +764,8 @@ export function createSessionStateMachine(
       await notifyPeer(updated, "session.peer_turn", {
         thread: updated.thread,
         turn_count: updated.turnCount,
+        msg_type: input.type,
+        body: input.body,
       });
       return result({ ok: true, thread: input.thread, type: input.type });
     },
@@ -878,6 +917,7 @@ export function createSessionStateMachine(
         goal: current.goal,
         locked_sections: current.lockedSections,
         turn_count: current.turnCount,
+        peer_messages: current.peerMessages,
         reject_reason: current.rejectReason,
         artifact_hash: current.artifactHash,
         co_signed_hash: current.coSignedHash,
