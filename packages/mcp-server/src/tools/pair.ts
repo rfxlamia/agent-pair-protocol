@@ -1,4 +1,5 @@
 import {
+  createEnvelope,
   InMemoryPairingRegistry,
   pairInit,
   pairInitComplete,
@@ -9,6 +10,7 @@ import {
   type PairFlowResult,
   type PairingRegistry,
 } from "@agentpair/protocol";
+import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { HttpRelayClient } from "../relay/client.js";
 import type { KeyStore } from "../store/keys.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
@@ -115,13 +117,18 @@ export async function handlePairInitComplete(
   input: { code: string },
 ): Promise<PairFlowResult> {
   const keyPair = await ctx.keyStore.loadOrCreate();
-  return pairInitComplete({
+  const flow = await pairInitComplete({
     code: input.code,
     keyPair,
     relay: ctx.relay,
     registry: ctx.registry,
     localAllowlist: ctx.allowlist,
   });
+  if (flow.status === "bonded") {
+    const agentId = publicKeyToAgentId(keyPair.publicKey);
+    ctx.bonds.add(agentId, flow.bond);
+  }
+  return flow;
 }
 
 export async function handlePairJoin(
@@ -186,6 +193,7 @@ export async function handleRevoke(
   const previous = ctx.allowlist.get(agentId);
   const next = previous.filter((peer) => peer !== input.peer);
   ctx.allowlist.set(agentId, next);
+  ctx.bonds.remove(agentId, input.peer);
 
   const push = await ctx.relay.putAllowlist(agentId, next, keyPair.secretKey);
   if (!push.ok) {
@@ -194,6 +202,17 @@ export async function handleRevoke(
     assertNoSecrets(result);
     return toolTextResult(result);
   }
+
+  const notice = createEnvelope({
+    sender: keyPair,
+    recipientAgentId: input.peer,
+    type: "revoke.notice",
+    thread: `revoke:${agentId}`,
+    seq: 1,
+    ttl: 3600,
+    payload: utf8ToBytes(JSON.stringify({ from: agentId })),
+  });
+  await ctx.relay.sendEnvelope(input.peer, notice);
 
   const result = { ok: true, revoked: input.peer, allowed: next };
   assertNoSecrets(result);

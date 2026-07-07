@@ -545,6 +545,18 @@ export function createSessionStateMachine(
           }
           return result({ ok: true, thread: input.thread, status: updated.status });
         }
+        case "session.peer_turn": {
+          const found = getOrError(input.thread);
+          if (!found.ok) {
+            return result(found);
+          }
+          const turnCount = Number(parsed.turn_count ?? found.session.turnCount);
+          upsert({
+            ...found.session,
+            turnCount: Math.max(found.session.turnCount, turnCount),
+          });
+          return result({ ok: true, thread: input.thread, type: "turn" });
+        }
         case "session.peer_ratified": {
           const found = getOrError(input.thread);
           if (!found.ok) {
@@ -627,16 +639,36 @@ export function createSessionStateMachine(
         return result({ ok: false, error: "invalid_msg_type" });
       }
 
+      if (session.turnCount >= session.budget.max_turns) {
+        const peer = peerFor(session, deps.agentId);
+        const existing = deps.pending
+          .list()
+          .find(
+            (item) => item.kind === "budget_extend" && item.thread === session.thread,
+          );
+        if (!existing) {
+          deps.pending.addBudgetExtend({
+            thread: session.thread,
+            peer,
+          });
+        }
+        return result({ ok: false, error: "budget_exhausted" });
+      }
+
       if (input.type === "accept") {
         const body = parseJsonBody<{ section_id?: string }>(input.body);
         if ("error" in body || !body.section_id) {
           return result({ ok: false, error: "invalid_accept_body" });
         }
         const lockedSections = [...new Set([...session.lockedSections, body.section_id])];
-        upsert({
+        const updated = upsert({
           ...session,
           lockedSections,
           turnCount: session.turnCount + 1,
+        });
+        await notifyPeer(updated, "session.peer_turn", {
+          thread: updated.thread,
+          turn_count: updated.turnCount,
         });
         return result({
           ok: true,
@@ -646,7 +678,11 @@ export function createSessionStateMachine(
         });
       }
 
-      upsert({ ...session, turnCount: session.turnCount + 1 });
+      const updated = upsert({ ...session, turnCount: session.turnCount + 1 });
+      await notifyPeer(updated, "session.peer_turn", {
+        thread: updated.thread,
+        turn_count: updated.turnCount,
+      });
       return result({ ok: true, thread: input.thread, type: input.type });
     },
 

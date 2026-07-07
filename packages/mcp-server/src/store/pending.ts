@@ -1,6 +1,6 @@
 import type { BondMode, PairProposal } from "@agentpair/protocol";
 
-export type PendingKind = "pair_join" | "session_open" | "ratify";
+export type PendingKind = "pair_join" | "session_open" | "ratify" | "budget_extend";
 
 export interface PairJoinPending {
   id: string;
@@ -32,7 +32,19 @@ export interface RatifyPending {
   createdAt: number;
 }
 
-export type PendingItem = PairJoinPending | SessionOpenPending | RatifyPending;
+export interface BudgetExtendPending {
+  id: string;
+  kind: "budget_extend";
+  thread: string;
+  peer: string;
+  createdAt: number;
+}
+
+export type PendingItem =
+  | PairJoinPending
+  | SessionOpenPending
+  | RatifyPending
+  | BudgetExtendPending;
 
 export interface AcceptanceCriterion {
   id: string;
@@ -60,6 +72,9 @@ export interface PendingQueue {
   addRatify(
     item: Omit<RatifyPending, "id" | "createdAt" | "kind">,
   ): RatifyPending;
+  addBudgetExtend(
+    item: Omit<BudgetExtendPending, "id" | "createdAt" | "kind">,
+  ): BudgetExtendPending;
   get(id: string): PendingItem | undefined;
   list(): PendingItem[];
   remove(id: string): void;
@@ -104,6 +119,17 @@ export function createPendingQueue(): PendingQueue {
         thread: input.thread,
         peer: input.peer,
         artifactHash: input.artifactHash,
+      };
+      items.set(item.id, item);
+      return item;
+    },
+    addBudgetExtend(input) {
+      const item: BudgetExtendPending = {
+        id: crypto.randomUUID(),
+        kind: "budget_extend",
+        createdAt: Date.now(),
+        thread: input.thread,
+        peer: input.peer,
       };
       items.set(item.id, item);
       return item;

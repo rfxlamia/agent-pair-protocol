@@ -491,6 +491,110 @@ describe("session state machine", () => {
     expect(aliceFinal.co_signed_hash).toBe(artifactHash);
   });
 
+  it("session_sign rejects when codegen-compile test_report is red", async () => {
+    const thread = await openAndApprove();
+    const artifactHash = "sha256:codegen-red-hash";
+
+    await aliceMachine.handleMsg({
+      thread,
+      type: "challenge",
+      body: JSON.stringify({ report: "pass" }),
+    });
+    await bobMachine.handleMsg({
+      thread,
+      type: "challenge",
+      body: JSON.stringify({ report: "pass" }),
+    });
+    await aliceMachine.handleMsg({
+      thread,
+      type: "test_report",
+      body: JSON.stringify({
+        artifact_hash: artifactHash,
+        passed: true,
+        runner: "codegen-compile",
+      }),
+    });
+    await bobMachine.handleMsg({
+      thread,
+      type: "test_report",
+      body: JSON.stringify({
+        artifact_hash: artifactHash,
+        passed: false,
+        runner: "codegen-compile",
+        details: "xtensa-esp-elf-gcc syntax error",
+      }),
+    });
+
+    const signAttempt = structured(
+      await aliceMachine.handleSign({ thread, artifact_hash: artifactHash }),
+    );
+    expect(signAttempt.ok).toBe(false);
+    if (signAttempt.ok) {
+      return;
+    }
+    expect(signAttempt.error).toBe("tests_not_green");
+  });
+
+  it("budget exhaustion escalates and blocks further propose", async () => {
+    const opened = structured(
+      await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+        budget: { max_turns: 2 },
+      }),
+    );
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) {
+      return;
+    }
+
+    const bobPendingItems = bobPending
+      .list()
+      .filter((item) => item.kind === "session_open");
+    await bobMachine.handleApproveOpen({
+      pending_id: bobPendingItems[0]!.id,
+      via_human: true,
+    });
+
+    const budgetThread = opened.thread as string;
+
+    const first = structured(
+      await aliceMachine.handleMsg({
+        thread: budgetThread,
+        type: "propose",
+        body: JSON.stringify({ diff: "section-a" }),
+      }),
+    );
+    expect(first.ok).toBe(true);
+
+    const second = structured(
+      await bobMachine.handleMsg({
+        thread: budgetThread,
+        type: "counter",
+        body: JSON.stringify({ diff: "section-a-v2" }),
+      }),
+    );
+    expect(second.ok).toBe(true);
+
+    const exhausted = structured(
+      await aliceMachine.handleMsg({
+        thread: budgetThread,
+        type: "propose",
+        body: JSON.stringify({ diff: "section-b" }),
+      }),
+    );
+    expect(exhausted.ok).toBe(false);
+    if (exhausted.ok) {
+      return;
+    }
+    expect(exhausted.error).toBe("budget_exhausted");
+
+    const budgetExtendPending = alicePending
+      .list()
+      .find((item) => item.kind === "budget_extend");
+    expect(budgetExtendPending).toBeDefined();
+  });
+
   it("finalize removes ephemeral bond from allowlist", async () => {
     const thread = await openAndApprove();
     const artifactHash = "sha256:cleanup-hash";

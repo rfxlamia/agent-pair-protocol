@@ -61,7 +61,17 @@ function detectGaps(
   return gaps;
 }
 
+function garbageCollectExpiredChallenges(db: RelayDatabase): void {
+  db.prepare("DELETE FROM challenges WHERE expires_at < ? OR used = 1").run(
+    Date.now(),
+  );
+}
+
 function issueChallenge(db: RelayDatabase, agentId: string) {
+  garbageCollectExpiredChallenges(db);
+  db.prepare("DELETE FROM challenges WHERE agent_id = ? AND used = 0").run(
+    agentId,
+  );
   const nonce = Buffer.from(randomBytes(32)).toString("base64url");
   const expiresAt = Date.now() + CHALLENGE_TTL_MS;
 
@@ -78,7 +88,7 @@ function verifyChallenge(
   agentId: string,
   nonce: string,
   sig: string,
-): { ok: true } | { ok: false; status: 403 | 404 } {
+): { ok: true } | { ok: false; status: 403 } {
   const row = db
     .prepare(
       "SELECT expires_at, used FROM challenges WHERE nonce = ? AND agent_id = ?",
@@ -86,7 +96,7 @@ function verifyChallenge(
     .get(nonce, agentId) as { expires_at: number; used: number } | undefined;
 
   if (!row) {
-    return { ok: false, status: 404 };
+    return { ok: false, status: 403 };
   }
 
   if (row.used) {
@@ -176,7 +186,7 @@ export function createInboxRoutes(
 
     const rows = db
       .prepare(
-        `SELECT envelope_json, thread_id, seq
+        `SELECT envelope_json, thread_id, seq, received_at
          FROM inbox
          WHERE recipient_agent_id = ? AND received_at > ?
          ORDER BY received_at ASC`,
@@ -185,9 +195,24 @@ export function createInboxRoutes(
       envelope_json: string;
       thread_id: string;
       seq: number;
+      received_at: number;
     }>;
 
-    const gaps = detectGaps(rows);
+    const threadIds = [...new Set(rows.map((row) => row.thread_id))];
+    const gapRows: Array<{ thread_id: string; seq: number }> = [];
+    for (const threadId of threadIds) {
+      const threadSeqs = db
+        .prepare(
+          `SELECT thread_id, seq
+           FROM inbox
+           WHERE recipient_agent_id = ? AND thread_id = ?
+           ORDER BY seq ASC`,
+        )
+        .all(agentId, threadId) as Array<{ thread_id: string; seq: number }>;
+      gapRows.push(...threadSeqs);
+    }
+
+    const gaps = detectGaps(gapRows);
     if (gaps.length > 0) {
       const firstGap = gaps[0]!;
       return c.json(
@@ -202,7 +227,11 @@ export function createInboxRoutes(
     }
 
     const envelopes = rows.map((row) => JSON.parse(row.envelope_json));
-    return c.json({ envelopes });
+    const cursor =
+      rows.length > 0
+        ? Math.max(...rows.map((row) => row.received_at))
+        : since;
+    return c.json({ envelopes, cursor });
   });
 
   return routes;

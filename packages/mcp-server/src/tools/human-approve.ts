@@ -107,12 +107,5 @@ export async function completeInitiatorPairing(
   ctx: AgentContext,
   code: string,
 ) {
-  const flow = await handlePairInitComplete(ctx, { code });
-  if (flow.status === "bonded") {
-    const keyPair = await ctx.keyStore.loadOrCreate();
-    const { publicKeyToAgentId } = await import("@agentpair/protocol");
-    const agentId = publicKeyToAgentId(keyPair.publicKey);
-    ctx.bonds.add(agentId, flow.bond);
-  }
-  return flow;
+  return handlePairInitComplete(ctx, { code });
 }
