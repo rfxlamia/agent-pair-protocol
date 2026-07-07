@@ -6,6 +6,7 @@ import { handleInbox, handleSend } from "./tools/inbox.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
 import {
   handlePairInit,
+  handlePairInitCompleteTool,
   handlePairJoin,
   handleRevoke,
 } from "./tools/pair.js";
@@ -70,6 +71,19 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       },
     },
     async (input) => handlePairJoin(context, input),
+  );
+
+  server.registerTool(
+    "pair_init_complete",
+    {
+      title: "Complete initiator pairing",
+      description:
+        "Initiator-side SPAKE2 completion after pair_init. Call in parallel when the joiner runs pair_join / human_approve.",
+      inputSchema: {
+        code: z.string().describe("Pairing code from pair_init"),
+      },
+    },
+    async (input) => handlePairInitCompleteTool(context, input),
   );
 
   server.registerTool(

@@ -183,6 +183,25 @@ export async function executePairJoinApproval(
   });
 }
 
+export async function handlePairInitCompleteTool(
+  ctx: AgentContext,
+  input: { code: string },
+) {
+  const flow = await handlePairInitComplete(ctx, input);
+  if (flow.status === "bonded") {
+    const result = { ok: true, status: flow.status, bond: flow.bond };
+    assertNoSecrets(result);
+    return toolTextResult(result);
+  }
+  const result = {
+    ok: false,
+    status: flow.status,
+    ...(flow.status === "rejected" ? { reason: flow.reason } : {}),
+  };
+  assertNoSecrets(result);
+  return toolTextResult(result);
+}
+
 export async function handleRevoke(
   ctx: AgentContext,
   input: { peer: string },

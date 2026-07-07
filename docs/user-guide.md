@@ -181,6 +181,7 @@ Gunakan pola yang sama: `npx` + `agentpair`, dengan env `AGENTPAIR_RELAY_URL`.
 | Tool | Fungsi |
 |------|--------|
 | `pair_init` | Mulai pairing; kembalikan kode untuk dibagikan ke partner |
+| `pair_init_complete` | Selesaikan SPAKE2 di sisi initiator setelah `pair_init` |
 | `pair_join` | Masukkan kode dari partner; menunggu persetujuan manusia |
 | `inbox` | Tarik pesan terenkripsi dari relay |
 | `send` | Kirim envelope terenkripsi ke peer yang ter-bond |
@@ -213,7 +214,8 @@ Anda (Initiator)                    Partner (Joiner)
       │                                    │  pair_join(code)
       │                                    │  → pending_id
       │                                    │
-      │                                    │  human_approve(pending_id, "approve", via_human=true)
+      │  pair_init_complete(code)          │  human_approve(pending_id, "approve", via_human=true)
+      │  (jalan paralel)                   │
       │                                    │
       │  ◄──────── SPAKE2 + allowlist ────►│
       │                                    │
@@ -227,11 +229,12 @@ Anda (Initiator)                    Partner (Joiner)
 2. Agent memanggil `pair_init` → Anda dapat kode (contoh: `4-kancil-senja`)
 3. Bagikan kode ke partner lewat channel lain (WhatsApp, telepon, tatap muka)
 4. Partner minta agent-nya `pair_join` dengan kode tersebut
-5. Partner **harus menyetujui** di chat, lalu agent memanggil:
+5. **Initiator** segera memanggil `pair_init_complete(code)` — ini harus jalan **paralel** saat joiner approve
+6. Partner **harus menyetujui** di chat, lalu agent memanggil:
    ```
    human_approve(pending_id, "approve", via_human=true)
    ```
-6. Initiator menunggu; kedua sisi akan ter-bond setelah SPAKE2 selesai
+7. Kedua sisi ter-bond setelah SPAKE2 selesai
 
 > **Penting:** Parameter `via_human=true` wajib untuk `human_approve`. Ini memastikan AI tidak bisa menyetujui sendiri tanpa konfirmasi Anda di chat.
 
@@ -304,6 +307,29 @@ Semua tool mengembalikan JSON dengan field `ok: true/false`. Berikut pola sukses
 
 **Yang harus Anda lakukan:** Bagikan `code` ke partner sebelum `expires_at` (TTL 5 menit).
 
+### `pair_init_complete` — Sukses
+
+```json
+{
+  "ok": true,
+  "status": "bonded",
+  "bond": {
+    "peer": "ed25519:...",
+    "scope": ["session.negotiate"],
+    "mode": "ephemeral_until_session_closes"
+  }
+}
+```
+
+**Yang harus Anda lakukan:** Panggil segera setelah partner `pair_join`, dan biarkan tool ini berjalan paralel saat partner `human_approve`.
+
+### `pair_init_complete` — Gagal
+
+| Error / status | Penyebab | Tindakan |
+|----------------|----------|----------|
+| `status: "pake_failed"` | Initiator tidak memanggil tool ini, atau joiner belum approve | Ulangi pairing; pastikan kedua langkah jalan paralel |
+| `status: "rejected"` | Joiner menolak pairing | Minta kode baru dari initiator |
+
 ### `pair_init` — Gagal
 
 | Error | Penyebab | Tindakan |
@@ -351,7 +377,7 @@ Semua tool mengembalikan JSON dengan field `ok: true/false`. Berikut pola sukses
 | `self_approval_forbidden` | `via_human` tidak `true` | Konfirmasi di chat dulu, lalu set `via_human=true` |
 | `pending_not_found` | `pending_id` salah atau sudah diproses | Ulangi `pair_join` jika perlu |
 | `status: "rejected"` | Anda menolak pairing | Tidak ada bond; beri tahu initiator alasan |
-| `status: "pake_failed"` | Kode salah atau MITM | Ulangi pairing dengan kode baru |
+| `status: "pake_failed"` | Initiator belum `pair_init_complete`, kode salah, atau MITM | Initiator panggil `pair_init_complete` paralel; atau ulangi pairing |
 | `status: "allowlist_rollback"` | Push allowlist ke relay gagal | Coba lagi; bond di-rollback otomatis |
 
 ### `inbox` — Sukses

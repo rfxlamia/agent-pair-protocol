@@ -21,6 +21,7 @@ import {
   handlePairInit,
   handlePairJoin,
   handlePairInitComplete,
+  handlePairInitCompleteTool,
 } from "./pair.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { assertNoSecrets } from "./util.js";
@@ -123,6 +124,60 @@ describe("mcp pair tools", () => {
 
       expect(alice.allowlist.get(aliceId)).toContain(bobId);
       expect(bob.allowlist.get(bobId)).toContain(aliceId);
+    },
+    20000,
+  );
+
+  it(
+    "pair_init_complete tool bonds initiator when called in parallel with joiner approval",
+    async () => {
+      const alice = await makeAgent("alice-tool");
+      const bob = await makeAgent("bob-tool");
+
+      const initResult = structured(await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      }));
+      expect(initResult.ok).toBe(true);
+      if (!initResult.ok) {
+        return;
+      }
+
+      const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+      expect(joinQueued.ok).toBe(true);
+      if (!joinQueued.ok) {
+        return;
+      }
+
+      const completeInitPromise = handlePairInitCompleteTool(alice, {
+        code: initResult.code,
+      });
+
+      const approved = structured(
+        await handleHumanApprove(bob, {
+          pending_id: joinQueued.pending_id,
+          decision: "approve",
+          via_human: true,
+        }),
+      );
+      expect(approved.ok).toBe(true);
+      if (!approved.ok) {
+        return;
+      }
+
+      const initComplete = structured(await completeInitPromise);
+      expect(initComplete.ok).toBe(true);
+      expect(initComplete.status).toBe("bonded");
+      assertNoSecrets(initComplete);
+
+      const aliceKeys = await alice.keyStore.loadOrCreate();
+      const bobKeys = await bob.keyStore.loadOrCreate();
+      const { publicKeyToAgentId } = await import("@agentpair/protocol");
+      const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+      const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+      expect(alice.bonds.find(aliceId, bobId)).toBeDefined();
+      expect(bob.bonds.find(bobId, aliceId)).toBeDefined();
     },
     20000,
   );
