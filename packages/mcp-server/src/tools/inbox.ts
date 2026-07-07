@@ -7,7 +7,13 @@ import {
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { AgentContext } from "./pair.js";
-import { expirePendingSessions, peekSessionOpenStatus, processSessionInboxEnvelope, resolveSessionOpenPendingId } from "./session.js";
+import {
+  expirePendingSessions,
+  peekSessionOpenStatus,
+  processSessionInboxEnvelope,
+  resolveRatifyPendingId,
+  resolveSessionOpenPendingId,
+} from "./session.js";
 import {
   detectClientThreadGaps,
   nextThreadSeq,
@@ -69,6 +75,10 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
 
         if (envelope.type === "session.open" && !pendingId) {
           pendingId = await resolveSessionOpenPendingId(ctx, envelope.thread);
+        }
+
+        if (envelope.type === "session.peer_signed" && !pendingId) {
+          pendingId = await resolveRatifyPendingId(ctx, envelope.thread);
         }
 
         if (envelope.type === "session.open") {

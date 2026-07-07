@@ -3,14 +3,129 @@ import {
   createDualAgent,
   runPairingFlow,
   startDualRelay,
+  syncInboxes,
   type DualRelayEnv,
 } from "../e2e/dual-server.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { handleInbox, handleSend } from "./inbox.js";
-import { handleSessionOpen, handleSessionStatus } from "./session.js";
+import {
+  handleSessionMsg,
+  handleSessionOpen,
+  handleSessionSign,
+  handleSessionStatus,
+} from "./session.js";
 
 function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
+}
+
+const SESSION_OPEN_INPUT = {
+  acceptance: [
+    {
+      id: "A1",
+      test: "executable" as const,
+      desc: "probe",
+      runner: "payload-size",
+    },
+  ],
+  budget: { max_turns: 10 },
+  mandate: {
+    agent_may: ["propose"],
+    human_required: ["sign_final"],
+  },
+};
+
+async function runSessionToSigned(
+  alice: Awaited<ReturnType<typeof createDualAgent>>,
+  bob: Awaited<ReturnType<typeof createDualAgent>>,
+  goal: string,
+  artifactHash = "sha256:ratify-pending-probe",
+) {
+  const opened = structured(
+    await handleSessionOpen(alice.ctx, {
+      to: bob.agentId,
+      goal,
+      ...SESSION_OPEN_INPUT,
+    }),
+  );
+  expect(opened.ok).toBe(true);
+  if (!opened.ok) {
+    throw new Error("session_open failed");
+  }
+
+  await syncInboxes([alice.ctx, bob.ctx]);
+
+  const bobStatus = structured(
+    await handleSessionStatus(bob.ctx, { thread: opened.thread }),
+  );
+  expect(bobStatus.pending_id).toBeTypeOf("string");
+  if (!bobStatus.pending_id) {
+    throw new Error("missing session_open pending_id");
+  }
+
+  const approved = structured(
+    await handleHumanApprove(bob.ctx, {
+      pending_id: bobStatus.pending_id,
+      decision: "approve",
+      via_human: true,
+    }),
+  );
+  expect(approved.ok).toBe(true);
+  if (!approved.ok) {
+    throw new Error("session_open approve failed");
+  }
+
+  await syncInboxes([alice.ctx, bob.ctx]);
+
+  for (const agent of [alice, bob]) {
+    await handleSessionMsg(agent.ctx, {
+      thread: opened.thread,
+      type: "challenge",
+      body: JSON.stringify({ report: "pass" }),
+    });
+    await syncInboxes([alice.ctx, bob.ctx]);
+  }
+
+  for (const agent of [alice, bob]) {
+    await handleSessionMsg(agent.ctx, {
+      thread: opened.thread,
+      type: "test_report",
+      body: JSON.stringify({
+        artifact_hash: artifactHash,
+        passed: true,
+        runner: "payload-size",
+      }),
+    });
+    await syncInboxes([alice.ctx, bob.ctx]);
+  }
+
+  const aliceSign = structured(
+    await handleSessionSign(alice.ctx, {
+      thread: opened.thread,
+      artifact_hash: artifactHash,
+    }),
+  );
+  expect(aliceSign.ok).toBe(true);
+  if (!aliceSign.ok) {
+    throw new Error("alice sign failed");
+  }
+
+  await syncInboxes([alice.ctx, bob.ctx]);
+
+  const bobSign = structured(
+    await handleSessionSign(bob.ctx, {
+      thread: opened.thread,
+      artifact_hash: artifactHash,
+    }),
+  );
+  expect(bobSign.ok).toBe(true);
+  if (!bobSign.ok) {
+    throw new Error("bob sign failed");
+  }
+
+  await syncInboxes([alice.ctx, bob.ctx]);
+
+  return { thread: opened.thread, artifactHash };
 }
 
 describe("inbox production path", () => {
@@ -229,6 +344,119 @@ describe("inbox production path", () => {
       (envelope) => envelope.type === "session.open",
     );
     expect(secondOpen?.pending_id).toBe(statusBefore.pending_id);
+  });
+
+  it("exposes pending_id from session_status when signed so MCP clients can ratify", async () => {
+    const alice = await createDualAgent(env, "ratify-pending-alice");
+    const bob = await createDualAgent(env, "ratify-pending-bob");
+    await runPairingFlow(alice, bob);
+
+    const { thread } = await runSessionToSigned(
+      alice,
+      bob,
+      "Ratify pending id exposure probe",
+    );
+
+    const aliceStatus = structured(
+      await handleSessionStatus(alice.ctx, { thread }),
+    );
+    expect(aliceStatus.ok).toBe(true);
+    if (!aliceStatus.ok) {
+      return;
+    }
+    expect(aliceStatus.status).toBe("signed");
+    expect(aliceStatus.pending_id).toBeTypeOf("string");
+    expect(aliceStatus.pending_kind).toBe("ratify");
+    if (!aliceStatus.pending_id) {
+      return;
+    }
+
+    const approved = structured(
+      await handleHumanApprove(alice.ctx, {
+        pending_id: aliceStatus.pending_id,
+        decision: "approve",
+        via_human: true,
+      }),
+    );
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) {
+      return;
+    }
+    expect(approved.status).toBe("awaiting_peer_ratify");
+
+    const statusAfter = structured(
+      await handleSessionStatus(alice.ctx, { thread }),
+    );
+    expect(statusAfter.ok).toBe(true);
+    if (!statusAfter.ok) {
+      return;
+    }
+    expect(statusAfter.pending_id).toBeUndefined();
+    expect(statusAfter.ratify_approved?.initiator).toBe(true);
+  });
+
+  it("recovers ratify pending_id when pending queue entry was lost", async () => {
+    const alice = await createDualAgent(env, "ratify-orphan-alice");
+    const bob = await createDualAgent(env, "ratify-orphan-bob");
+    await runPairingFlow(alice, bob);
+
+    const { thread } = await runSessionToSigned(
+      alice,
+      bob,
+      "Ratify orphan pending recovery probe",
+    );
+
+    const statusBefore = structured(
+      await handleSessionStatus(alice.ctx, { thread }),
+    );
+    expect(statusBefore.pending_id).toBeTypeOf("string");
+    if (!statusBefore.pending_id) {
+      return;
+    }
+
+    alice.ctx.pending.remove(statusBefore.pending_id);
+
+    const statusAfter = structured(
+      await handleSessionStatus(alice.ctx, { thread }),
+    );
+    expect(statusAfter.ok).toBe(true);
+    if (!statusAfter.ok) {
+      return;
+    }
+    expect(statusAfter.status).toBe("signed");
+    expect(statusAfter.pending_id).toBeTypeOf("string");
+    expect(statusAfter.pending_kind).toBe("ratify");
+    expect(statusAfter.pending_id).not.toBe(statusBefore.pending_id);
+  });
+
+  it("exposes pending_id from session.peer_signed inbox envelopes", async () => {
+    const alice = await createDualAgent(env, "ratify-inbox-alice");
+    const bob = await createDualAgent(env, "ratify-inbox-bob");
+    await runPairingFlow(alice, bob);
+
+    const { thread } = await runSessionToSigned(
+      alice,
+      bob,
+      "Ratify inbox pending id probe",
+      "sha256:ratify-inbox-probe",
+    );
+
+    const inboxResult = structured(await handleInbox(alice.ctx, { since: 0 }));
+    expect(inboxResult.ok).toBe(true);
+    if (!inboxResult.ok) {
+      return;
+    }
+
+    const peerSigned = inboxResult.envelopes.find(
+      (envelope) => envelope.type === "session.peer_signed",
+    );
+    expect(peerSigned?.pending_id).toBeTypeOf("string");
+
+    const aliceStatus = structured(
+      await handleSessionStatus(alice.ctx, { thread }),
+    );
+    expect(aliceStatus.pending_id).toBe(peerSigned?.pending_id);
+    expect(aliceStatus.pending_kind).toBe("ratify");
   });
 
   it("includes session_status on session.open envelopes", async () => {
