@@ -24,6 +24,14 @@ export type SessionStatus =
   | "signed"
   | "closed";
 
+/** Recipient sessions past open must not be reset by a redelivered session.open. */
+const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = [
+  "live",
+  "signed",
+  "closed",
+  "open_rejected",
+];
+
 export interface TestReport {
   artifact_hash: string;
   passed: boolean;
@@ -158,6 +166,37 @@ export function createSessionStateMachine(
     return { ok: true as const, session };
   }
 
+  function findSessionOpenPending(thread: string) {
+    return deps.pending
+      .list()
+      .find((item) => item.kind === "session_open" && item.thread === thread);
+  }
+
+  function ensureRecipientOpenPending(session: SessionRecord) {
+    if (session.status !== "pending" || session.role !== "recipient") {
+      return undefined;
+    }
+    if (now() > session.expiresAt) {
+      // Read-path side effect: used by handleStatus and resolveOpenPendingId.
+      upsert({ ...session, status: "open_expired" });
+      return undefined;
+    }
+    const existing = findSessionOpenPending(session.thread);
+    if (existing) {
+      return existing;
+    }
+    // Read-path side effect: re-queues a lost session_open entry for human_approve.
+    return deps.pending.addSessionOpen({
+      thread: session.thread,
+      from: session.initiator,
+      goal: session.goal,
+      acceptance: session.acceptance,
+      budget: session.budget,
+      mandate: session.mandate,
+      expiresAt: session.expiresAt,
+    });
+  }
+
   async function notifyPeer(
     session: SessionRecord,
     type: string,
@@ -214,7 +253,20 @@ export function createSessionStateMachine(
     mandate: SessionMandate;
     expires_at: number;
   }) {
-    const createdAt = now();
+    const existing = store.get(input.thread);
+    if (
+      existing &&
+      NON_REOPENABLE_OPEN_STATUSES.includes(existing.status)
+    ) {
+      return result({
+        ok: true,
+        thread: input.thread,
+        status: existing.status,
+      });
+    }
+
+    const preserveProgress = existing?.status === "pending";
+    const createdAt = existing?.createdAt ?? now();
     const session: SessionRecord = {
       thread: input.thread,
       initiator: input.from,
@@ -227,24 +279,24 @@ export function createSessionStateMachine(
       mandate: input.mandate,
       createdAt,
       expiresAt: input.expires_at,
-      turnCount: 0,
-      lockedSections: [],
-      testReports: {},
-      challenges: {},
-      signHashes: {},
-      ratifyApproved: {},
+      turnCount: preserveProgress ? existing.turnCount : 0,
+      lockedSections: preserveProgress ? existing.lockedSections : [],
+      testReports: preserveProgress ? existing.testReports : {},
+      challenges: preserveProgress ? existing.challenges : {},
+      signHashes: preserveProgress ? existing.signHashes : {},
+      ratifyApproved: preserveProgress ? existing.ratifyApproved : {},
     };
     upsert(session);
 
-    const pending = deps.pending.addSessionOpen({
-      thread: input.thread,
-      from: input.from,
-      goal: input.goal,
-      acceptance: input.acceptance,
-      budget: input.budget,
-      mandate: input.mandate,
-      expiresAt: input.expires_at,
-    });
+    const pending = ensureRecipientOpenPending(session);
+    if (!pending) {
+      const current = store.get(input.thread);
+      return result({
+        ok: true,
+        thread: input.thread,
+        status: current?.status ?? "open_expired",
+      });
+    }
 
     return result({
       ok: true,
@@ -385,33 +437,27 @@ export function createSessionStateMachine(
 
     async handleExpirePendingOpens() {
       const expiredThreads: string[] = [];
+
+      for (const session of store.list()) {
+        if (session.status !== "pending" || now() <= session.expiresAt) {
+          continue;
+        }
+        const expired = upsert({ ...session, status: "open_expired" });
+        if (session.role === "recipient") {
+          await notifyPeer(expired, "session.open_expired", {
+            thread: expired.thread,
+          });
+        }
+        expiredThreads.push(session.thread);
+      }
+
       for (const pending of deps.pending.list()) {
         if (pending.kind !== "session_open") {
           continue;
         }
-        if (now() <= pending.expiresAt) {
-          continue;
-        }
-
         const session = store.get(pending.thread);
-        if (session) {
-          const expired = upsert({ ...session, status: "open_expired" });
-          await notifyPeer(expired, "session.open_expired", {
-            thread: expired.thread,
-          });
-          expiredThreads.push(expired.thread);
-        }
-        deps.pending.remove(pending.id);
-      }
-
-      for (const session of store.list()) {
-        if (
-          session.role === "initiator" &&
-          session.status === "pending" &&
-          now() > session.expiresAt
-        ) {
-          upsert({ ...session, status: "open_expired" });
-          expiredThreads.push(session.thread);
+        if (!session || session.status !== "pending") {
+          deps.pending.remove(pending.id);
         }
       }
 
@@ -802,37 +848,45 @@ export function createSessionStateMachine(
       });
     },
 
+    resolveOpenPendingId(thread: string) {
+      const session = store.get(thread);
+      if (!session) {
+        return undefined;
+      }
+      return ensureRecipientOpenPending(session)?.id;
+    },
+
+    peekSessionOpenStatus(thread: string) {
+      return store.get(thread)?.status;
+    },
+
     async handleStatus(input: { thread: string }) {
       const found = getOrError(input.thread);
       if (!found.ok) {
         return result(found);
       }
-      const session = found.session;
+      const session = store.get(found.session.thread) ?? found.session;
       const pendingOpen =
         session.status === "pending" && session.role === "recipient"
-          ? deps.pending
-              .list()
-              .find(
-                (item) =>
-                  item.kind === "session_open" && item.thread === session.thread,
-              )
+          ? ensureRecipientOpenPending(session)
           : undefined;
+      const current = store.get(session.thread) ?? session;
       return result({
         ok: true,
-        thread: session.thread,
-        status: session.status,
-        goal: session.goal,
-        locked_sections: session.lockedSections,
-        turn_count: session.turnCount,
-        reject_reason: session.rejectReason,
-        artifact_hash: session.artifactHash,
-        co_signed_hash: session.coSignedHash,
+        thread: current.thread,
+        status: current.status,
+        goal: current.goal,
+        locked_sections: current.lockedSections,
+        turn_count: current.turnCount,
+        reject_reason: current.rejectReason,
+        artifact_hash: current.artifactHash,
+        co_signed_hash: current.coSignedHash,
         tests_legal:
-          session.artifactHash !== undefined &&
-          bothTestReportsPass(session, session.artifactHash) &&
-          bothChallengesFiled(session),
-        ratify_approved: session.ratifyApproved,
-        expires_at: session.expiresAt,
+          current.artifactHash !== undefined &&
+          bothTestReportsPass(current, current.artifactHash) &&
+          bothChallengesFiled(current),
+        ratify_approved: current.ratifyApproved,
+        expires_at: current.expiresAt,
         ...(pendingOpen ? { pending_id: pendingOpen.id } : {}),
       });
     },

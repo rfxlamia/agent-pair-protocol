@@ -7,7 +7,7 @@ import {
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { AgentContext } from "./pair.js";
-import { expirePendingSessions, processSessionInboxEnvelope } from "./session.js";
+import { expirePendingSessions, peekSessionOpenStatus, processSessionInboxEnvelope, resolveSessionOpenPendingId } from "./session.js";
 import {
   detectClientThreadGaps,
   nextThreadSeq,
@@ -42,6 +42,7 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
 
     let payload = envelope.payload;
     let pendingId: string | undefined;
+    let sessionStatus: string | undefined;
     if (verified) {
       try {
         const plaintext = decryptEnvelopePayload(envelope, keyPair, senderPublicKey);
@@ -63,6 +64,14 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
             pendingId = effect.pending_id;
           }
         }
+
+        if (envelope.type === "session.open" && !pendingId) {
+          pendingId = await resolveSessionOpenPendingId(ctx, envelope.thread);
+        }
+
+        if (envelope.type === "session.open") {
+          sessionStatus = peekSessionOpenStatus(ctx, envelope.thread);
+        }
       } catch {
         // Keep wire ciphertext if decryption fails.
       }
@@ -80,6 +89,7 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
       sig: envelope.sig,
       verified,
       ...(pendingId ? { pending_id: pendingId } : {}),
+      ...(sessionStatus ? { session_status: sessionStatus } : {}),
     });
   }
 

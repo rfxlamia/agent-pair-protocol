@@ -270,6 +270,70 @@ describe("session state machine", () => {
     expect(aliceStatus.status).toBe("open_expired");
   });
 
+  it("session_status reports open_expired when ensureRecipientOpenPending expires on read", async () => {
+    const opened = structured(
+      await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+      }),
+    );
+    if (!opened.ok) {
+      throw new Error("open failed");
+    }
+
+    vi.advanceTimersByTime(SESSION_OPEN_TTL_MS + 1);
+
+    const bobStatus = structured(
+      await bobMachine.handleStatus({ thread: opened.thread }),
+    );
+    expect(bobStatus.ok).toBe(true);
+    if (!bobStatus.ok) {
+      return;
+    }
+    expect(bobStatus.status).toBe("open_expired");
+    expect(bobStatus.pending_id).toBeUndefined();
+  });
+
+  it("session.open redelivery does not reset a live recipient session", async () => {
+    const thread = await openAndApprove();
+
+    const bobBefore = structured(await bobMachine.handleStatus({ thread }));
+    expect(bobBefore.ok).toBe(true);
+    if (!bobBefore.ok) {
+      return;
+    }
+    expect(bobBefore.status).toBe("live");
+
+    const redelivered = structured(
+      await bobMachine.handleIncomingEnvelope({
+        from: aliceId,
+        type: "session.open",
+        thread,
+        payload: JSON.stringify({
+          goal: "Different goal should not apply",
+          acceptance: openPayload.acceptance,
+          budget: openPayload.budget,
+          mandate: openPayload.mandate,
+          from: aliceId,
+          expires_at: Date.now() + SESSION_OPEN_TTL_MS,
+        }),
+      }),
+    );
+    expect(redelivered.ok).toBe(true);
+    if (!redelivered.ok) {
+      return;
+    }
+    expect(redelivered.status).toBe("live");
+
+    const bobAfter = structured(await bobMachine.handleStatus({ thread }));
+    expect(bobAfter.ok).toBe(true);
+    if (!bobAfter.ok) {
+      return;
+    }
+    expect(bobAfter.status).toBe("live");
+    expect(bobAfter.goal).toBe(bobBefore.goal);
+  });
+
   it("session_msg supports propose/counter/accept negotiation", async () => {
     const thread = await openAndApprove();
 

@@ -163,6 +163,115 @@ describe("inbox production path", () => {
     expect(statusAfter.pending_id).toBeUndefined();
   });
 
+  it("recovers pending_id when session_open pending queue entry was lost", async () => {
+    const alice = await createDualAgent(env, "orphan-alice");
+    const bob = await createDualAgent(env, "orphan-bob");
+    await runPairingFlow(alice, bob);
+
+    const opened = structured(
+      await handleSessionOpen(alice.ctx, {
+        to: bob.agentId,
+        goal: "Orphan pending recovery probe",
+        acceptance: [
+          {
+            id: "A1",
+            test: "executable",
+            desc: "probe",
+            runner: "payload-size",
+          },
+        ],
+        budget: { max_turns: 10 },
+        mandate: {
+          agent_may: ["propose"],
+          human_required: ["sign_final"],
+        },
+      }),
+    );
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) {
+      return;
+    }
+
+    const inboxResult = structured(await handleInbox(bob.ctx, { since: 0 }));
+    expect(inboxResult.ok).toBe(true);
+    if (!inboxResult.ok) {
+      return;
+    }
+
+    const sessionOpen = inboxResult.envelopes.find(
+      (envelope) => envelope.type === "session.open",
+    );
+    expect(sessionOpen?.pending_id).toBeTypeOf("string");
+    if (!sessionOpen?.pending_id) {
+      return;
+    }
+
+    bob.ctx.pending.remove(sessionOpen.pending_id);
+
+    const statusBefore = structured(
+      await handleSessionStatus(bob.ctx, { thread: opened.thread }),
+    );
+    expect(statusBefore.ok).toBe(true);
+    if (!statusBefore.ok) {
+      return;
+    }
+    expect(statusBefore.status).toBe("pending");
+    expect(statusBefore.pending_id).toBeTypeOf("string");
+    expect(statusBefore.pending_id).not.toBe(sessionOpen.pending_id);
+
+    const secondInbox = structured(await handleInbox(bob.ctx, { since: 0 }));
+    expect(secondInbox.ok).toBe(true);
+    if (!secondInbox.ok) {
+      return;
+    }
+
+    const secondOpen = secondInbox.envelopes.find(
+      (envelope) => envelope.type === "session.open",
+    );
+    expect(secondOpen?.pending_id).toBe(statusBefore.pending_id);
+  });
+
+  it("includes session_status on session.open envelopes", async () => {
+    const alice = await createDualAgent(env, "status-alice");
+    const bob = await createDualAgent(env, "status-bob");
+    await runPairingFlow(alice, bob);
+
+    const opened = structured(
+      await handleSessionOpen(alice.ctx, {
+        to: bob.agentId,
+        goal: "Session status on inbox probe",
+        acceptance: [
+          {
+            id: "A1",
+            test: "executable",
+            desc: "probe",
+            runner: "payload-size",
+          },
+        ],
+        budget: { max_turns: 10 },
+        mandate: {
+          agent_may: ["propose"],
+          human_required: ["sign_final"],
+        },
+      }),
+    );
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) {
+      return;
+    }
+
+    const inboxResult = structured(await handleInbox(bob.ctx, { since: 0 }));
+    expect(inboxResult.ok).toBe(true);
+    if (!inboxResult.ok) {
+      return;
+    }
+
+    const sessionOpen = inboxResult.envelopes.find(
+      (envelope) => envelope.type === "session.open",
+    );
+    expect(sessionOpen?.session_status).toBe("pending");
+  });
+
   it("tracks bidirectional thread seq after explicit send and inbox pull", async () => {
     const alice = await createDualAgent(env, "seq-alice");
     const bob = await createDualAgent(env, "seq-bob");

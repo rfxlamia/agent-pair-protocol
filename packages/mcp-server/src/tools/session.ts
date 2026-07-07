@@ -5,6 +5,7 @@ import {
   createSessionStateMachine,
   createSessionStore,
   type SessionStateMachine,
+  type SessionStatus,
 } from "../session/state-machine.js";
 import { assertNoSecrets } from "./util.js";
 
@@ -24,6 +25,28 @@ export async function expirePendingSessions(ctx: AgentContext): Promise<void> {
   if (machine) {
     await machine.handleExpirePendingOpens();
   }
+}
+
+export async function resolveSessionOpenPendingId(
+  ctx: AgentContext,
+  thread: string,
+): Promise<string | undefined> {
+  const machine = sessionMachines.get(ctx);
+  if (!machine) {
+    return undefined;
+  }
+  return machine.resolveOpenPendingId(thread);
+}
+
+export function peekSessionOpenStatus(
+  ctx: AgentContext,
+  thread: string,
+): SessionStatus | undefined {
+  const machine = sessionMachines.get(ctx);
+  if (!machine) {
+    return undefined;
+  }
+  return machine.peekSessionOpenStatus(thread);
 }
 
 async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine> {
