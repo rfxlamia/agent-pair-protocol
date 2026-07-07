@@ -9,6 +9,12 @@ import {
   handlePairJoin,
   handleRevoke,
 } from "./tools/pair.js";
+import {
+  handleSessionMsg,
+  handleSessionOpen,
+  handleSessionSign,
+  handleSessionStatus,
+} from "./tools/session.js";
 import { createKeyStore } from "./store/keys.js";
 import { createPendingQueue } from "./store/pending.js";
 import { HttpRelayClient, resolveRelayUrl } from "./relay/client.js";
@@ -128,6 +134,78 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       },
     },
     async (input) => handleHumanApprove(context, input),
+  );
+
+  server.registerTool(
+    "session_open",
+    {
+      title: "Open session",
+      description:
+        "Open a negotiation session with goal, acceptance criteria, budget, and mandate.",
+      inputSchema: {
+        to: z.string().describe("Recipient agent id"),
+        goal: z.string(),
+        acceptance: z.array(
+          z.object({
+            id: z.string(),
+            test: z.enum(["executable", "judgment"]),
+            desc: z.string(),
+            runner: z.string().optional(),
+          }),
+        ),
+        budget: z.object({
+          max_turns: z.number(),
+          deadline: z.string().optional(),
+        }),
+        mandate: z.object({
+          agent_may: z.array(z.string()),
+          human_required: z.array(z.string()),
+          escalate_on: z.array(z.string()).optional(),
+        }),
+      },
+    },
+    async (input) => handleSessionOpen(context, input),
+  );
+
+  server.registerTool(
+    "session_msg",
+    {
+      title: "Session message",
+      description:
+        "Send a session negotiation message (propose, counter, accept, challenge, test_report).",
+      inputSchema: {
+        thread: z.string(),
+        type: z.string(),
+        body: z.string(),
+      },
+    },
+    async (input) => handleSessionMsg(context, input),
+  );
+
+  server.registerTool(
+    "session_sign",
+    {
+      title: "Sign session artifact",
+      description:
+        "Sign an artifact hash when executable tests are green and challenges filed.",
+      inputSchema: {
+        thread: z.string(),
+        artifact_hash: z.string(),
+      },
+    },
+    async (input) => handleSessionSign(context, input),
+  );
+
+  server.registerTool(
+    "session_status",
+    {
+      title: "Session status",
+      description: "Get current session state and negotiation progress.",
+      inputSchema: {
+        thread: z.string(),
+      },
+    },
+    async (input) => handleSessionStatus(context, input),
   );
 
   return { server, context };
