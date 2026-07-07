@@ -12,10 +12,16 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@agentpair/protocol": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@noble/ciphers": "^2.2.0",
     "json-schema-faker": "^0.5.9",
-    "quicktype": "^23.3.21"
+    "quicktype": "^23.3.21",
+    "zod": "^3.25.67"
   },
   "devDependencies": {
+    "@agentpair/relay": "workspace:*",
+    "@hono/node-server": "^1.14.4",
     "@stoplight/spectral-cli": "^6.15.0"
   }
 }
