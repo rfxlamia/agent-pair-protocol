@@ -5,7 +5,7 @@ import {
   startDualRelay,
   type DualRelayEnv,
 } from "../e2e/dual-server.js";
-import { handleInbox } from "./inbox.js";
+import { handleInbox, handleSend } from "./inbox.js";
 import { handleSessionOpen, handleSessionStatus } from "./session.js";
 
 function structured<T>(result: { structuredContent: T }): T {
@@ -84,4 +84,173 @@ describe("inbox production path", () => {
     }
     expect(bobStatusAfter.status).toBe("pending");
   });
+
+  it("tracks bidirectional thread seq after explicit send and inbox pull", async () => {
+    const alice = await createDualAgent(env, "seq-alice");
+    const bob = await createDualAgent(env, "seq-bob");
+    await runPairingFlow(alice, bob);
+    const thread = crypto.randomUUID();
+
+    const opened = structured(
+      await handleSend(alice.ctx, {
+        to: bob.agentId,
+        type: "suggestion",
+        payload: "Saran 1",
+        thread,
+        seq: 1,
+      }),
+    );
+    expect(opened.ok).toBe(true);
+
+    const bobInbox1 = structured(await handleInbox(bob.ctx, { since: 0 }));
+    expect(bobInbox1.ok).toBe(true);
+    if (!bobInbox1.ok) {
+      return;
+    }
+    expect(bobInbox1.envelopes).toHaveLength(1);
+
+    const bobReply = structured(
+      await handleSend(bob.ctx, {
+        to: alice.agentId,
+        type: "reply",
+        payload: "Setuju",
+        thread,
+        seq: 2,
+      }),
+    );
+    expect(bobReply.ok).toBe(true);
+
+    const aliceInbox = structured(await handleInbox(alice.ctx, { since: 0 }));
+    expect(aliceInbox.ok).toBe(true);
+
+    const aliceAgreement = structured(
+      await handleSend(alice.ctx, {
+        to: bob.agentId,
+        type: "reply",
+        payload: "Makasih",
+        thread,
+      }),
+    );
+    expect(aliceAgreement.ok).toBe(true);
+    if (!aliceAgreement.ok) {
+      return;
+    }
+    expect(aliceAgreement.seq).toBe(3);
+
+    const bobInbox2 = structured(await handleInbox(bob.ctx, { since: 0 }));
+    expect(bobInbox2.ok).toBe(true);
+    if (!bobInbox2.ok) {
+      return;
+    }
+    expect(bobInbox2.envelopes.map((envelope) => envelope.seq).sort()).toEqual([
+      1, 3,
+    ]);
+  });
+
+  it("auto-assigns next seq after explicit send without resetting to 1", async () => {
+    const alice = await createDualAgent(env, "seq2-alice");
+    const bob = await createDualAgent(env, "seq2-bob");
+    await runPairingFlow(alice, bob);
+    const thread = crypto.randomUUID();
+
+    structured(
+      await handleSend(alice.ctx, {
+        to: bob.agentId,
+        type: "suggestion",
+        payload: "Saran 1",
+        thread,
+        seq: 1,
+      }),
+    );
+
+    structured(await handleInbox(bob.ctx, { since: 0 }));
+
+    structured(
+      await handleSend(bob.ctx, {
+        to: alice.agentId,
+        type: "reply",
+        payload: "Setuju",
+        thread,
+        seq: 2,
+      }),
+    );
+
+    const bobFollowUp = structured(
+      await handleSend(bob.ctx, {
+        to: alice.agentId,
+        type: "suggestion",
+        payload: "Saran dari bob",
+        thread,
+      }),
+    );
+    expect(bobFollowUp.ok).toBe(true);
+    if (!bobFollowUp.ok) {
+      return;
+    }
+    expect(bobFollowUp.seq).toBe(3);
+  });
+
+  it(
+    "inbox succeeds after burst sends without client gap_warnings",
+    async () => {
+    const alice = await createDualAgent(env, "burst-alice");
+    const bob = await createDualAgent(env, "burst-bob");
+    await runPairingFlow(alice, bob);
+    const thread = crypto.randomUUID();
+
+    structured(
+      await handleSend(alice.ctx, {
+        to: bob.agentId,
+        type: "suggestion",
+        payload: "Saran 1",
+        thread,
+        seq: 1,
+      }),
+    );
+
+    structured(await handleInbox(bob.ctx, { since: 0 }));
+
+    structured(
+      await handleSend(bob.ctx, {
+        to: alice.agentId,
+        type: "reply",
+        payload: "Balas 1",
+        thread,
+        seq: 2,
+      }),
+    );
+    structured(
+      await handleSend(bob.ctx, {
+        to: alice.agentId,
+        type: "reply",
+        payload: "Balas 2",
+        thread,
+        seq: 3,
+      }),
+    );
+
+    structured(await handleInbox(alice.ctx, { since: 0 }));
+
+    structured(
+      await handleSend(alice.ctx, {
+        to: bob.agentId,
+        type: "suggestion",
+        payload: "Saran 2",
+        thread,
+        seq: 4,
+      }),
+    );
+
+    const bobInbox = structured(await handleInbox(bob.ctx, { since: 0 }));
+    expect(bobInbox.ok).toBe(true);
+    if (!bobInbox.ok) {
+      return;
+    }
+    expect(bobInbox.gap_warnings).toBeUndefined();
+    expect(bobInbox.envelopes.map((envelope) => envelope.seq).sort()).toEqual([
+      1, 4,
+    ]);
+    },
+    15_000,
+  );
 });

@@ -8,18 +8,15 @@ import {
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { AgentContext } from "./pair.js";
 import { expirePendingSessions, processSessionInboxEnvelope } from "./session.js";
+import {
+  detectClientThreadGaps,
+  nextThreadSeq,
+  recordPeerSeq,
+  recordSentSeq,
+} from "./thread-seq.js";
 import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const processedEnvelopeIds = new WeakMap<AgentContext, Set<string>>();
-const threadSeqCounters = new WeakMap<AgentContext, Map<string, number>>();
-
-function nextSeq(ctx: AgentContext, thread: string): number {
-  const counters = threadSeqCounters.get(ctx) ?? new Map<string, number>();
-  threadSeqCounters.set(ctx, counters);
-  const next = (counters.get(thread) ?? 0) + 1;
-  counters.set(thread, next);
-  return next;
-}
 
 export async function handleInbox(ctx: AgentContext, input: { since?: number }) {
   await expirePendingSessions(ctx);
@@ -38,6 +35,8 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
 
   const envelopes = [];
   for (const envelope of pull.envelopes) {
+    recordPeerSeq(ctx, envelope.thread, envelope.seq);
+
     const senderPublicKey = agentIdToPublicKey(envelope.from);
     const verified = verifyEnvelope(envelope, senderPublicKey);
 
@@ -75,11 +74,16 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
     });
   }
 
+  const gapWarnings = detectClientThreadGaps(ctx);
   const result = {
     ok: true,
     since,
     cursor: pull.cursor ?? since,
     envelopes,
+    ...(gapWarnings.length > 0 ? { gap_warnings: gapWarnings } : {}),
+    ...(pull.relay_gaps && pull.relay_gaps.length > 0
+      ? { relay_gaps: pull.relay_gaps }
+      : {}),
   };
   assertNoSecrets(result);
   return toolTextResult(result);
@@ -111,12 +115,13 @@ export async function handleSend(
     recipientAgentId: input.to,
     type: input.type,
     thread,
-    seq: input.seq ?? nextSeq(ctx, thread),
+    seq: input.seq ?? nextThreadSeq(ctx, thread),
     ttl: input.ttl ?? 3600,
     payload: utf8ToBytes(input.payload),
   });
 
   await ctx.relay.sendEnvelope(input.to, envelope);
+  recordSentSeq(ctx, thread, envelope.seq);
 
   const result = {
     ok: true,

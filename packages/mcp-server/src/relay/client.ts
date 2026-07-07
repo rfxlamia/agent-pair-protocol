@@ -144,6 +144,18 @@ export class HttpRelayClient implements PairingRelayClient {
         body: serializeEnvelope(envelope),
       },
     );
+    if (res.status === 409) {
+      let error = "";
+      try {
+        const body = (await res.json()) as { error?: string };
+        error = body.error ?? "";
+      } catch {
+        // duplicate_envelope_id responses are idempotent success
+      }
+      if (error === "duplicate_envelope_id") {
+        return;
+      }
+    }
     if (!res.ok && res.status !== 204) {
       const body = await res.text();
       throw new Error(`relay inbox post failed: ${res.status} ${body}`);
@@ -154,8 +166,17 @@ export class HttpRelayClient implements PairingRelayClient {
     keyPair: KeyPair,
     since = 0,
   ): Promise<
-    | { ok: true; envelopes: Envelope[]; cursor?: number }
-    | { ok: false; error: string; thread?: string; last_good_seq?: number }
+    | {
+        ok: true;
+        envelopes: Envelope[];
+        cursor?: number;
+        relay_gaps?: Array<{
+          thread: string;
+          last_good_seq: number;
+          expected_seq?: number;
+        }>;
+      }
+    | { ok: false; error: string }
   > {
     const agentId = publicKeyToAgentId(keyPair.publicKey);
     const challengeRes = await fetch(
@@ -171,20 +192,6 @@ export class HttpRelayClient implements PairingRelayClient {
       `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
     );
 
-    if (pullRes.status === 409) {
-      const gap = (await pullRes.json()) as {
-        error: string;
-        thread: string;
-        last_good_seq: number;
-      };
-      return {
-        ok: false,
-        error: gap.error,
-        thread: gap.thread,
-        last_good_seq: gap.last_good_seq,
-      };
-    }
-
     if (!pullRes.ok) {
       return { ok: false, error: `inbox_pull_failed_${pullRes.status}` };
     }
@@ -192,10 +199,20 @@ export class HttpRelayClient implements PairingRelayClient {
     const payload = (await pullRes.json()) as {
       envelopes?: Array<string | Envelope>;
       cursor?: number;
+      gaps?: Array<{
+        thread: string;
+        last_good_seq: number;
+        expected_seq?: number;
+      }>;
     };
     const envelopes = (payload.envelopes ?? []).map((raw) =>
       typeof raw === "string" ? deserializeEnvelope(raw) : raw,
     );
-    return { ok: true, envelopes, cursor: payload.cursor };
+    return {
+      ok: true,
+      envelopes,
+      cursor: payload.cursor,
+      relay_gaps: payload.gaps,
+    };
   }
 }

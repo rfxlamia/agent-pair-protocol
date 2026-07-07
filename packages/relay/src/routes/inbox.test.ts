@@ -137,7 +137,7 @@ describe("inbox relay routes", () => {
     expect(body.error).toBe("challenge_invalid");
   });
 
-  it("returns gap_detected when sequence numbers have a gap", async () => {
+  it("returns advisory gaps when sequence numbers have a gap", async () => {
     const gapThread = "660e8400-e29b-41d4-a716-446655440099";
     for (const seq of [1, 2, 4]) {
       const envelope = createEnvelope({
@@ -165,15 +165,18 @@ describe("inbox relay routes", () => {
     const res = await fetch(
       `${BASE_URL}/inbox/${bobId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
     );
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      error: string;
-      thread: string;
-      last_good_seq: number;
+      envelopes: unknown[];
+      gaps: Array<{
+        thread: string;
+        last_good_seq: number;
+        expected_seq: number;
+      }>;
     };
-    expect(body.error).toBe("gap_detected");
-    expect(body.thread).toBe(gapThread);
-    expect(body.last_good_seq).toBe(2);
+    expect(body.gaps[0]?.thread).toBe(gapThread);
+    expect(body.gaps[0]?.last_good_seq).toBe(2);
+    expect(body.gaps[0]?.expected_seq).toBe(3);
   });
 
   it("allows bidirectional alternating seq on the same thread", async () => {
@@ -415,15 +418,15 @@ describe("inbox relay regressions (isolated db)", () => {
     expect(gapPost.status).toBe(204);
 
     const gapPull = await authenticatedInboxPull(maxReceived.received_at);
-    expect(gapPull.status).toBe(409);
+    expect(gapPull.status).toBe(200);
     const body = (await gapPull.json()) as {
-      error: string;
-      last_good_seq: number;
-      expected_seq: number;
+      gaps: Array<{
+        last_good_seq: number;
+        expected_seq: number;
+      }>;
     };
-    expect(body.error).toBe("gap_detected");
-    expect(body.last_good_seq).toBe(2);
-    expect(body.expected_seq).toBe(3);
+    expect(body.gaps[0]?.last_good_seq).toBe(2);
+    expect(body.gaps[0]?.expected_seq).toBe(3);
   });
 
   it("garbage-collects expired challenge rows", async () => {
@@ -443,5 +446,183 @@ describe("inbox relay regressions (isolated db)", () => {
       }
     ).count;
     expect(after).toBe(before);
+  });
+});
+
+const GLOBAL_SEQ_PORT = 3004;
+const GLOBAL_SEQ_BASE = `http://127.0.0.1:${GLOBAL_SEQ_PORT}`;
+
+describe("inbox global turn-taking seq (isolated db)", () => {
+  let server: ServerType;
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: GLOBAL_SEQ_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${GLOBAL_SEQ_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  async function pullBobInbox(since: number) {
+    const challengeRes = await fetch(
+      `${GLOBAL_SEQ_BASE}/inbox/${bobId}?since=${since}`,
+    );
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, bob.secretKey);
+    return fetch(
+      `${GLOBAL_SEQ_BASE}/inbox/${bobId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+    );
+  }
+
+  it("allows peer seq 1 and 3 after local reply consumed seq 2", async () => {
+    const thread = "a0fe1394-aefb-4e7b-87dc-fae782e63ecd";
+    for (const seq of [1, 3] as const) {
+      const postRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "suggestion",
+            thread,
+            seq,
+            ttl: 3600,
+            payload: utf8ToBytes(`turn-${seq}`),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    const res = await pullBobInbox(0);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { envelopes: Array<{ seq: number }> };
+    expect(body.envelopes.map((envelope) => envelope.seq).sort()).toEqual([1, 3]);
+  });
+
+  it("detects true gaps when global turn-taking skips an odd slot", async () => {
+    const thread = "990e8400-e29b-41d4-a716-446655440088";
+    for (const seq of [1, 5] as const) {
+      const postRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "suggestion",
+            thread,
+            seq,
+            ttl: 3600,
+            payload: utf8ToBytes(`turn-${seq}`),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    const res = await pullBobInbox(0);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      gaps: Array<{
+        last_good_seq: number;
+        expected_seq: number;
+      }>;
+    };
+    expect(body.gaps[0]?.last_good_seq).toBe(1);
+    expect(body.gaps[0]?.expected_seq).toBe(3);
+  });
+
+  it("delivers envelopes even when relay sees burst-shaped peer stream", async () => {
+    const thread = "aa0e8400-e29b-41d4-a716-446655440099";
+    for (const seq of [1, 4] as const) {
+      const postRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "suggestion",
+            thread,
+            seq,
+            ttl: 3600,
+            payload: utf8ToBytes(`burst-${seq}`),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    const res = await pullBobInbox(0);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      envelopes: Array<{ seq: number; thread: string }>;
+    };
+    const burstEnvelopes = body.envelopes.filter(
+      (envelope) => envelope.thread === thread,
+    );
+    expect(burstEnvelopes.map((envelope) => envelope.seq).sort()).toEqual([1, 4]);
+  });
+
+  it("returns 409 for duplicate envelope id on POST", async () => {
+    const thread = "bb0e8400-e29b-41d4-a716-446655440099";
+    const envelope = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "suggestion",
+      thread,
+      seq: 1,
+      ttl: 3600,
+      payload: utf8ToBytes("dup"),
+      id: crypto.randomUUID(),
+    });
+
+    const first = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(envelope),
+    });
+    expect(first.status).toBe(204);
+
+    const second = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(envelope),
+    });
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as { error: string };
+    expect(body.error).toBe("duplicate_envelope_id");
   });
 });
