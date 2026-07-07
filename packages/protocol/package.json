@@ -6,6 +6,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
+    "build:wasm": "cd wasm/spake2-pake && wasm-pack build --target nodejs --out-dir ../pkg --out-name spake2_pake",
+    "pretest": "test -f wasm/pkg/spake2_pake.js || pnpm build:wasm",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
