@@ -41,16 +41,24 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
     const senderPublicKey = agentIdToPublicKey(envelope.from);
     const verified = verifyEnvelope(envelope, senderPublicKey);
 
-    if (verified && envelope.type.startsWith("session.") && !seen.has(envelope.id)) {
-      seen.add(envelope.id);
-      const plaintext = decryptEnvelopePayload(envelope, keyPair, senderPublicKey);
-      const payload = new TextDecoder().decode(plaintext);
-      await processSessionInboxEnvelope(ctx, {
-        from: envelope.from,
-        type: envelope.type,
-        thread: envelope.thread,
-        payload,
-      });
+    let payload = envelope.payload;
+    if (verified) {
+      try {
+        const plaintext = decryptEnvelopePayload(envelope, keyPair, senderPublicKey);
+        payload = new TextDecoder().decode(plaintext);
+
+        if (envelope.type.startsWith("session.") && !seen.has(envelope.id)) {
+          seen.add(envelope.id);
+          await processSessionInboxEnvelope(ctx, {
+            from: envelope.from,
+            type: envelope.type,
+            thread: envelope.thread,
+            payload,
+          });
+        }
+      } catch {
+        // Keep wire ciphertext if decryption fails.
+      }
     }
 
     envelopes.push({
@@ -61,7 +69,7 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
       thread: envelope.thread,
       seq: envelope.seq,
       ttl: envelope.ttl,
-      payload: envelope.payload,
+      payload,
       sig: envelope.sig,
       verified,
     });

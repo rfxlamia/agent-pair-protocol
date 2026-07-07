@@ -12,6 +12,7 @@ rsync -avz --delete \
   --exclude .git \
   --exclude dist \
   --exclude .pi \
+  --exclude .pnpm-store \
   --exclude 'packages/protocol/wasm/spake2-pake/target' \
   "${ROOT}/" "${HOST}:${REMOTE}/"
 

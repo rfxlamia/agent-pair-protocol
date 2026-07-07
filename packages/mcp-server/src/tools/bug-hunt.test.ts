@@ -103,6 +103,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     }
     expect(inboxResult.envelopes).toHaveLength(1);
     expect(inboxResult.envelopes[0]?.verified).toBe(true);
+    expect(inboxResult.envelopes[0]?.payload).toBe("hello");
   });
 
   it("handleSend increments seq per thread", async () => {

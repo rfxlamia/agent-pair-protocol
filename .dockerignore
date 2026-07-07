@@ -1,0 +1,9 @@
+**/.git
+**/.pi
+**/node_modules
+**/.pnpm-store
+**/dist
+**/target
+**/*.test.ts
+docs
+.pocket
