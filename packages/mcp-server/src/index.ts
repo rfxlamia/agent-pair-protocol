@@ -49,7 +49,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     {
       title: "Initialize pairing",
       description:
-        "Start pairing with scope and bond mode; returns a human-shareable code.",
+        "Start pairing with scope and bond mode; returns a human-shareable code. Initiator completion runs automatically in the background.",
       inputSchema: {
         scope: z.array(z.string()).describe("Capability scope for the bond"),
         mode: z
@@ -78,7 +78,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     {
       title: "Complete initiator pairing",
       description:
-        "Initiator-side SPAKE2 completion after pair_init. Call in parallel when the joiner runs pair_join / human_approve.",
+        "Retry initiator-side SPAKE2 completion after pair_init. Normally automatic; use only if pairing stalled.",
       inputSchema: {
         code: z.string().describe("Pairing code from pair_init"),
       },

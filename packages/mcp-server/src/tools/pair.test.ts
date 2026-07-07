@@ -23,6 +23,7 @@ import {
   handlePairInitComplete,
   handlePairInitCompleteTool,
 } from "./pair.js";
+import { getInitiatorCompletionTask } from "./pair-completion.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { assertNoSecrets } from "./util.js";
 import { chmod, readFile, stat } from "node:fs/promises";
@@ -127,6 +128,108 @@ describe("mcp pair tools", () => {
     },
     20000,
   );
+
+  it(
+    "pair_init auto-completes in background without explicit pair_init_complete",
+    async () => {
+      const alice = await makeAgent("alice-auto");
+      const bob = await makeAgent("bob-auto");
+
+      const initResult = structured(await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      }));
+      expect(initResult.ok).toBe(true);
+      expect(initResult.completion).toBe("initiator_auto_scheduled");
+      if (!initResult.ok) {
+        return;
+      }
+
+      const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+      expect(joinQueued.ok).toBe(true);
+      if (!joinQueued.ok) {
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      const approved = structured(
+        await handleHumanApprove(bob, {
+          pending_id: joinQueued.pending_id,
+          decision: "approve",
+          via_human: true,
+        }),
+      );
+      expect(approved.ok).toBe(true);
+      expect(approved.status).toBe("bonded");
+
+      const background = getInitiatorCompletionTask(initResult.code);
+      expect(background).toBeDefined();
+      const initComplete = await background!;
+      expect(initComplete.status).toBe("bonded");
+
+      const aliceKeys = await alice.keyStore.loadOrCreate();
+      const bobKeys = await bob.keyStore.loadOrCreate();
+      const { publicKeyToAgentId } = await import("@agentpair/protocol");
+      const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+      const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+      expect(alice.bonds.find(aliceId, bobId)).toBeDefined();
+      expect(bob.bonds.find(bobId, aliceId)).toBeDefined();
+    },
+    30000,
+  );
+
+  it(
+    "pair_init_complete returns cached bond without re-running handshake",
+    async () => {
+      const alice = await makeAgent("alice-cache");
+      const bob = await makeAgent("bob-cache");
+
+      const initResult = structured(await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      }));
+      if (!initResult.ok) {
+        return;
+      }
+
+      const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+      if (!joinQueued.ok) {
+        return;
+      }
+
+      const approved = structured(
+        await handleHumanApprove(bob, {
+          pending_id: joinQueued.pending_id,
+          decision: "approve",
+          via_human: true,
+        }),
+      );
+      expect(approved.ok).toBe(true);
+
+      const background = getInitiatorCompletionTask(initResult.code);
+      if (background) {
+        await background;
+      }
+
+      const retry = structured(
+        await handlePairInitCompleteTool(alice, { code: initResult.code }),
+      );
+      expect(retry.ok).toBe(true);
+      expect(retry.status).toBe("bonded");
+    },
+    20000,
+  );
+
+  it("pair_init_complete reports pair_session_lost for unknown code", async () => {
+    const alice = await makeAgent("alice-lost");
+    const result = structured(
+      await handlePairInitCompleteTool(alice, { code: "9-fake-codes" }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("pair_session_lost");
+  });
 
   it(
     "pair_init_complete tool bonds initiator when called in parallel with joiner approval",

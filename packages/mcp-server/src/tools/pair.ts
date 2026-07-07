@@ -2,7 +2,6 @@ import {
   createEnvelope,
   InMemoryPairingRegistry,
   pairInit,
-  pairInitComplete,
   pairJoin,
   publicKeyToAgentId,
   type BondMode,
@@ -16,6 +15,10 @@ import type { KeyStore } from "../store/keys.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
 import { MemoryBondStore, type BondStore } from "../store/bonds.js";
 import { createPendingQueue, type PendingQueue } from "../store/pending.js";
+import {
+  runInitiatorCompletionOnce,
+  scheduleInitiatorPairingCompletion,
+} from "./pair-completion.js";
 import { assertNoSecrets, parseBondMode, toolTextResult } from "./util.js";
 
 export interface AgentContext {
@@ -107,8 +110,10 @@ export async function handlePairInit(
     proposal: output.proposal,
     expires_at: output.expiresAt,
     agent_id: output.proposal.initiatorAgentId,
+    completion: "initiator_auto_scheduled",
   };
   assertNoSecrets(result);
+  scheduleInitiatorPairingCompletion(ctx, output.code);
   return toolTextResult(result);
 }
 
@@ -116,19 +121,7 @@ export async function handlePairInitComplete(
   ctx: AgentContext,
   input: { code: string },
 ): Promise<PairFlowResult> {
-  const keyPair = await ctx.keyStore.loadOrCreate();
-  const flow = await pairInitComplete({
-    code: input.code,
-    keyPair,
-    relay: ctx.relay,
-    registry: ctx.registry,
-    localAllowlist: ctx.allowlist,
-  });
-  if (flow.status === "bonded") {
-    const agentId = publicKeyToAgentId(keyPair.publicKey);
-    ctx.bonds.add(agentId, flow.bond);
-  }
-  return flow;
+  return runInitiatorCompletionOnce(ctx, input.code);
 }
 
 export async function handlePairJoin(
@@ -187,9 +180,34 @@ export async function handlePairInitCompleteTool(
   ctx: AgentContext,
   input: { code: string },
 ) {
-  const flow = await handlePairInitComplete(ctx, input);
+  try {
+    const flow = await runInitiatorCompletionOnce(ctx, input.code);
+    return pairFlowToolResult(flow);
+  } catch {
+    const result = {
+      ok: false,
+      status: "pake_failed",
+      error: "pair_completion_failed",
+    };
+    assertNoSecrets(result);
+    return toolTextResult(result);
+  }
+}
+
+function pairFlowToolResult(flow: PairFlowResult) {
   if (flow.status === "bonded") {
     const result = { ok: true, status: flow.status, bond: flow.bond };
+    assertNoSecrets(result);
+    return toolTextResult(result);
+  }
+  if (flow.status === "not_found") {
+    const result = {
+      ok: false,
+      status: flow.status,
+      error: "pair_session_lost",
+      message:
+        "Pairing session not found in memory (MCP may have restarted). Run pair_init again with a new code.",
+    };
     assertNoSecrets(result);
     return toolTextResult(result);
   }
