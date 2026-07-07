@@ -37,6 +37,7 @@ vitest.config.ts.timestamp-*
 .agentpair/
 packages/mcp-server/.data/
 packages/mcp-server/keys/
+packages/mcp-server/:memory:
 *.pem
 *.key
 
