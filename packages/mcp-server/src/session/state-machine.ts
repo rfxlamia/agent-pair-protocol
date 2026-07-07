@@ -1,5 +1,4 @@
 import {
-  publicKeyToAgentId,
   sign,
   type KeyPair,
   type LocalAllowlistStore,

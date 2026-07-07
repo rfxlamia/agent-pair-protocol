@@ -21,7 +21,10 @@ export function runPayloadSize(
 
   try {
     if (options.seed !== undefined) {
-      JSONSchemaFaker.option({ randomSeed: options.seed });
+      // json-schema-faker supports randomSeed at runtime; typings are incomplete.
+      (JSONSchemaFaker.option as (opts: { randomSeed: number }) => void)({
+        randomSeed: options.seed,
+      });
     }
 
     const payload = JSONSchemaFaker.generate(schema);

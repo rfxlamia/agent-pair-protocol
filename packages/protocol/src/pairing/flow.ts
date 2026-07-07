@@ -464,7 +464,8 @@ export async function pairInitComplete(input: {
     (message) =>
       message.phase === "confirm" && message.agentId !== initiatorAgentId,
   );
-  if (!joinerConfirm) {
+  if (!joinerConfirm || joinerConfirm.phase !== "confirm") {
+    // Narrow PairWireMessage union after .find() — runtime guard is redundant.
     const bondFail = await input.relay.pollPakeMessage(pending.sessionId);
     if (bondFail && decodeWireMessage(bondFail).phase === "bond_fail") {
       return { status: "pake_failed" };

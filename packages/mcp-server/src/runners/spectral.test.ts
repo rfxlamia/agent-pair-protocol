@@ -1,12 +1,8 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { runSpectral } from "./spectral.js";
+import { resolvePackageBin } from "./resolve-package-bin.js";
 
-const spectralBin = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../node_modules/.bin/spectral",
-);
+const spectralBin = resolvePackageBin("@stoplight/spectral-cli", "spectral");
 
 const validOpenApi = {
   openapi: "3.0.3",
@@ -37,5 +33,10 @@ describe("spectral runner", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/spectral lint failed/i);
+  });
+
+  it("uses the package-local spectral binary by default", async () => {
+    const result = await runSpectral(validOpenApi);
+    expect(result.ok).toBe(true);
   });
 });

@@ -1,14 +1,15 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { OpenApiDocument } from "./openapi-schemas.js";
+import { resolvePackageBin } from "./resolve-package-bin.js";
 
 const execFileAsync = promisify(execFile);
 const moduleDir = dirname(fileURLToPath(import.meta.url));
+const defaultSpectralBin = resolvePackageBin("@stoplight/spectral-cli", "spectral");
 const defaultRulesetPath = join(moduleDir, "spectral-ruleset.yaml");
 
 export type RunnerResult = {
@@ -26,7 +27,7 @@ export async function runSpectral(
   openApiDoc: OpenApiDocument,
   options: SpectralOptions = {},
 ): Promise<RunnerResult> {
-  const spectralBin = options.spectralBin ?? "spectral";
+  const spectralBin = options.spectralBin ?? defaultSpectralBin;
   const workDir = await mkdtemp(join(tmpdir(), "agentpair-spectral-"));
 
   try {

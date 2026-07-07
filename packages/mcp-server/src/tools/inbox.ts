@@ -29,9 +29,8 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
   const pull = await ctx.relay.pullInbox(keyPair, since);
 
   if (!pull.ok) {
-    const result = { ok: false, ...pull };
-    assertNoSecrets(result);
-    return toolTextResult(result);
+    assertNoSecrets(pull);
+    return toolTextResult(pull);
   }
 
   const seen = processedEnvelopeIds.get(ctx) ?? new Set<string>();

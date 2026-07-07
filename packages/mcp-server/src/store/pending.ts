@@ -1,4 +1,4 @@
-import type { BondMode, PairProposal } from "@agentpair/protocol";
+import type { PairProposal } from "@agentpair/protocol";
 
 export type PendingKind = "pair_join" | "session_open" | "ratify" | "budget_extend";
 

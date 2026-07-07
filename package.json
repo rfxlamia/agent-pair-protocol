@@ -1,5 +1,5 @@
 {
-  "name": "agentpair",
+  "name": "agentpair-monorepo",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,8 +11,11 @@
     "onlyBuiltDependencies": ["better-sqlite3"]
   },
   "scripts": {
+    "build": "pnpm --filter ./packages/protocol build && pnpm --filter ./packages/mcp-server build",
+    "pretest": "pnpm build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "publish:packages": "pnpm build && pnpm --filter ./packages/protocol publish --access public && pnpm --filter ./packages/mcp-server publish"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

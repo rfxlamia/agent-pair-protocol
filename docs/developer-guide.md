@@ -25,7 +25,7 @@ agent-pair/
 |-------|----------|-------|
 | `protocol` | `@agentpair/protocol` | Ed25519/X25519, XChaCha20-Poly1305, envelope, SPAKE2 WASM, pairing flow |
 | `relay` | `@agentpair/relay` | Dumb queue: inbox, allowlist, pairing PAKE relay, artifact blobs |
-| `mcp-server` | `@agentpair/mcp-server` | MCP SDK tools, key store, session state machine, acceptance runners |
+| `mcp-server` | `agentpair` | MCP SDK tools, key store, session state machine, acceptance runners |
 | `runner-esp32` | — | Image Docker `xtensa-esp-elf-gcc -fsyntax-only` untuk test OpenAPI→C |
 
 **Prinsip arsitektur:**
@@ -63,11 +63,12 @@ git clone <repo-url> agent-pair
 cd agent-pair
 pnpm install
 
-# Build WASM SPAKE2 (wajib sebelum test/run)
-pnpm --filter @agentpair/protocol build:wasm
+# Build WASM + compile TypeScript (wajib sebelum test/run)
+pnpm build
 ```
 
 Output WASM: `packages/protocol/wasm/pkg/spake2_pake.js`
+Compiled JS: `packages/protocol/dist/`, `packages/mcp-server/dist/`
 
 ---
 
@@ -121,7 +122,7 @@ Implementasi: `packages/relay/src/routes/`.
 
 ```bash
 export AGENTPAIR_RELAY_URL=http://127.0.0.1:3001
-node packages/mcp-server/src/cli.ts
+node packages/mcp-server/dist/cli.js
 ```
 
 Server memakai `StdioServerTransport` — stdin/stdout untuk MCP protocol.
@@ -129,7 +130,7 @@ Server memakai `StdioServerTransport` — stdin/stdout untuk MCP protocol.
 ### Programmatic (untuk test / embedding)
 
 ```typescript
-import { createMcpServer } from "@agentpair/mcp-server";
+import { createMcpServer } from "agentpair";
 
 const { server, context } = createMcpServer({
   relayUrl: "http://127.0.0.1:3001",
@@ -294,14 +295,14 @@ Root `vitest.config.ts` mencakup `**/*.test.ts` di semua paket.
 ```bash
 pnpm --filter @agentpair/protocol test
 pnpm --filter @agentpair/relay test
-pnpm --filter @agentpair/mcp-server test
+pnpm --filter agentpair test
 ```
 
 ### E2E happy path
 
 ```bash
 # Membutuhkan relay in-process (port 3021)
-pnpm --filter @agentpair/mcp-server test -- src/e2e/happy-path.test.ts
+pnpm --filter agentpair test -- src/e2e/happy-path.test.ts
 ```
 
 E2E menggunakan `dual-server.ts`:
@@ -446,6 +447,34 @@ sequenceDiagram
 
 ---
 
+## Publish ke npm
+
+**Prasyarat:** org npm `@agentpair` (buat di https://www.npmjs.com/org/create), 2FA aktif, Rust + wasm-pack untuk build.
+
+```bash
+# Dari root monorepo — urutan wajib: protocol dulu, lalu agentpair
+pnpm publish:packages
+```
+
+Atau manual:
+
+```bash
+pnpm build
+cd packages/protocol && pnpm publish --access public
+cd ../mcp-server && pnpm publish
+```
+
+**Penting:** gunakan `pnpm publish`, bukan `npm publish` — hanya pnpm yang menulis ulang `workspace:*` ke versi semver.
+
+Verifikasi tarball sebelum publish:
+
+```bash
+cd packages/protocol && npm pack --dry-run   # harus ada dist/wasm/pkg/spake2_pake_bg.wasm
+cd ../mcp-server && npm pack --dry-run       # harus ada dist/cli.js
+```
+
+---
+
 ## Known limitations (v0)
 
 Dari closeout review — non-blocking tapi perlu diketahui developer:
@@ -457,7 +486,7 @@ Dari closeout review — non-blocking tapi perlu diketahui developer:
 | Session | `processSessionInboxEnvelope` perlu dipanggil via `inbox()` pull |
 | Budget | Exhaustion enforcement belum penuh di state machine |
 | Pairing code | `Math.random()` bukan CSPRNG |
-| npm publish | `npx agentpair` belum tersedia — bin menunjuk ke `.ts` langsung |
+| npm publish | Pipeline siap — `pnpm publish:packages` (butuh org `@agentpair`) |
 
 Lihat `docs/pocket/plans/2026-07-07-agentpair-v0/closeout.md` untuk daftar lengkap.
 
@@ -467,12 +496,11 @@ Lihat `docs/pocket/plans/2026-07-07-agentpair-v0/closeout.md` untuk daftar lengk
 
 Area yang masuk akal untuk kontribusi:
 
-1. **Publish ke npm** — build step, bin compiled JS, `npx agentpair`
-2. **OS keychain** — ganti file `keys.json` dengan keytar/macOS Keychain
-3. **File-backed allowlist** — wire `FileAllowlistStore` ke production path
-4. **Tier 0 transport** — GitHub Issues sebagai relay alternatif
-5. **Budget enforcement** — lengkapi state machine
-6. **Multi-relay** — agent card dengan beberapa relay URL
+1. **OS keychain** — ganti file `keys.json` dengan keytar/macOS Keychain
+2. **File-backed allowlist** — wire `FileAllowlistStore` ke production path
+3. **Tier 0 transport** — GitHub Issues sebagai relay alternatif
+4. **Budget enforcement** — lengkapi state machine
+5. **Multi-relay** — agent card dengan beberapa relay URL
 
 ---
 

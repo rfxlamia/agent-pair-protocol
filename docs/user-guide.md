@@ -33,24 +33,53 @@ Kunci kriptografi **tidak pernah** meninggalkan MCP server. Model AI hanya melak
 
 ## Instalasi
 
-### Dari source (saat ini)
+### Dari npm (disarankan)
 
-Paket belum dipublish ke npm registry. Clone repo dan jalankan:
+Setelah dipublish ke npm registry:
+
+```bash
+# Tidak perlu install global — MCP client memanggil lewat npx
+npx -y agentpair
+```
+
+Konfigurasi MCP (Cursor, Claude Desktop, dll.):
+
+```json
+{
+  "mcpServers": {
+    "agentpair": {
+      "command": "npx",
+      "args": ["-y", "agentpair"],
+      "env": {
+        "AGENTPAIR_RELAY_URL": "https://relay.yagura.space"
+      }
+    }
+  }
+}
+```
+
+Pin versi jika perlu stabilitas: `"args": ["-y", "agentpair@0.1.0"]`
+
+### Dari source (development)
 
 ```bash
 git clone https://github.com/<org>/agent-pair.git agent-pair
 cd agent-pair
 pnpm install
-pnpm --filter @agentpair/protocol build:wasm
+pnpm build
 ```
 
-> Ganti URL clone dengan URL repo aktual Anda. Paket belum dipublish ke npm (`npx agentpair` — coming soon).
+> Ganti URL clone dengan URL repo aktual Anda.
 
 ### Menjalankan MCP server
 
+**Dari npm:** gunakan konfigurasi `npx` di atas — AI client yang memanggil proses ini.
+
+**Dari source:**
+
 ```bash
 export AGENTPAIR_RELAY_URL=https://relay.yagura.space
-node packages/mcp-server/src/cli.ts
+node packages/mcp-server/dist/cli.js
 ```
 
 Server berkomunikasi lewat **stdio** (standar MCP). Jangan jalankan di background tanpa transport — AI client yang akan memanggil proses ini.
@@ -69,7 +98,7 @@ File ini permission `0600`. **Jangan bagikan atau commit file ini.** Public key 
 
 ## Integrasi ke AI Client
 
-### Cursor
+### Cursor (npm)
 
 Tambahkan ke `.cursor/mcp.json` di root workspace (atau konfigurasi global Cursor):
 
@@ -77,8 +106,24 @@ Tambahkan ke `.cursor/mcp.json` di root workspace (atau konfigurasi global Curso
 {
   "mcpServers": {
     "agentpair": {
+      "command": "npx",
+      "args": ["-y", "agentpair"],
+      "env": {
+        "AGENTPAIR_RELAY_URL": "https://relay.yagura.space"
+      }
+    }
+  }
+}
+```
+
+### Cursor (dari source)
+
+```json
+{
+  "mcpServers": {
+    "agentpair": {
       "command": "node",
-      "args": ["/path/to/agent-pair/packages/mcp-server/src/cli.ts"],
+      "args": ["/path/to/agent-pair/packages/mcp-server/dist/cli.js"],
       "env": {
         "AGENTPAIR_RELAY_URL": "https://relay.yagura.space"
       }
@@ -101,8 +146,8 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 {
   "mcpServers": {
     "agentpair": {
-      "command": "node",
-      "args": ["/path/to/agent-pair/packages/mcp-server/src/cli.ts"],
+      "command": "npx",
+      "args": ["-y", "agentpair"],
       "env": {
         "AGENTPAIR_RELAY_URL": "https://relay.yagura.space"
       }
@@ -115,7 +160,7 @@ Restart Claude Desktop setelah menyimpan.
 
 ### Claude Code / klien MCP lain
 
-Gunakan pola yang sama: `command` + `args` menunjuk ke `cli.ts`, dengan env `AGENTPAIR_RELAY_URL`.
+Gunakan pola yang sama: `npx` + `agentpair`, dengan env `AGENTPAIR_RELAY_URL`.
 
 ---
 
@@ -429,10 +474,11 @@ AgentPair secara struktural mencegah AI menyetujui hal-hal sensitif tanpa Anda:
 
 ### MCP server tidak muncul di AI client
 
-1. Pastikan path ke `cli.ts` benar (absolut, bukan relatif)
-2. Pastikan Node.js ≥ 22: `node --version`
-3. Restart AI client setelah mengubah konfigurasi MCP
-4. Cek log error MCP di output panel AI client
+1. Pastikan Node.js ≥ 22: `node --version`
+2. Untuk npm: pastikan `npx -y agentpair` berjalan di terminal
+3. Untuk source: pastikan path ke `dist/cli.js` benar (absolut, bukan relatif) dan sudah `pnpm build`
+4. Restart AI client setelah mengubah konfigurasi MCP
+5. Cek log error MCP di output panel AI client
 
 ### Pairing selalu gagal
 
@@ -452,10 +498,10 @@ AgentPair secara struktural mencegah AI menyetujui hal-hal sensitif tanpa Anda:
 Jika MCP gagal start dengan error modul WASM:
 
 ```bash
-pnpm --filter @agentpair/protocol build:wasm
+pnpm build
 ```
 
-Prasyarat build WASM: Rust toolchain + `wasm-pack`.
+Prasyarat build WASM: Rust toolchain + `wasm-pack` (hanya untuk build dari source).
 
 ### Acceptance test `codegen-compile` gagal
 
@@ -479,7 +525,6 @@ Payload dan artifact tetap terenkripsi end-to-end di kedua kasus.
 
 - Satu relay per deployment (tidak ada failover multi-relay di klien v0)
 - Metadata routing (`from`, `to`, `thread`) terlihat oleh operator relay
-- Belum dipublish ke npm (`npx agentpair` — coming soon; saat ini jalankan dari source)
 - Tier 0 (GitHub Issues sebagai transport) belum diimplementasi
 
 Untuk detail protokol lengkap, lihat [`agentpair-v0-requirement.md`](../pocket/agentpair-v0-requirement.md).
