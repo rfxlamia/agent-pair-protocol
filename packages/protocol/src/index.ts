@@ -27,3 +27,20 @@ export {
   type PakeRole,
   type PakeSessionHandle,
 } from "./pairing/pake-adapter.js";
+export {
+  InMemoryPairingRegistry,
+  PAIR_TTL_MS,
+  pairInit,
+  pairInitComplete,
+  pairJoin,
+  pairRetry,
+  type Bond,
+  type BondMode,
+  type LocalAllowlistStore,
+  type PairFlowResult,
+  type PairInitOutput,
+  type PairProposal,
+  type PairingRegistry,
+  type PairingRelayClient,
+  type PendingPair,
+} from "./pairing/flow.js";
