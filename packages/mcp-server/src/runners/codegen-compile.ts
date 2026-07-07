@@ -13,7 +13,9 @@ import { resolvePackageBin } from "./resolve-package-bin.js";
 
 const execFileAsync = promisify(execFile);
 
-const defaultQuicktypeBin = resolvePackageBin("quicktype");
+function resolveDefaultQuicktypeBin(): string {
+  return resolvePackageBin("quicktype");
+}
 
 export const DEFAULT_DOCKER_IMAGE = "agentpair/runner-esp32";
 
@@ -73,7 +75,17 @@ export async function runCodegenCompile(
 
   const bundle = schemaBundleForTopLevel(schemas, topLevel);
   const dockerImage = options.dockerImage ?? DEFAULT_DOCKER_IMAGE;
-  const quicktypeBin = options.quicktypeBin ?? defaultQuicktypeBin;
+  let quicktypeBin = options.quicktypeBin;
+  if (!quicktypeBin) {
+    try {
+      quicktypeBin = resolveDefaultQuicktypeBin();
+    } catch {
+      return {
+        ok: false,
+        error: "codegen-compile runner unavailable: install quicktype (dev dependency)",
+      };
+    }
+  }
   const workDir = await mkdtemp(join(tmpdir(), "agentpair-codegen-"));
 
   try {
