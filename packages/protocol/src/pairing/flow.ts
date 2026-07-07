@@ -138,6 +138,8 @@ async function sleep(ms: number): Promise<void> {
 }
 
 const BOND_COORDINATION_TIMEOUT_MS = 30_000;
+/** Human-gated pairing can take minutes between pair_join and human_approve. */
+const PAKE_HANDSHAKE_TIMEOUT_MS = PAIR_TTL_MS;
 
 async function pollWireMessage(
   relay: PairingRelayClient,
@@ -147,7 +149,11 @@ async function pollWireMessage(
 ): Promise<PairWireMessage | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const raw = await relay.pollPakeMessage(sessionId, timeoutMs);
+    const remaining = deadline - Date.now();
+    const raw = await relay.pollPakeMessage(
+      sessionId,
+      Math.min(remaining, 500),
+    );
     if (raw) {
       const message = decodeWireMessage(raw);
       if (predicate(message)) {
@@ -337,6 +343,7 @@ export async function pairJoin(input: {
     pending.sessionId,
     (message) =>
       message.phase === "confirm" && message.agentId !== joinerAgentId,
+    BOND_COORDINATION_TIMEOUT_MS,
   );
   if (!peerConfirm || peerConfirm.phase !== "confirm") {
     return { status: "pake_failed" };
@@ -436,6 +443,7 @@ export async function pairInitComplete(input: {
     input.relay,
     pending.sessionId,
     (message) => message.phase === "pake" && message.role === "joiner",
+    PAKE_HANDSHAKE_TIMEOUT_MS,
   );
   if (!joinerWire || joinerWire.phase !== "pake") {
     return { status: "pake_failed" };
