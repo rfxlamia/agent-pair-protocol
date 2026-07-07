@@ -1,0 +1,4 @@
+src/
+**/*.test.ts
+src/e2e/
+tsconfig.build.json

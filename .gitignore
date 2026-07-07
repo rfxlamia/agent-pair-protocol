@@ -41,8 +41,9 @@ packages/mcp-server/keys/
 
 # --- Rust / WASM (packages/protocol/wasm/) ---
 **/target/
-**/wasm/pkg/
+packages/protocol/wasm/pkg/
 **/*.wasm
+!packages/protocol/dist/wasm/**
 
 # --- Relay SQLite (local dev) ---
 packages/relay/data/

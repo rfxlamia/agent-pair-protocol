@@ -1,20 +1,31 @@
 {
-  "name": "@agentpair/mcp-server",
-  "version": "0.0.0",
-  "private": true,
+  "name": "agentpair",
+  "version": "0.1.0",
+  "description": "AgentPair MCP server — agent-to-agent pairing and encrypted messaging",
+  "license": "UNLICENSED",
   "type": "module",
   "bin": {
-    "agentpair": "./src/cli.ts"
+    "agentpair": "./dist/cli.js"
   },
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json && cp src/runners/spectral-ruleset.yaml dist/runners/",
+    "prepublishOnly": "pnpm build",
+    "pretest": "pnpm --filter @agentpair/protocol build",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@agentpair/protocol": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@noble/ciphers": "^2.2.0",
+    "@stoplight/spectral-cli": "^6.15.0",
     "json-schema-faker": "^0.5.9",
     "quicktype": "^23.3.21",
     "zod": "^3.25.67"
@@ -22,6 +33,7 @@
   "devDependencies": {
     "@agentpair/relay": "workspace:*",
     "@hono/node-server": "^1.14.4",
-    "@stoplight/spectral-cli": "^6.15.0"
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
   }
 }

@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,7 +24,21 @@ type WasmPakeSessionClass = {
 
 const require = createRequire(import.meta.url);
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const wasmPkgDir = join(moduleDir, "../../wasm/pkg");
+
+function resolveWasmPkgDir(): string {
+  const candidates = [
+    join(moduleDir, "../wasm/pkg"),
+    join(moduleDir, "../../wasm/pkg"),
+  ];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, "spake2_pake.js"))) {
+      return dir;
+    }
+  }
+  return candidates[1]!;
+}
+
+const wasmPkgDir = resolveWasmPkgDir();
 
 let PakeSessionClass: WasmPakeSessionClass | null = null;
 

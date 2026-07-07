@@ -1,4 +1,4 @@
-import type { Bond, BondMode } from "@agentpair/protocol";
+import type { Bond } from "@agentpair/protocol";
 
 export interface BondStore {
   get(agentId: string): Bond[];

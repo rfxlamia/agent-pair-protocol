@@ -1,8 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   extractSchemas,
@@ -10,14 +9,11 @@ import {
   schemaBundleForTopLevel,
   type OpenApiDocument,
 } from "./openapi-schemas.js";
+import { resolvePackageBin } from "./resolve-package-bin.js";
 
 const execFileAsync = promisify(execFile);
 
-const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
-const defaultQuicktypeBin = join(
-  packageRoot,
-  "node_modules/.bin/quicktype",
-);
+const defaultQuicktypeBin = resolvePackageBin("quicktype");
 
 export const DEFAULT_DOCKER_IMAGE = "agentpair/runner-esp32";
 
@@ -102,7 +98,6 @@ export async function runCodegenCompile(
       { timeout: 60_000 },
     );
 
-    const generatedPath = outBase;
     await execFileAsync(
       "docker",
       [

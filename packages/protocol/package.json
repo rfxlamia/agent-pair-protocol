@@ -1,14 +1,30 @@
 {
   "name": "@agentpair/protocol",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "AgentPair v0 protocol — crypto, envelopes, SPAKE2 pairing",
+  "license": "UNLICENSED",
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build:wasm": "cd wasm/spake2-pake && wasm-pack build --target nodejs --out-dir ../pkg --out-name spake2_pake",
+    "build": "pnpm build:wasm && tsc -p tsconfig.build.json && mkdir -p dist/wasm && cp -R wasm/pkg dist/wasm/ && rm -f dist/wasm/pkg/.gitignore",
+    "prepublishOnly": "pnpm build",
     "pretest": "test -f wasm/pkg/spake2_pake.js || pnpm build:wasm",
     "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
   },
   "dependencies": {
     "@noble/ciphers": "^2.2.0",

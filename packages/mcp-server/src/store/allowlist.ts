@@ -16,7 +16,10 @@ export function resolveAllowlistPath(baseDir?: string): string {
 export function createFileAllowlistStore(options: {
   filePath?: string;
   agentId?: string;
-} = {}): LocalAllowlistStore & { filePath: string } {
+} = {}): LocalAllowlistStore & {
+  filePath: string;
+  init(forAgentId: string): Promise<void>;
+} {
   const filePath = options.filePath ?? resolveAllowlistPath();
   let agentId = options.agentId;
   let cache: string[] | undefined;

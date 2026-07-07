@@ -1,0 +1,4 @@
+src/
+wasm/
+**/*.test.ts
+tsconfig.build.json

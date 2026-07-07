@@ -154,7 +154,7 @@ export class HttpRelayClient implements PairingRelayClient {
     keyPair: KeyPair,
     since = 0,
   ): Promise<
-    | { ok: true; envelopes: Envelope[] }
+    | { ok: true; envelopes: Envelope[]; cursor?: number }
     | { ok: false; error: string; thread?: string; last_good_seq?: number }
   > {
     const agentId = publicKeyToAgentId(keyPair.publicKey);

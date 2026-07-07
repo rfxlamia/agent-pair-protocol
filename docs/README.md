@@ -37,10 +37,13 @@ Atau jalankan relay sendiri — lihat [Panduan Developer](./developer-guide.md#m
 # Prasyarat: Node.js 22+
 export AGENTPAIR_RELAY_URL=https://relay.yourdomain.com
 
-# Dari repo (belum dipublish ke npm)
+# Dari npm (setelah publish)
+npx -y agentpair
+
+# Dari source (development)
 pnpm install
-pnpm --filter @agentpair/protocol build:wasm
-node packages/mcp-server/src/cli.ts
+pnpm build
+node packages/mcp-server/dist/cli.js
 ```
 
 Lanjut ke [Panduan Pengguna](./user-guide.md) untuk konfigurasi AI client dan alur pairing.
