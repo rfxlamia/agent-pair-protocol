@@ -299,19 +299,29 @@ export async function runSessionHappyPath(
   }
   await syncInboxes([initiator.ctx, joiner.ctx]);
 
-  const aliceRatifyPending = initiator.ctx.pending
-    .list()
-    .find((item) => item.kind === "ratify");
-  const bobRatifyPending = joiner.ctx.pending
-    .list()
-    .find((item) => item.kind === "ratify");
-  if (!aliceRatifyPending || !bobRatifyPending) {
-    throw new Error("missing ratify pending after sign");
+  const aliceRatifyStatus = structured(
+    await handleSessionStatus(initiator.ctx, { thread }),
+  );
+  const bobRatifyStatus = structured(
+    await handleSessionStatus(joiner.ctx, { thread }),
+  );
+  if (
+    !aliceRatifyStatus.ok ||
+    !bobRatifyStatus.ok ||
+    !aliceRatifyStatus.pending_id ||
+    !bobRatifyStatus.pending_id
+  ) {
+    throw new Error(
+      `missing ratify pending_id in session_status: ${JSON.stringify({
+        alice: aliceRatifyStatus,
+        bob: bobRatifyStatus,
+      })}`,
+    );
   }
 
   const aliceRatify = structured(
     await handleSessionRatify(initiator.ctx, {
-      pending_id: aliceRatifyPending.id,
+      pending_id: aliceRatifyStatus.pending_id,
       via_human: true,
     }),
   );
@@ -322,7 +332,7 @@ export async function runSessionHappyPath(
 
   const bobRatify = structured(
     await handleSessionRatify(joiner.ctx, {
-      pending_id: bobRatifyPending.id,
+      pending_id: bobRatifyStatus.pending_id,
       via_human: true,
     }),
   );

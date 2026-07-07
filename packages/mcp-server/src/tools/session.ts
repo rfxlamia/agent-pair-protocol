@@ -38,6 +38,17 @@ export async function resolveSessionOpenPendingId(
   return machine.resolveOpenPendingId(thread);
 }
 
+export async function resolveRatifyPendingId(
+  ctx: AgentContext,
+  thread: string,
+): Promise<string | undefined> {
+  const machine = sessionMachines.get(ctx);
+  if (!machine) {
+    return undefined;
+  }
+  return machine.resolveRatifyPendingId(thread);
+}
+
 export function peekSessionOpenStatus(
   ctx: AgentContext,
   thread: string,

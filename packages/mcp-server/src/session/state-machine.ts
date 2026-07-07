@@ -205,6 +205,43 @@ export function createSessionStateMachine(
     });
   }
 
+  function findRatifyPending(thread: string) {
+    return deps.pending
+      .list()
+      .find((item) => item.kind === "ratify" && item.thread === thread);
+  }
+
+  function removeRatifyPendingForThread(thread: string) {
+    const pending = findRatifyPending(thread);
+    if (pending) {
+      deps.pending.remove(pending.id);
+    }
+  }
+
+  function ensureRatifyPending(session: SessionRecord) {
+    if (session.status !== "signed" && session.status !== "closed") {
+      return undefined;
+    }
+    const role = roleFor(session, deps.agentId);
+    if (session.ratifyApproved[role]) {
+      return undefined;
+    }
+    // Read-path side effect: used by handleStatus and resolveRatifyPendingId.
+    const existing = findRatifyPending(session.thread);
+    if (existing) {
+      return existing;
+    }
+    if (!session.artifactHash) {
+      return undefined;
+    }
+    // Read-path side effect: re-queues a lost ratify entry for human_approve.
+    return deps.pending.addRatify({
+      thread: session.thread,
+      peer: peerFor(session, deps.agentId),
+      artifactHash: session.artifactHash,
+    });
+  }
+
   async function notifyPeer(
     session: SessionRecord,
     type: string,
@@ -462,12 +499,23 @@ export function createSessionStateMachine(
       }
 
       for (const pending of deps.pending.list()) {
-        if (pending.kind !== "session_open") {
+        if (pending.kind === "session_open") {
+          const session = store.get(pending.thread);
+          if (!session || session.status !== "pending") {
+            deps.pending.remove(pending.id);
+          }
           continue;
         }
-        const session = store.get(pending.thread);
-        if (!session || session.status !== "pending") {
-          deps.pending.remove(pending.id);
+        if (pending.kind === "ratify") {
+          const session = store.get(pending.thread);
+          if (!session) {
+            deps.pending.remove(pending.id);
+            continue;
+          }
+          const role = roleFor(session, deps.agentId);
+          if (session.status === "closed" || session.ratifyApproved[role]) {
+            deps.pending.remove(pending.id);
+          }
         }
       }
 
@@ -591,14 +639,18 @@ export function createSessionStateMachine(
               ? "signed"
               : found.session.status,
           });
-          if (updated.status === "signed") {
-            deps.pending.addRatify({
-              thread: updated.thread,
-              peer: input.from,
-              artifactHash: updated.artifactHash ?? "",
-            });
-          }
-          return result({ ok: true, thread: input.thread, status: updated.status });
+          const pendingRatify =
+            updated.status === "signed"
+              ? ensureRatifyPending(updated)
+              : undefined;
+          return result({
+            ok: true,
+            thread: input.thread,
+            status: updated.status,
+            ...(pendingRatify
+              ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const }
+              : {}),
+          });
         }
         case "session.peer_turn": {
           const found = getOrError(input.thread);
@@ -801,19 +853,17 @@ export function createSessionStateMachine(
         artifact_hash: input.artifact_hash,
       });
 
-      if (updated.status === "signed") {
-        deps.pending.addRatify({
-          thread: updated.thread,
-          peer: peerFor(updated, deps.agentId),
-          artifactHash: input.artifact_hash,
-        });
-      }
+      const pendingRatify =
+        updated.status === "signed" ? ensureRatifyPending(updated) : undefined;
 
       return result({
         ok: true,
         thread: input.thread,
         status: updated.status,
         artifact_hash: input.artifact_hash,
+        ...(pendingRatify
+          ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const }
+          : {}),
       });
     },
 
@@ -860,9 +910,7 @@ export function createSessionStateMachine(
       const role = roleFor(session, deps.agentId);
       const ratifyApproved = { ...session.ratifyApproved, [role]: true };
       const updated = upsert({ ...session, ratifyApproved });
-      if (input.pending_id) {
-        deps.pending.remove(input.pending_id);
-      }
+      removeRatifyPendingForThread(thread);
 
       await notifyPeer(updated, "session.peer_ratified", {
         thread: updated.thread,
@@ -895,6 +943,14 @@ export function createSessionStateMachine(
       return ensureRecipientOpenPending(session)?.id;
     },
 
+    resolveRatifyPendingId(thread: string) {
+      const session = store.get(thread);
+      if (!session) {
+        return undefined;
+      }
+      return ensureRatifyPending(session)?.id;
+    },
+
     peekSessionOpenStatus(thread: string) {
       return store.get(thread)?.status;
     },
@@ -908,6 +964,10 @@ export function createSessionStateMachine(
       const pendingOpen =
         session.status === "pending" && session.role === "recipient"
           ? ensureRecipientOpenPending(session)
+          : undefined;
+      const pendingRatify =
+        session.status === "signed" || session.status === "closed"
+          ? ensureRatifyPending(session)
           : undefined;
       const current = store.get(session.thread) ?? session;
       return result({
@@ -927,7 +987,12 @@ export function createSessionStateMachine(
           bothChallengesFiled(current),
         ratify_approved: current.ratifyApproved,
         expires_at: current.expiresAt,
-        ...(pendingOpen ? { pending_id: pendingOpen.id } : {}),
+        ...(pendingOpen
+          ? { pending_id: pendingOpen.id, pending_kind: "session_open" as const }
+          : {}),
+        ...(pendingRatify
+          ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const }
+          : {}),
       });
     },
   };

@@ -529,6 +529,9 @@ describe("session state machine", () => {
       return;
     }
     expect(aliceApproved.status).toBe("awaiting_peer_ratify");
+    expect(alicePending.list().filter((item) => item.kind === "ratify")).toHaveLength(
+      0,
+    );
 
     const bobApproved = structured(
       await bobMachine.handleRatify({
@@ -543,6 +546,7 @@ describe("session state machine", () => {
     expect(bobApproved.status).toBe("closed");
     expect(bobApproved.co_signed_hash).toBe(artifactHash);
     expect(bobApproved.signatures).toBeDefined();
+    expect(bobPending.list().filter((item) => item.kind === "ratify")).toHaveLength(0);
 
     const aliceFinal = structured(
       await aliceMachine.handleStatus({ thread }),
@@ -553,6 +557,49 @@ describe("session state machine", () => {
     }
     expect(aliceFinal.status).toBe("closed");
     expect(aliceFinal.co_signed_hash).toBe(artifactHash);
+  });
+
+  it("removes ratify pending when ratifying by thread without pending_id", async () => {
+    const thread = await openAndApprove();
+    const artifactHash = "sha256:thread-only-ratify";
+
+    for (const machine of [aliceMachine, bobMachine]) {
+      await machine.handleMsg({
+        thread,
+        type: "challenge",
+        body: JSON.stringify({ report: "pass" }),
+      });
+      await machine.handleMsg({
+        thread,
+        type: "test_report",
+        body: JSON.stringify({
+          artifact_hash: artifactHash,
+          passed: true,
+          runner: "payload-size",
+        }),
+      });
+    }
+    await aliceMachine.handleSign({ thread, artifact_hash: artifactHash });
+    await bobMachine.handleSign({ thread, artifact_hash: artifactHash });
+
+    expect(
+      alicePending.list().filter((item) => item.kind === "ratify"),
+    ).toHaveLength(1);
+
+    const approved = structured(
+      await aliceMachine.handleRatify({
+        thread,
+        artifact_hash: artifactHash,
+        via_human: true,
+      }),
+    );
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) {
+      return;
+    }
+    expect(
+      alicePending.list().filter((item) => item.kind === "ratify"),
+    ).toHaveLength(0);
   });
 
   it("session_sign rejects when codegen-compile test_report is red", async () => {
