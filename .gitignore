@@ -1,0 +1,65 @@
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Dependencies ---
+node_modules/
+.pnpm-store/
+
+# --- Build outputs ---
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# --- TypeScript / tooling caches ---
+.cache/
+.turbo/
+.eslintcache
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Test & coverage ---
+coverage/
+.nyc_output/
+vitest.config.ts.timestamp-*
+
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+
+# AgentPair local state (keys, allowlists, pending approvals)
+.agentpair/
+packages/mcp-server/.data/
+packages/mcp-server/keys/
+*.pem
+*.key
+
+# --- Rust / WASM (packages/protocol/wasm/) ---
+**/target/
+**/wasm/pkg/
+**/*.wasm
+
+# --- Relay SQLite (local dev) ---
+packages/relay/data/
+packages/relay/*.db
+packages/relay/*.db-*
+
+# --- Docker (local build artifacts) ---
+packages/runner-esp32/.build/
+
+# --- IDE ---
+.idea/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# --- MCP / Cursor (session-local, not project config) ---
+.cursor/projects/
