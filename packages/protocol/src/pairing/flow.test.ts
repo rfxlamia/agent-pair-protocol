@@ -193,6 +193,45 @@ describe("pairing flow", () => {
   );
 
   it(
+    "completes pairing when initiator waits several seconds for human approval",
+    async () => {
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+      });
+
+      const completeInitPromise = pairInitComplete({
+        code: pending.code,
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+        localAllowlist: initiatorAllowlist,
+      });
+
+      // Simulate human reading the pairing proposal before approving.
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      const joinResult = await pairJoin({
+        code: pending.code,
+        keyPair: joinerKeys,
+        relay,
+        registry,
+        localAllowlist: joinerAllowlist,
+        decision: { approve: true },
+      });
+
+      const initResult = await completeInitPromise;
+
+      expect(joinResult.status).toBe("bonded");
+      expect(initResult.status).toBe("bonded");
+    },
+    30000,
+  );
+
+  it(
     "aborts SPAKE2 with wrong code and creates no allowlist entries",
     async () => {
     const pending = await pairInit({
