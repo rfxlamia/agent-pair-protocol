@@ -20,8 +20,9 @@ interface GapInfo {
 function detectGaps(
   rows: Array<{ thread_id: string; seq: number; sender_agent_id: string }>,
 ): GapInfo[] {
-  // Gap detection is per (thread, sender): bidirectional threads use a shared
-  // thread id but each party only receives the other side's seq stream.
+  // Gap detection is per (thread, sender). Threads use a shared global sequence
+  // counter across both parties (1, 2, 3, …), so each sender's stream is either
+  // consecutive (+1, legacy per-sender mode) or odd/even (+2, global turn-taking).
   const byThreadSender = new Map<string, number[]>();
   for (const row of rows) {
     const key = `${row.thread_id}\0${row.sender_agent_id}`;
@@ -34,18 +35,24 @@ function detectGaps(
   for (const [key, seqs] of byThreadSender) {
     const thread = key.split("\0")[0]!;
     const sorted = [...new Set(seqs)].sort((a, b) => a - b);
-    if (sorted.length === 0) {
+    if (sorted.length <= 1) {
       continue;
     }
+
+    // Parity heuristic: all-odd/all-even streams use +2 (global turn-taking).
+    // Mixed parity falls back to +1 (legacy per-sender or burst patterns).
+    const allOdd = sorted.every((seq) => seq % 2 === 1);
+    const allEven = sorted.every((seq) => seq % 2 === 0);
+    const step = allOdd || allEven ? 2 : 1;
 
     let lastGood = sorted[0]!;
     for (let i = 1; i < sorted.length; i += 1) {
       const current = sorted[i]!;
-      if (current !== lastGood + 1) {
+      if (current !== lastGood + step) {
         gaps.push({
           thread,
           last_good_seq: lastGood,
-          expected_seq: lastGood + 1,
+          expected_seq: lastGood + step,
         });
         break;
       }
@@ -143,7 +150,7 @@ export function createInboxRoutes(
     }
 
     const now = Date.now();
-    db.prepare(
+    const insert = db.prepare(
       `INSERT INTO inbox (
          id, recipient_agent_id, envelope_json, sender_agent_id,
          thread_id, seq, msg_type, received_at
@@ -159,6 +166,10 @@ export function createInboxRoutes(
       routing.type,
       now,
     );
+
+    if (insert.changes === 0) {
+      return c.json({ error: "duplicate_envelope_id" }, 409);
+    }
 
     return c.body(null, 204);
   });
@@ -216,25 +227,16 @@ export function createInboxRoutes(
     }
 
     const gaps = detectGaps(gapRows);
-    if (gaps.length > 0) {
-      const firstGap = gaps[0]!;
-      return c.json(
-        {
-          error: "gap_detected",
-          thread: firstGap.thread,
-          last_good_seq: firstGap.last_good_seq,
-          expected_seq: firstGap.expected_seq,
-        },
-        409,
-      );
-    }
-
     const envelopes = rows.map((row) => JSON.parse(row.envelope_json));
     const cursor =
       rows.length > 0
         ? Math.max(...rows.map((row) => row.received_at))
         : since;
-    return c.json({ envelopes, cursor });
+    return c.json({
+      envelopes,
+      cursor,
+      ...(gaps.length > 0 ? { gaps } : {}),
+    });
   });
 
   return routes;
