@@ -10,5 +10,12 @@
   "types": "./src/index.ts",
   "scripts": {
     "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "json-schema-faker": "^0.5.9",
+    "quicktype": "^23.3.21"
+  },
+  "devDependencies": {
+    "@stoplight/spectral-cli": "^6.15.0"
   }
 }
