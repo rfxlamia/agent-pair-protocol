@@ -1,0 +1,19 @@
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: packages/relay/Dockerfile
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - relay-data:/data
+    networks:
+      - agentpair-net
+    restart: unless-stopped
+
+networks:
+  agentpair-net:
+    name: agentpair-net
+
+volumes:
+  relay-data:
