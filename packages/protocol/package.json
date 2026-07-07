@@ -2,7 +2,7 @@
   "name": "@agentpair/protocol",
   "version": "0.1.1",
   "description": "AgentPair v0 protocol — crypto, envelopes, SPAKE2 pairing",
-  "license": "UNLICENSED",
+  "license": "WTFPL",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
