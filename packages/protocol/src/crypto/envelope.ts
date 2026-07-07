@@ -133,6 +133,6 @@ export function randomEnvelopeId(): string {
   return crypto.randomUUID();
 }
 
-export function randomNonce(bytes = 32): Uint8Array {
+export function randomNonce(bytes = 24): Uint8Array {
   return randomBytes(bytes);
 }

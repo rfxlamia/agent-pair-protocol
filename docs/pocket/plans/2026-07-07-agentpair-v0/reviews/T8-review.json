@@ -1,0 +1,55 @@
+{
+  "task_id": "T8",
+  "task_name": "Session layer",
+  "cycle": 1,
+  "timestamp": "2026-07-07T05:22:30Z",
+  "reviewer_mode": "read-only",
+  "reviewer_config": "batch-parallel",
+  "stage_1": {
+    "status": "PASS",
+    "issues": [],
+    "concerns_addressed": []
+  },
+  "stage_2": {
+    "status": "PASS",
+    "strengths": [
+      "DELIVERABLE fully met: session_open queues pending and only goes live after human_approve (state-machine.ts:319-347); session_sign is gated on both challenges filed AND both test_reports passing (state-machine.ts:653-698); ratification produces a co-signed hash on finalize (state-machine.ts:186-207, 700-768).",
+      "QUALITY BAR satisfied: agent ratify without human_approve is blocked with 'human_required' (state-machine.ts:706-708), mirrored for approve/reject open; verified by test 'ratification requires human_approve on both sides' (state-machine.test.ts:400-492).",
+      "Full OBJECTIVE surface implemented: session_msg propose/counter/accept/challenge/test_report, session_status, 1h pending timeout (SESSION_OPEN_TTL_MS, handleExpirePendingOpens), open_reject/open_expired envelopes, and ephemeral bond cleanup on finalize (removeEphemeralBond, state-machine.ts:176-184).",
+      "Ephemeral bond cleanup verified end-to-end: allowlist and bond entries removed on both sides after co-sign (state-machine.test.ts:494-549).",
+      "Clean separation: pure state machine in session/state-machine.ts, MCP wiring in tools/session.ts, human gating centralized in tools/human-approve.ts; assertNoSecrets applied on every tool response wrapper (tools/session.ts).",
+      "Realistic bidirectional test harness (linked in-process machines with mock relay delivery) exercises the full happy path; all 7 tests pass."
+    ],
+    "issues": [
+      {
+        "severity": "Minor",
+        "description": "Unused import 'publicKeyToAgentId' (agentId is passed in via deps, sign is the only symbol used).",
+        "location": "packages/mcp-server/src/session/state-machine.ts:2"
+      },
+      {
+        "severity": "Minor",
+        "description": "Unused import 'BondMode' (only PairProposal is referenced in this module).",
+        "location": "packages/mcp-server/src/store/pending.ts:1"
+      },
+      {
+        "severity": "Minor",
+        "description": "Exported 'processSessionInboxEnvelope' is defined but not wired into the inbox pull path within mcp-server/src; incoming session envelopes are only exercised via handleIncomingEnvelope in tests. Not a T8 spec gap (inbox routing belongs to T6), noted as an observation.",
+        "location": "packages/mcp-server/src/tools/session.ts:155"
+      },
+      {
+        "severity": "Minor",
+        "description": "Budget-exhaustion enforcement (spec 'Budget exhausted' scenario: escalate on max_turns, budget_extend via both humans) is not implemented — turnCount is incremented but never compared to budget.max_turns. Outside the T8 DELIVERABLE/OBJECTIVE (happy path only), noted as observation.",
+        "location": "packages/mcp-server/src/session/state-machine.ts:649"
+      }
+    ],
+    "assessment": "Approved"
+  },
+  "overall": "REVIEW_PASS",
+  "fix_instructions": "",
+  "loop_info": {
+    "current_cycle": 1,
+    "max_cycles": 1,
+    "cycles_remaining": 0
+  },
+  "reviewed_sha": "7e9b3e6b35a97d4809cf245141254c776fc9a6a6"
+}

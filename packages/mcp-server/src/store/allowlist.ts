@@ -1,5 +1,6 @@
 import type { LocalAllowlistStore } from "@agentpair/protocol";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -54,8 +55,20 @@ export function createFileAllowlistStore(options: {
       if (agentId && agent !== agentId) {
         return [];
       }
-      void load();
-      return [...(cache ?? [])];
+      if (cache === undefined) {
+        try {
+          const raw = readFileSync(filePath, "utf8");
+          const parsed = JSON.parse(raw) as AllowlistFile;
+          cache = Array.isArray(parsed.allowed) ? [...parsed.allowed] : [];
+        } catch (error) {
+          const err = error as NodeJS.ErrnoException;
+          if (err.code !== "ENOENT") {
+            throw error;
+          }
+          cache = [];
+        }
+      }
+      return [...cache];
     },
     set(agent: string, allowed: string[]) {
       if (agentId && agent !== agentId) {

@@ -191,10 +191,11 @@ export class HttpRelayClient implements PairingRelayClient {
 
     const payload = (await pullRes.json()) as {
       envelopes?: Array<string | Envelope>;
+      cursor?: number;
     };
     const envelopes = (payload.envelopes ?? []).map((raw) =>
       typeof raw === "string" ? deserializeEnvelope(raw) : raw,
     );
-    return { ok: true, envelopes };
+    return { ok: true, envelopes, cursor: payload.cursor };
   }
 }

@@ -3,9 +3,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { OpenApiDocument } from "./openapi-schemas.js";
 
 const execFileAsync = promisify(execFile);
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const defaultRulesetPath = join(moduleDir, "spectral-ruleset.yaml");
 
 export type RunnerResult = {
   ok: boolean;
@@ -15,6 +19,7 @@ export type RunnerResult = {
 
 export type SpectralOptions = {
   spectralBin?: string;
+  rulesetPath?: string;
 };
 
 export async function runSpectral(
@@ -30,7 +35,14 @@ export async function runSpectral(
 
     const { stdout, stderr } = await execFileAsync(
       spectralBin,
-      ["lint", specPath, "--format", "json"],
+      [
+        "lint",
+        specPath,
+        "--ruleset",
+        options.rulesetPath ?? defaultRulesetPath,
+        "--format",
+        "json",
+      ],
       { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 },
     );
 

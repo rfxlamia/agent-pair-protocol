@@ -46,10 +46,11 @@ describe("inbox relay routes", () => {
   const strangerId = publicKeyToAgentId(stranger.publicKey);
 
   beforeAll(async () => {
-    const { app } = createRelayApp({
+    const relay = createRelayApp({
       rateLimitWindowMs: 60_000,
       rateLimitMax: 100,
     });
+    const { app } = relay;
 
     await new Promise<void>((resolve) => {
       server = serve({ fetch: app.fetch, port: TEST_PORT }, resolve);
@@ -175,6 +176,14 @@ describe("inbox relay routes", () => {
     expect(body.last_good_seq).toBe(2);
   });
 
+  it("returns 403 (not 404) for unknown challenge nonce per spec", async () => {
+    const sig = signChallenge("nonexistent-nonce", bob.secretKey);
+    const res = await fetch(
+      `${BASE_URL}/inbox/${bobId}?since=0&challenge=nonexistent-nonce&sig=${encodeURIComponent(sig)}`,
+    );
+    expect(res.status).toBe(403);
+  });
+
   it("enforces per-IP rate limits on POST /pair", async () => {
     const { app } = createRelayApp({
       rateLimitWindowMs: 60_000,
@@ -209,5 +218,174 @@ describe("inbox relay routes", () => {
         });
       });
     }
+  });
+});
+
+const ISOLATED_PORT = 3003;
+const ISOLATED_BASE = `http://127.0.0.1:${ISOLATED_PORT}`;
+
+describe("inbox relay regressions (isolated db)", () => {
+  let server: ServerType;
+  let db: ReturnType<typeof createRelayApp>["db"];
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+    db = relay.db;
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: ISOLATED_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${ISOLATED_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  async function authenticatedInboxPull(since: number) {
+    const challengeRes = await fetch(
+      `${ISOLATED_BASE}/inbox/${bobId}?since=${since}`,
+    );
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, bob.secretKey);
+    return fetch(
+      `${ISOLATED_BASE}/inbox/${bobId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+    );
+  }
+
+  it("returns cursor with max received_at for incremental inbox pulls", async () => {
+    const thread = "770e8400-e29b-41d4-a716-446655440088";
+    const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(
+        createEnvelope({
+          sender: alice,
+          recipientAgentId: bobId,
+          type: "chat.message",
+          thread,
+          seq: 1,
+          ttl: 3600,
+          payload: utf8ToBytes("cursor-test"),
+          id: crypto.randomUUID(),
+        }),
+      ),
+    });
+    expect(postRes.status).toBe(204);
+
+    const res = await authenticatedInboxPull(0);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      envelopes: unknown[];
+      cursor?: number;
+    };
+    const row = db
+      .prepare(
+        "SELECT received_at FROM inbox WHERE thread_id = ? ORDER BY received_at DESC LIMIT 1",
+      )
+      .get(thread) as { received_at: number };
+    expect(body.cursor).toBe(row.received_at);
+  });
+
+  it("detects seq gaps when pulling incrementally with since cursor", async () => {
+    const thread = "880e8400-e29b-41d4-a716-446655440077";
+    for (const seq of [1, 2]) {
+      const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "chat.message",
+            thread,
+            seq,
+            ttl: 3600,
+            payload: utf8ToBytes(`incr-${seq}`),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    const firstPull = await authenticatedInboxPull(0);
+    expect(firstPull.status).toBe(200);
+
+    const maxReceived = db
+      .prepare(
+        "SELECT MAX(received_at) AS received_at FROM inbox WHERE thread_id = ?",
+      )
+      .get(thread) as { received_at: number };
+
+    const gapPost = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(
+        createEnvelope({
+          sender: alice,
+          recipientAgentId: bobId,
+          type: "chat.message",
+          thread,
+          seq: 4,
+          ttl: 3600,
+          payload: utf8ToBytes("incr-4"),
+          id: crypto.randomUUID(),
+        }),
+      ),
+    });
+    expect(gapPost.status).toBe(204);
+
+    const gapPull = await authenticatedInboxPull(maxReceived.received_at);
+    expect(gapPull.status).toBe(409);
+    const body = (await gapPull.json()) as {
+      error: string;
+      last_good_seq: number;
+      expected_seq: number;
+    };
+    expect(body.error).toBe("gap_detected");
+    expect(body.last_good_seq).toBe(2);
+    expect(body.expected_seq).toBe(3);
+  });
+
+  it("garbage-collects expired challenge rows", async () => {
+    const before = (
+      db.prepare("SELECT COUNT(*) AS count FROM challenges").get() as {
+        count: number;
+      }
+    ).count;
+
+    for (let i = 0; i < 5; i += 1) {
+      await fetch(`${ISOLATED_BASE}/inbox/${bobId}?since=0`);
+    }
+
+    const after = (
+      db.prepare("SELECT COUNT(*) AS count FROM challenges").get() as {
+        count: number;
+      }
+    ).count;
+    expect(after).toBe(before);
   });
 });

@@ -1,0 +1,45 @@
+{
+  "task_id": "T2",
+  "task_name": "Protocol crypto and envelope",
+  "cycle": 1,
+  "timestamp": "2026-07-07T04:54:00Z",
+  "reviewer_mode": "read-only",
+  "reviewer_config": "batch-parallel",
+  "stage_1": {
+    "status": "PASS",
+    "issues": [],
+    "concerns_addressed": []
+  },
+  "stage_2": {
+    "status": "PASS",
+    "strengths": [
+      "All crypto delegated to @noble/* libraries (curves, ciphers, hashes) — satisfies the 'no hand-roll Ed25519 or AEAD' quality bar (keys.ts, sign.ts, encrypt.ts)",
+      "DELIVERABLE fully covered: round-trip encrypt/sign/verify/decrypt, tampered-sig rejection, and no-private-key-exposure are each backed by a dedicated test (envelope.test.ts:13, 34, 52)",
+      "Correct crypto ordering: verify-then-decrypt in decryptEnvelopePayload (envelope.ts:104-107); encrypt derives an ECDH shared secret via Ed25519->Montgomery conversion and HKDF-SHA256, symmetric across sender/recipient (encrypt.ts:10-21)",
+      "Deterministic canonical signing bytes via alphabetically-ordered field object, avoiding JSON key-order ambiguity (envelope.ts:43-55)",
+      "Clean separation of concerns across keys/sign/encrypt/envelope modules; envelope excludes secret material from the serialized shape (Envelope interface, envelope.ts:10-20)",
+      "Decrypt guards against truncated ciphertext with an explicit length check (encrypt.ts:46-48)"
+    ],
+    "issues": [
+      {
+        "severity": "Minor",
+        "description": "Magic number 16 (Poly1305 tag length) in the payload length check should be a named constant for readability",
+        "location": "packages/protocol/src/crypto/encrypt.ts:46"
+      },
+      {
+        "severity": "Minor",
+        "description": "randomNonce() and randomEnvelopeId() are exported but unused within T2's scope (appear intended for later tasks e.g. relay challenge nonces); randomNonce defaults to 32 bytes which does not match the 24-byte XChaCha nonce, so callers must pass the correct length — mild footgun",
+        "location": "packages/protocol/src/crypto/envelope.ts:132-138"
+      }
+    ],
+    "assessment": "Approved"
+  },
+  "overall": "REVIEW_PASS",
+  "fix_instructions": "",
+  "loop_info": {
+    "current_cycle": 1,
+    "max_cycles": 1,
+    "cycles_remaining": 0
+  },
+  "reviewed_sha": "3106c87f2e4e462aba764793272d553acfbc4a5a"
+}

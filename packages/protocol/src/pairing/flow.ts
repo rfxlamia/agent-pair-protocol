@@ -137,6 +137,8 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const BOND_COORDINATION_TIMEOUT_MS = 30_000;
+
 async function pollWireMessage(
   relay: PairingRelayClient,
   sessionId: string,
@@ -366,6 +368,7 @@ export async function pairJoin(input: {
     input.relay,
     pending.sessionId,
     (message) => message.phase === "bond_ok" || message.phase === "bond_fail",
+    BOND_COORDINATION_TIMEOUT_MS,
   );
   if (!bondOk || bondOk.phase === "bond_fail") {
     return { status: "rolled_back" };

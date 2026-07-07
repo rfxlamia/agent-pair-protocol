@@ -9,6 +9,22 @@ import {
 import { assertNoSecrets } from "./util.js";
 
 const sessionMachines = new WeakMap<AgentContext, SessionStateMachine>();
+const sessionThreadSeq = new WeakMap<AgentContext, Map<string, number>>();
+
+function nextSessionSeq(ctx: AgentContext, thread: string): number {
+  const counters = sessionThreadSeq.get(ctx) ?? new Map<string, number>();
+  sessionThreadSeq.set(ctx, counters);
+  const next = (counters.get(thread) ?? 0) + 1;
+  counters.set(thread, next);
+  return next;
+}
+
+export async function expirePendingSessions(ctx: AgentContext): Promise<void> {
+  const machine = sessionMachines.get(ctx);
+  if (machine) {
+    await machine.handleExpirePendingOpens();
+  }
+}
 
 async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine> {
   const cached = sessionMachines.get(ctx);
@@ -32,7 +48,7 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
             recipientAgentId: input.to,
             type: input.type,
             thread: input.thread,
-            seq: input.seq ?? 1,
+            seq: input.seq ?? nextSessionSeq(ctx, input.thread),
             ttl: 3600,
             payload: utf8ToBytes(input.payload),
           });
@@ -107,6 +123,7 @@ export async function handleSessionStatus(
   ctx: AgentContext,
   input: { thread: string },
 ) {
+  await expirePendingSessions(ctx);
   return withSessionMachine(ctx, async (machine) => {
     const result = await machine.handleStatus(input);
     assertNoSecrets(result.structuredContent);

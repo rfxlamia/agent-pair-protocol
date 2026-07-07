@@ -1,0 +1,50 @@
+{
+  "task_id": "T6",
+  "task_name": "MCP transport tools",
+  "cycle": 1,
+  "timestamp": "2026-07-07T05:23:40Z",
+  "reviewer_mode": "read-only",
+  "reviewer_config": "batch-parallel",
+  "stage_1": {
+    "status": "PASS",
+    "issues": [],
+    "concerns_addressed": []
+  },
+  "stage_2": {
+    "status": "PASS",
+    "strengths": [
+      "All six required MCP tools present and wired at reviewed SHA: pair_init, pair_join, inbox, send, revoke, human_approve (index.ts:46-137, tools/pair.ts, tools/inbox.ts, tools/human-approve.ts).",
+      "Defense-in-depth secret handling satisfies the quality bar: stripSecrets() recursively removes secret keys and assertNoSecrets() throws on any leak, and every tool response passes through both (util.ts:24-57).",
+      "Keys never leave the process: signing uses secretKey internally and only base64url signatures are transmitted for allowlist push and inbox challenge (relay/client.ts:43-59,105-121,169).",
+      "Local key store enforces file 0600 / dir 0700 with explicit chmod, verified by test (store/keys.ts:6-7,62-67; pair.test.ts:199-215).",
+      "All-or-nothing allowlist rollback and agent self-approval rejection are both implemented and covered by passing integration tests against a real in-process Hono relay (pair.test.ts:130-197).",
+      "Full pair suite green: 4/4 tests pass (bonding, rollback, self-approval-forbidden, key-file-mode)."
+    ],
+    "issues": [
+      {
+        "severity": "Minor",
+        "description": "createFileAllowlistStore is defined and exported but not wired into the running server (createAgentContext defaults to MemoryAllowlistStore), so local allowlist state is not persisted across restarts in the shipped transport path. Not required by the DELIVERABLE, but effectively dead code at this SHA.",
+        "location": "packages/mcp-server/src/store/allowlist.ts:15-72"
+      },
+      {
+        "severity": "Minor",
+        "description": "FileAllowlistStore.get() is synchronous but relies on a fire-and-forget `void load()`; on a cold cache it returns [] and only becomes correct after the async init()/load() resolves. Latent correctness smell should this store ever be wired in.",
+        "location": "packages/mcp-server/src/store/allowlist.ts:53-59"
+      },
+      {
+        "severity": "Minor",
+        "description": "handleSend defaults seq to 1 and thread to a fresh random UUID when omitted; it performs no per-thread sequence tracking, so repeated sends without an explicit seq all emit seq=1. Sequence/gap management is delegated to the caller/relay, but the static default could produce misleading sequences.",
+        "location": "packages/mcp-server/src/tools/inbox.ts:63-65"
+      }
+    ],
+    "assessment": "Approved"
+  },
+  "overall": "REVIEW_PASS",
+  "fix_instructions": "",
+  "loop_info": {
+    "current_cycle": 1,
+    "max_cycles": 1,
+    "cycles_remaining": 0
+  },
+  "reviewed_sha": "4964c2bcac1dbae8a6971270252e728613c874b9"
+}

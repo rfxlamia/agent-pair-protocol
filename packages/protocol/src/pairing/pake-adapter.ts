@@ -7,6 +7,7 @@ export type PakeRole = "initiator" | "joiner";
 export interface PakeSessionHandle {
   finish(peerMessage: Uint8Array): Uint8Array;
   outboundMessage(): Uint8Array;
+  free(): void;
 }
 
 type WasmPakeSession = {
@@ -33,6 +34,9 @@ function wrapSession(session: WasmPakeSession): PakeSessionHandle {
     },
     finish(peerMessage: Uint8Array): Uint8Array {
       return session.finish(peerMessage);
+    },
+    free(): void {
+      session.free();
     },
   };
 }

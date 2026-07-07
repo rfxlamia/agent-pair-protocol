@@ -1,0 +1,59 @@
+{
+  "task_id": "T5",
+  "task_name": "Relay server",
+  "cycle": 1,
+  "timestamp": "2026-07-07T04:55:00Z",
+  "reviewer_mode": "read-only",
+  "reviewer_config": "batch-parallel",
+  "stage_1": {
+    "status": "PASS",
+    "issues": [],
+    "concerns_addressed": []
+  },
+  "stage_2": {
+    "status": "PASS",
+    "strengths": [
+      "Clean per-resource route modularization (card/allowlist/pair/inbox/artifact/health) with dependency injection of the db and shared rate limiter (server.ts:42-49).",
+      "W11 opaque-storage constraint respected: only envelope routing fields (from/to/thread/seq/type/id) are parsed for allowlist/seq enforcement; payloads and artifact blobs are stored verbatim and never decoded (allowlist.ts:91-113, inbox.ts:121-159, artifact.ts:12-29).",
+      "All SQL uses parameterized prepared statements — no injection surface; idempotent inserts via ON CONFLICT DO NOTHING for inbox/artifact.",
+      "Core DELIVERABLE scenarios are covered by tests: non-bonded sender drop (403), 401+challenge nonce, reused-nonce 403, gap_detected 409, and per-IP rate limiting (inbox.test.ts:102-212).",
+      "Content-addressed artifact integrity: PUT verifies sha256(blob) === hash before storing (artifact.ts:15-19). Challenge TTL is exactly 60s and single-use via the `used` flag (inbox.ts:12,92-111)."
+    ],
+    "issues": [
+      {
+        "severity": "Minor",
+        "description": "verifyChallenge returns 404 for a nonce not present in the DB, but the spec's challenge-response section states a bad/expired/reused nonce should return 403. An unknown/fabricated nonce is a 'bad' nonce and should return 403 for consistency.",
+        "location": "packages/relay/src/routes/inbox.ts:88-90"
+      },
+      {
+        "severity": "Minor",
+        "description": "GET /inbox returns only { envelopes } and never exposes a received_at cursor, so a client has no way to advance the spec'd `since=T` parameter. As a result the `since` mechanism is effectively unusable beyond since=0, and gap detection (which assumes seq starts at 1 for the returned window) only functions correctly for full since=0 pulls. Works for the §8 demo happy path but the incremental-pull path is incomplete.",
+        "location": "packages/relay/src/routes/inbox.ts:161-206"
+      },
+      {
+        "severity": "Minor",
+        "description": "In-memory rate-limit `buckets` Map is never evicted; entries accumulate one per (ip, path) indefinitely, causing slow unbounded memory growth in a long-running relay.",
+        "location": "packages/relay/src/middleware/rate-limit.ts:24"
+      },
+      {
+        "severity": "Minor",
+        "description": "Expired/used challenge rows are never garbage-collected — every GET /inbox without sig inserts a new nonce row, so the challenges table grows unbounded. Same applies to pair_sessions (only cleaned lazily on GET of that specific expired session).",
+        "location": "packages/relay/src/routes/inbox.ts:64-74"
+      },
+      {
+        "severity": "Minor",
+        "description": "createRelayServer is a misleading alias that simply returns createRelayApp() without starting an HTTP listener despite its name implying a running server; index.ts exports both, which may confuse consumers.",
+        "location": "packages/relay/src/server.ts:52-54"
+      }
+    ],
+    "assessment": "Approved"
+  },
+  "overall": "REVIEW_PASS",
+  "fix_instructions": "",
+  "loop_info": {
+    "current_cycle": 1,
+    "max_cycles": 1,
+    "cycles_remaining": 0
+  },
+  "reviewed_sha": "54411c549688d4bbf2dcf43c6c25e23fba5dd1a2"
+}
