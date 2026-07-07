@@ -808,6 +808,15 @@ export function createSessionStateMachine(
         return result(found);
       }
       const session = found.session;
+      const pendingOpen =
+        session.status === "pending" && session.role === "recipient"
+          ? deps.pending
+              .list()
+              .find(
+                (item) =>
+                  item.kind === "session_open" && item.thread === session.thread,
+              )
+          : undefined;
       return result({
         ok: true,
         thread: session.thread,
@@ -824,6 +833,7 @@ export function createSessionStateMachine(
           bothChallengesFiled(session),
         ratify_approved: session.ratifyApproved,
         expires_at: session.expiresAt,
+        ...(pendingOpen ? { pending_id: pendingOpen.id } : {}),
       });
     },
   };
