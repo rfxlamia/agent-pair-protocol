@@ -145,16 +145,18 @@ export async function syncInboxes(agents: AgentContext[]): Promise<void> {
       if (seen.has(envelope.id)) {
         continue;
       }
-      seen.add(envelope.id);
       const senderPublicKey = agentIdToPublicKey(envelope.from);
       const plaintext = decryptEnvelopePayload(envelope, keyPair, senderPublicKey);
       const payload = new TextDecoder().decode(plaintext);
-      await processSessionInboxEnvelope(ctx, {
+      const processed = await processSessionInboxEnvelope(ctx, {
         from: envelope.from,
         type: envelope.type,
         thread: envelope.thread,
         payload,
       });
+      if (processed.structuredContent.ok === true) {
+        seen.add(envelope.id);
+      }
     }
   }
 }
