@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AgentContext } from "./tools/pair.js";
 import { createAgentContext } from "./tools/pair.js";
 import { handleInbox, handleSend } from "./tools/inbox.js";
+import { handleListBonds } from "./tools/list-bonds.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
 import {
   handlePairInit,
@@ -128,6 +129,17 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       },
     },
     async (input) => handleRevoke(context, input),
+  );
+
+  server.registerTool(
+    "list_bonds",
+    {
+      title: "List bonded peers",
+      description:
+        "List all currently bonded peers for this agent's context, for debugging allowlist state after MCP restarts.",
+      inputSchema: {},
+    },
+    async () => handleListBonds(context),
   );
 
   server.registerTool(
