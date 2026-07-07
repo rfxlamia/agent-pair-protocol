@@ -7,5 +7,15 @@
   "types": "./src/index.ts",
   "scripts": {
     "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@agentpair/protocol": "workspace:*",
+    "@hono/node-server": "^1.14.4",
+    "@noble/ciphers": "^2.2.0",
+    "better-sqlite3": "^11.10.0",
+    "hono": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
   }
 }
