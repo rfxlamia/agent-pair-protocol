@@ -12,6 +12,7 @@ import {
 import type { HttpRelayClient } from "../relay/client.js";
 import type { KeyStore } from "../store/keys.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
+import { MemoryBondStore, type BondStore } from "../store/bonds.js";
 import { createPendingQueue, type PendingQueue } from "../store/pending.js";
 import { assertNoSecrets, parseBondMode, toolTextResult } from "./util.js";
 
@@ -20,6 +21,7 @@ export interface AgentContext {
   relay: HttpRelayClient;
   registry: PairingRegistry;
   allowlist: LocalAllowlistStore;
+  bonds: BondStore;
   pending: PendingQueue;
 }
 
@@ -28,6 +30,7 @@ export function createAgentContext(options: {
   relay: HttpRelayClient;
   registry?: PairingRegistry;
   allowlist?: LocalAllowlistStore;
+  bonds?: BondStore;
   pending?: PendingQueue;
 }): AgentContext {
   return {
@@ -35,6 +38,7 @@ export function createAgentContext(options: {
     relay: options.relay,
     registry: options.registry ?? new InMemoryPairingRegistry(),
     allowlist: options.allowlist ?? new MemoryAllowlistStore(),
+    bonds: options.bonds ?? new MemoryBondStore(),
     pending: options.pending ?? createPendingQueue(),
   };
 }

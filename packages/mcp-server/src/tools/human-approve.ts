@@ -4,6 +4,11 @@ import {
   handlePairInitComplete,
 } from "./pair.js";
 import { parseHumanDecision } from "../store/pending.js";
+import {
+  handleSessionApproveOpen,
+  handleSessionRatify,
+  handleSessionRejectOpen,
+} from "./session.js";
 import { assertNoSecrets, toolTextResult } from "./util.js";
 
 export async function handleHumanApprove(
@@ -39,6 +44,10 @@ export async function handleHumanApprove(
     ctx.pending.remove(pending.id);
 
     if (flow.status === "bonded") {
+      const keyPair = await ctx.keyStore.loadOrCreate();
+      const { publicKeyToAgentId } = await import("@agentpair/protocol");
+      const agentId = publicKeyToAgentId(keyPair.publicKey);
+      ctx.bonds.add(agentId, flow.bond);
       const result = { ok: true, status: flow.status, bond: flow.bond };
       assertNoSecrets(result);
       return toolTextResult(result);
@@ -47,6 +56,37 @@ export async function handleHumanApprove(
     const result = { ok: false, status: flow.status, ...spreadFlowError(flow) };
     assertNoSecrets(result);
     return toolTextResult(result);
+  }
+
+  if (pending.kind === "session_open") {
+    if ("reject" in parsed) {
+      return handleSessionRejectOpen(ctx, {
+        pending_id: pending.id,
+        reason: parsed.reject,
+        via_human: true,
+      });
+    }
+    return handleSessionApproveOpen(ctx, {
+      pending_id: pending.id,
+      via_human: true,
+    });
+  }
+
+  if (pending.kind === "ratify") {
+    if ("reject" in parsed) {
+      ctx.pending.remove(pending.id);
+      const result = {
+        ok: true,
+        status: "ratify_rejected",
+        thread: pending.thread,
+      };
+      assertNoSecrets(result);
+      return toolTextResult(result);
+    }
+    return handleSessionRatify(ctx, {
+      pending_id: pending.id,
+      via_human: true,
+    });
   }
 
   const result = { ok: false, error: "unsupported_pending_kind" };
@@ -67,5 +107,12 @@ export async function completeInitiatorPairing(
   ctx: AgentContext,
   code: string,
 ) {
-  return handlePairInitComplete(ctx, { code });
+  const flow = await handlePairInitComplete(ctx, { code });
+  if (flow.status === "bonded") {
+    const keyPair = await ctx.keyStore.loadOrCreate();
+    const { publicKeyToAgentId } = await import("@agentpair/protocol");
+    const agentId = publicKeyToAgentId(keyPair.publicKey);
+    ctx.bonds.add(agentId, flow.bond);
+  }
+  return flow;
 }
