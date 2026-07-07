@@ -176,6 +176,62 @@ describe("inbox relay routes", () => {
     expect(body.last_good_seq).toBe(2);
   });
 
+  it("allows bidirectional alternating seq on the same thread", async () => {
+    const thread = "770e8400-e29b-41d4-a716-446655440088";
+    const aliceAllowlist = signedAllowlist(alice, [bobId]);
+    const allowRes = await fetch(`${BASE_URL}/allowlist/${aliceId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(aliceAllowlist),
+    });
+    expect(allowRes.status).toBe(204);
+
+    const toBob = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "count",
+      thread,
+      seq: 1,
+      ttl: 3600,
+      payload: utf8ToBytes("1"),
+      id: crypto.randomUUID(),
+    });
+    const toAlice = createEnvelope({
+      sender: bob,
+      recipientAgentId: aliceId,
+      type: "count",
+      thread,
+      seq: 2,
+      ttl: 3600,
+      payload: utf8ToBytes("2"),
+      id: crypto.randomUUID(),
+    });
+
+    for (const [recipient, envelope] of [
+      [bobId, toBob],
+      [aliceId, toAlice],
+    ] as const) {
+      const postRes = await fetch(`${BASE_URL}/inbox/${recipient}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(envelope),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    const challengeRes = await fetch(`${BASE_URL}/inbox/${aliceId}?since=0`);
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, alice.secretKey);
+
+    const res = await fetch(
+      `${BASE_URL}/inbox/${aliceId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { envelopes: Array<{ seq: number }> };
+    expect(body.envelopes).toHaveLength(1);
+    expect(body.envelopes[0]?.seq).toBe(2);
+  });
+
   it("returns 403 (not 404) for unknown challenge nonce per spec", async () => {
     const sig = signChallenge("nonexistent-nonce", bob.secretKey);
     const res = await fetch(

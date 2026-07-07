@@ -18,28 +18,23 @@ interface GapInfo {
 }
 
 function detectGaps(
-  rows: Array<{ thread_id: string; seq: number }>,
+  rows: Array<{ thread_id: string; seq: number; sender_agent_id: string }>,
 ): GapInfo[] {
-  const byThread = new Map<string, number[]>();
+  // Gap detection is per (thread, sender): bidirectional threads use a shared
+  // thread id but each party only receives the other side's seq stream.
+  const byThreadSender = new Map<string, number[]>();
   for (const row of rows) {
-    const seqs = byThread.get(row.thread_id) ?? [];
+    const key = `${row.thread_id}\0${row.sender_agent_id}`;
+    const seqs = byThreadSender.get(key) ?? [];
     seqs.push(row.seq);
-    byThread.set(row.thread_id, seqs);
+    byThreadSender.set(key, seqs);
   }
 
   const gaps: GapInfo[] = [];
-  for (const [thread, seqs] of byThread) {
+  for (const [key, seqs] of byThreadSender) {
+    const thread = key.split("\0")[0]!;
     const sorted = [...new Set(seqs)].sort((a, b) => a - b);
     if (sorted.length === 0) {
-      continue;
-    }
-
-    if (sorted[0]! > 1) {
-      gaps.push({
-        thread,
-        last_good_seq: 0,
-        expected_seq: 1,
-      });
       continue;
     }
 
@@ -199,16 +194,24 @@ export function createInboxRoutes(
     }>;
 
     const threadIds = [...new Set(rows.map((row) => row.thread_id))];
-    const gapRows: Array<{ thread_id: string; seq: number }> = [];
+    const gapRows: Array<{
+      thread_id: string;
+      seq: number;
+      sender_agent_id: string;
+    }> = [];
     for (const threadId of threadIds) {
       const threadSeqs = db
         .prepare(
-          `SELECT thread_id, seq
+          `SELECT thread_id, seq, sender_agent_id
            FROM inbox
            WHERE recipient_agent_id = ? AND thread_id = ?
            ORDER BY seq ASC`,
         )
-        .all(agentId, threadId) as Array<{ thread_id: string; seq: number }>;
+        .all(agentId, threadId) as Array<{
+        thread_id: string;
+        seq: number;
+        sender_agent_id: string;
+      }>;
       gapRows.push(...threadSeqs);
     }
 
