@@ -33,11 +33,18 @@ function resolveAllowedPeers(
   peers: string[];
   bondsEmpty: boolean;
 } {
+  const allowlist = ctx.allowlist.get(agentId);
   const bonds = ctx.bonds.get(agentId);
   if (bonds.length > 0) {
-    return { peers: bonds.map((bond) => bond.peer), bondsEmpty: false };
+    const bondPeers = bonds.map((bond) => bond.peer);
+    if (allowlist.length === 0) {
+      return { peers: bondPeers, bondsEmpty: false };
+    }
+    const allowSet = new Set(allowlist);
+    const peers = bondPeers.filter((peer) => allowSet.has(peer));
+    return { peers, bondsEmpty: false };
   }
-  return { peers: ctx.allowlist.get(agentId), bondsEmpty: true };
+  return { peers: allowlist, bondsEmpty: true };
 }
 
 function filterBondedEnvelopes(
@@ -78,8 +85,11 @@ export async function handleInbox(
     cursorReset = loaded.wasReset;
   }
 
+  const { peers: bondedPeers, bondsEmpty } = resolveAllowedPeers(ctx, agentId);
+
   const pull = await ctx.relay.pullInbox(keyPair, sinceUsed, {
     bonded_only: !includeHistory,
+    senders: !includeHistory && bondedPeers.length > 0 ? bondedPeers : undefined,
   });
 
   if (!pull.ok) {
@@ -87,7 +97,6 @@ export async function handleInbox(
     return toolTextResult(pull);
   }
 
-  const { peers: bondedPeers, bondsEmpty } = resolveAllowedPeers(ctx, agentId);
   const { envelopes: envelopesToProcess, filteredCount } = filterBondedEnvelopes(
     pull.envelopes,
     bondedPeers,
@@ -163,6 +172,7 @@ export async function handleInbox(
   const gapWarnings = detectClientThreadGaps(ctx);
   const cursor = pull.cursor ?? sinceUsed;
   ctx.inboxCursor.set(cursor);
+  await ctx.inboxCursor.flush();
   const relayFilteredCount = pull.filtered_count ?? 0;
   const totalFilteredCount = relayFilteredCount + filteredCount;
 
