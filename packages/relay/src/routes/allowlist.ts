@@ -1,4 +1,4 @@
-import { type Envelope, agentIdToPublicKey, sign, verify } from "@agentpair/protocol";
+import { agentIdToPublicKey, sign, verify } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
 import type { RelayDatabase } from "../db/index.js";
@@ -77,30 +77,6 @@ export function createAllowlistRoutes(db: RelayDatabase) {
   });
 
   return routes;
-}
-
-export function parseEnvelopeRoutingFields(
-  serialized: string,
-): Pick<Envelope, "from" | "to" | "thread" | "seq" | "type" | "id"> {
-  const parsed = JSON.parse(serialized) as Partial<Envelope>;
-  if (
-    typeof parsed.id !== "string" ||
-    typeof parsed.from !== "string" ||
-    typeof parsed.to !== "string" ||
-    typeof parsed.type !== "string" ||
-    typeof parsed.thread !== "string" ||
-    typeof parsed.seq !== "number"
-  ) {
-    throw new Error("Invalid envelope routing fields");
-  }
-  return {
-    id: parsed.id,
-    from: parsed.from,
-    to: parsed.to,
-    type: parsed.type,
-    thread: parsed.thread,
-    seq: parsed.seq,
-  };
 }
 
 export function signChallenge(nonce: string, secretKey: Uint8Array): string {

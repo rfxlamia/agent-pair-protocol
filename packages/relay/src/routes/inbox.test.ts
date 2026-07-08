@@ -98,6 +98,7 @@ describe("inbox relay routes", () => {
   });
 
   it("rejects spoofed envelope with invalid signature", async () => {
+    const spoofId = crypto.randomUUID();
     const envelope = createEnvelope({
       sender: stranger,
       recipientAgentId: bobId,
@@ -106,7 +107,7 @@ describe("inbox relay routes", () => {
       seq: 99,
       ttl: 3600,
       payload: utf8ToBytes("spoof"),
-      id: crypto.randomUUID(),
+      id: spoofId,
     });
     const tampered = JSON.parse(serializeEnvelope(envelope)) as Record<string, unknown>;
     tampered.from = aliceId;
@@ -121,9 +122,46 @@ describe("inbox relay routes", () => {
     expect(body.error).toBe("invalid_signature");
 
     const count = (
-      db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE seq = 99").get() as { count: number }
+      db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(spoofId) as {
+        count: number;
+      }
     ).count;
     expect(count).toBe(0);
+  });
+
+  it("returns 400 for invalid JSON syntax on POST", async () => {
+    const res = await fetch(`${BASE_URL}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{broken",
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_envelope");
+  });
+
+  it("returns 400 for malformed from agent id on POST", async () => {
+    const envelope = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread: "550e8400-e29b-41d4-a716-446655440000",
+      seq: 1,
+      ttl: 3600,
+      payload: utf8ToBytes("bad-from"),
+      id: crypto.randomUUID(),
+    });
+    const tampered = JSON.parse(serializeEnvelope(envelope)) as Record<string, unknown>;
+    tampered.from = "not-a-valid-agent-id";
+
+    const res = await fetch(`${BASE_URL}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tampered),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_envelope");
   });
 
   it("returns 400 for malformed envelope JSON on POST", async () => {
