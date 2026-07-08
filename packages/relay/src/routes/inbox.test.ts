@@ -26,6 +26,7 @@ function signedAllowlist(
 
 describe("inbox relay routes", () => {
   let server: ServerType;
+  let db: ReturnType<typeof createRelayApp>["db"];
   const alice = generateKeyPair();
   const bob = generateKeyPair();
   const stranger = generateKeyPair();
@@ -39,6 +40,7 @@ describe("inbox relay routes", () => {
       rateLimitMax: 100,
     });
     const { app } = relay;
+    db = relay.db;
 
     await new Promise<void>((resolve) => {
       server = serve({ fetch: app.fetch, port: TEST_PORT }, resolve);
@@ -93,6 +95,79 @@ describe("inbox relay routes", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("sender_not_allowed");
+  });
+
+  it("rejects spoofed envelope with invalid signature", async () => {
+    const envelope = createEnvelope({
+      sender: stranger,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread: "550e8400-e29b-41d4-a716-446655440000",
+      seq: 99,
+      ttl: 3600,
+      payload: utf8ToBytes("spoof"),
+      id: crypto.randomUUID(),
+    });
+    const tampered = JSON.parse(serializeEnvelope(envelope)) as Record<string, unknown>;
+    tampered.from = aliceId;
+
+    const res = await fetch(`${BASE_URL}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tampered),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_signature");
+
+    const count = (
+      db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE seq = 99").get() as { count: number }
+    ).count;
+    expect(count).toBe(0);
+  });
+
+  it("returns 400 for malformed envelope JSON on POST", async () => {
+    const res = await fetch(`${BASE_URL}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: aliceId, not_an_envelope: true }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_envelope");
+  });
+
+  it("round-trips a legit signed envelope via POST then GET", async () => {
+    const thread = "cc0e8400-e29b-41d4-a716-446655440011";
+    const envelopeId = crypto.randomUUID();
+    const postRes = await fetch(`${BASE_URL}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(
+        createEnvelope({
+          sender: alice,
+          recipientAgentId: bobId,
+          type: "chat.message",
+          thread,
+          seq: 42,
+          ttl: 3600,
+          payload: utf8ToBytes("round-trip"),
+          id: envelopeId,
+        }),
+      ),
+    });
+    expect(postRes.status).toBe(204);
+
+    const challengeRes = await fetch(`${BASE_URL}/inbox/${bobId}?since=0`);
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, bob.secretKey);
+    const pullRes = await fetch(
+      `${BASE_URL}/inbox/${bobId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+    );
+    expect(pullRes.status).toBe(200);
+    const body = (await pullRes.json()) as { envelopes: Array<{ id: string; seq: number }> };
+    const delivered = body.envelopes.find((item) => item.id === envelopeId);
+    expect(delivered?.seq).toBe(42);
   });
 
   it("returns 401 challenge when GET inbox has no signature", async () => {

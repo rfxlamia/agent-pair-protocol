@@ -1,10 +1,16 @@
 import { randomBytes } from "node:crypto";
-import { agentIdToPublicKey, verify } from "@agentpair/protocol";
+import {
+  type Envelope,
+  agentIdToPublicKey,
+  deserializeEnvelope,
+  verify,
+  verifyEnvelope,
+} from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
 import type { RelayDatabase } from "../db/index.js";
 import type { createRateLimiter } from "../middleware/rate-limit.js";
-import { isSenderAllowed, parseEnvelopeRoutingFields } from "./allowlist.js";
+import { isSenderAllowed } from "./allowlist.js";
 
 const CHALLENGE_TTL_MS = 60 * 1000;
 
@@ -132,18 +138,27 @@ export function createInboxRoutes(
     const recipientAgentId = c.req.param("agentId");
     const envelopeJson = await c.req.text();
 
-    let routing: ReturnType<typeof parseEnvelopeRoutingFields>;
+    let envelope: Envelope;
     try {
-      routing = parseEnvelopeRoutingFields(envelopeJson);
+      envelope = deserializeEnvelope(envelopeJson);
     } catch {
       return c.json({ error: "invalid_envelope" }, 400);
     }
 
-    if (routing.to !== recipientAgentId) {
+    if (envelope.to !== recipientAgentId) {
       return c.json({ error: "recipient_mismatch" }, 400);
     }
 
-    if (!isSenderAllowed(db, recipientAgentId, routing.from)) {
+    try {
+      const senderPublicKey = agentIdToPublicKey(envelope.from);
+      if (!verifyEnvelope(envelope, senderPublicKey)) {
+        return c.json({ error: "invalid_signature" }, 403);
+      }
+    } catch {
+      return c.json({ error: "invalid_signature" }, 403);
+    }
+
+    if (!isSenderAllowed(db, recipientAgentId, envelope.from)) {
       return c.json({ error: "sender_not_allowed" }, 403);
     }
 
@@ -157,13 +172,13 @@ export function createInboxRoutes(
        ON CONFLICT(id) DO NOTHING`,
       )
       .run(
-        routing.id,
+        envelope.id,
         recipientAgentId,
         envelopeJson,
-        routing.from,
-        routing.thread,
-        routing.seq,
-        routing.type,
+        envelope.from,
+        envelope.thread,
+        envelope.seq,
+        envelope.type,
         now,
       );
 
