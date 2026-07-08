@@ -370,7 +370,17 @@ Tables: allowlists, envelopes, pair_sessions, challenges, artifacts.
 
 ### Rate limiting
 
-`packages/relay/src/middleware/rate-limit.ts` — per-IP sliding window pada endpoint publik.
+`packages/relay/src/middleware/rate-limit.ts` — fixed-window limiter per client identity + route pattern pada POST `/pair`, POST `/inbox`, dan PUT `/artifact`.
+
+**Client identity (default, direct deploy):** TCP peer address dari koneksi socket. Header `x-forwarded-for` / `x-real-ip` **diabaikan**.
+
+**Di belakang reverse proxy:** set `AGENTPAIR_TRUST_PROXY=1` (atau `true`) di environment relay. Header proxy hanya dipercaya jika peer TCP langsung berasal dari loopback atau RFC1918 (mis. nginx di Docker network / `127.0.0.1` via Cloudflare Tunnel). Urutan: `x-real-ip`, lalu hop pertama `x-forwarded-for`, lalu alamat socket proxy.
+
+**Penting:** Jika `AGENTPAIR_TRUST_PROXY` aktif tetapi client masih connect langsung (peer publik), header tetap diabaikan — mencegah spoofing saat misconfig.
+
+**Bucket key:** `clientKey:routePath` (bukan URL konkret), supaya `/inbox/agent-a` dan `/inbox/agent-b` berbagi kuota route yang sama.
+
+Default production (`start.ts`): 120 request / 60 detik. Bucket kadaluarsa dibersihkan on-request (tanpa `setInterval`).
 
 ### Docker image
 
