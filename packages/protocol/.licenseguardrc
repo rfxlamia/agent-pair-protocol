@@ -1,0 +1,31 @@
+{
+  "license": "wtfpl",
+  "owner": "V",
+  "year": "2026",
+  "url": "https://www.npmjs.com/package/@agentpair/protocol",
+  "scanResult": {
+    "timestamp": "2026-07-07T17:04:26.382Z",
+    "totalDependencies": 3,
+    "compatible": 3,
+    "incompatible": 0,
+    "unknown": 0,
+    "issues": [],
+    "packages": [
+      {
+        "name": "@noble/ciphers",
+        "version": "2.2.0",
+        "license": "MIT"
+      },
+      {
+        "name": "@noble/curves",
+        "version": "2.2.0",
+        "license": "MIT"
+      },
+      {
+        "name": "@noble/hashes",
+        "version": "2.2.0",
+        "license": "MIT"
+      }
+    ]
+  }
+}

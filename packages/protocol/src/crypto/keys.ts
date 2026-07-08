@@ -19,9 +19,7 @@ export function agentIdToPublicKey(agentId: string): Uint8Array {
   if (!agentId.startsWith(AGENT_ID_PREFIX)) {
     throw new Error(`Invalid agent id prefix: ${agentId}`);
   }
-  return new Uint8Array(
-    Buffer.from(agentId.slice(AGENT_ID_PREFIX.length), "base64url"),
-  );
+  return new Uint8Array(Buffer.from(agentId.slice(AGENT_ID_PREFIX.length), "base64url"));
 }
 
 export function getPublicKey(secretKey: Uint8Array): Uint8Array {

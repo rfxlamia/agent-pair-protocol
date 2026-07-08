@@ -1,5 +1,5 @@
-import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,16 +26,17 @@ const require = createRequire(import.meta.url);
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 function resolveWasmPkgDir(): string {
-  const candidates = [
-    join(moduleDir, "../wasm/pkg"),
-    join(moduleDir, "../../wasm/pkg"),
-  ];
+  const candidates = [join(moduleDir, "../wasm/pkg"), join(moduleDir, "../../wasm/pkg")];
   for (const dir of candidates) {
     if (existsSync(join(dir, "spake2_pake.js"))) {
       return dir;
     }
   }
-  return candidates[1]!;
+  const fallback = candidates[1];
+  if (!fallback) {
+    throw new Error("SPAKE2 WASM package directory not found");
+  }
+  return fallback;
 }
 
 const wasmPkgDir = resolveWasmPkgDir();
@@ -96,9 +97,6 @@ export function respond(
   return start("joiner", pairingCode, sessionId);
 }
 
-export function finish(
-  session: PakeSessionHandle,
-  peerMessage: Uint8Array,
-): Uint8Array {
+export function finish(session: PakeSessionHandle, peerMessage: Uint8Array): Uint8Array {
   return session.finish(peerMessage);
 }

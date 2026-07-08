@@ -66,12 +66,8 @@ export interface SessionMandate {
 
 export interface PendingQueue {
   add(item: Omit<PairJoinPending, "id" | "createdAt" | "kind">): PairJoinPending;
-  addSessionOpen(
-    item: Omit<SessionOpenPending, "id" | "createdAt" | "kind">,
-  ): SessionOpenPending;
-  addRatify(
-    item: Omit<RatifyPending, "id" | "createdAt" | "kind">,
-  ): RatifyPending;
+  addSessionOpen(item: Omit<SessionOpenPending, "id" | "createdAt" | "kind">): SessionOpenPending;
+  addRatify(item: Omit<RatifyPending, "id" | "createdAt" | "kind">): RatifyPending;
   addBudgetExtend(
     item: Omit<BudgetExtendPending, "id" | "createdAt" | "kind">,
   ): BudgetExtendPending;
@@ -146,13 +142,9 @@ export function createPendingQueue(): PendingQueue {
   };
 }
 
-export type HumanDecision =
-  | { approve: true }
-  | { reject: string };
+export type HumanDecision = { approve: true } | { reject: string };
 
-export function parseHumanDecision(
-  decision: string,
-): HumanDecision | { error: string } {
+export function parseHumanDecision(decision: string): HumanDecision | { error: string } {
   if (decision === "approve") {
     return { approve: true };
   }

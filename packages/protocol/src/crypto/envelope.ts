@@ -1,10 +1,6 @@
 import { randomBytes, utf8ToBytes } from "@noble/ciphers/utils.js";
-import {
-  agentIdToPublicKey,
-  type KeyPair,
-  publicKeyToAgentId,
-} from "./keys.js";
 import { decryptPayload, encryptPayload } from "./encrypt.js";
+import { type KeyPair, agentIdToPublicKey, publicKeyToAgentId } from "./keys.js";
 import { sign, verify } from "./sign.js";
 
 export interface Envelope {
@@ -73,10 +69,7 @@ export function createEnvelope(input: CreateEnvelopeInput): Envelope {
     payload: encryptedPayload,
   };
 
-  const signature = sign(
-    canonicalSignBytes(unsigned),
-    input.sender.secretKey,
-  );
+  const signature = sign(canonicalSignBytes(unsigned), input.sender.secretKey);
 
   return {
     ...unsigned,
@@ -84,16 +77,9 @@ export function createEnvelope(input: CreateEnvelopeInput): Envelope {
   };
 }
 
-export function verifyEnvelope(
-  envelope: Envelope,
-  senderPublicKey: Uint8Array,
-): boolean {
+export function verifyEnvelope(envelope: Envelope, senderPublicKey: Uint8Array): boolean {
   const { sig, ...unsigned } = envelope;
-  return verify(
-    fromBase64Url(sig),
-    canonicalSignBytes(unsigned),
-    senderPublicKey,
-  );
+  return verify(fromBase64Url(sig), canonicalSignBytes(unsigned), senderPublicKey);
 }
 
 export function decryptEnvelopePayload(

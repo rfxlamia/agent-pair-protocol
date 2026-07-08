@@ -1,7 +1,7 @@
-import { generateKeyPair, publicKeyToAgentId, type KeyPair } from "@agentpair/protocol";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "@agentpair/protocol";
 
 const KEY_FILE_MODE = 0o600;
 const KEY_DIR_MODE = 0o700;

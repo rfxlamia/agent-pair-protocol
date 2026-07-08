@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runSpectral } from "./spectral.js";
 import { resolvePackageBin } from "./resolve-package-bin.js";
+import { runSpectral } from "./spectral.js";
 
 const spectralBin = resolvePackageBin("@stoplight/spectral-cli", "spectral");
 
@@ -27,10 +27,7 @@ describe("spectral runner", () => {
   });
 
   it("fails when required OpenAPI fields are missing", async () => {
-    const result = await runSpectral(
-      { openapi: "3.0.3" } as { openapi: string },
-      { spectralBin },
-    );
+    const result = await runSpectral({ openapi: "3.0.3" } as { openapi: string }, { spectralBin });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/spectral lint failed/i);
   });

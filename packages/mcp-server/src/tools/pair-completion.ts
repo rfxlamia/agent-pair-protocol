@@ -1,6 +1,6 @@
-import { publicKeyToAgentId, type PairFlowResult } from "@agentpair/protocol";
-import type { AgentContext } from "./pair.js";
+import { type PairFlowResult, publicKeyToAgentId } from "@agentpair/protocol";
 import { pairInitComplete } from "@agentpair/protocol";
+import type { AgentContext } from "./pair.js";
 
 const inFlight = new Map<string, Promise<PairFlowResult>>();
 const completed = new Map<string, PairFlowResult>();
@@ -9,10 +9,7 @@ function logCompletionEvent(code: string, event: Record<string, unknown>): void 
   console.error("[agentpair] initiator_pairing", { code, ...event });
 }
 
-async function runInitiatorCompletion(
-  ctx: AgentContext,
-  code: string,
-): Promise<PairFlowResult> {
+async function runInitiatorCompletion(ctx: AgentContext, code: string): Promise<PairFlowResult> {
   const keyPair = await ctx.keyStore.loadOrCreate();
   const flow = await pairInitComplete({
     code,
@@ -66,18 +63,13 @@ export function runInitiatorCompletionOnce(
 }
 
 /** Fire-and-forget after pair_init; joiner approval can arrive later. */
-export function scheduleInitiatorPairingCompletion(
-  ctx: AgentContext,
-  code: string,
-): void {
+export function scheduleInitiatorPairingCompletion(ctx: AgentContext, code: string): void {
   runInitiatorCompletionOnce(ctx, code).catch(() => {
     // Error already logged in runInitiatorCompletionOnce.
   });
 }
 
-export function getInitiatorCompletionTask(
-  code: string,
-): Promise<PairFlowResult> | undefined {
+export function getInitiatorCompletionTask(code: string): Promise<PairFlowResult> | undefined {
   return inFlight.get(code);
 }
 

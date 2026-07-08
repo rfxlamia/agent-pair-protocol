@@ -2,9 +2,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 
-function loadJsonSchemaFaker():
-  | typeof import("json-schema-faker")
-  | null {
+function loadJsonSchemaFaker(): typeof import("json-schema-faker") | null {
   try {
     return require("json-schema-faker") as typeof import("json-schema-faker");
   } catch {
@@ -34,8 +32,7 @@ export function runPayloadSize(
   if (!faker) {
     return {
       ok: false,
-      error:
-        "payload-size runner unavailable: install json-schema-faker (dev dependency)",
+      error: "payload-size runner unavailable: install json-schema-faker (dev dependency)",
     };
   }
 

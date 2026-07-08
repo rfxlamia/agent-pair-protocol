@@ -15,10 +15,19 @@
     "pretest": "pnpm build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "publish:packages": "pnpm build && pnpm --filter ./packages/protocol publish --access public && pnpm --filter ./packages/mcp-server publish"
+    "publish:packages": "pnpm build && pnpm --filter ./packages/protocol publish --access public && pnpm --filter ./packages/mcp-server publish",
+    "prepare": "husky",
+    "lint": "biome check .",
+    "format": "biome check --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.9",
+    "husky": "^9",
+    "lint-staged": "^15",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
+  },
+  "lint-staged": {
+    "*.{ts,js,json}": "biome check --write --no-errors-on-unmatched"
   }
 }
