@@ -625,6 +625,10 @@ describe("inbox relay regressions (isolated db)", () => {
       );
     }
 
+    const syncPull = await authenticatedInboxPull(0);
+    const syncBody = (await syncPull.json()) as { cursor: number };
+    const cursor = syncBody.cursor;
+
     for (let seq = 51; seq <= 55; seq += 1) {
       const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
         method: "POST",
@@ -648,15 +652,17 @@ describe("inbox relay regressions (isolated db)", () => {
     let anchorQueries = 0;
     const originalPrepare = db.prepare.bind(db);
     db.prepare = ((sql: string, ...rest: unknown[]) => {
-      if (sql.includes("MIN(seq)") && sql.includes("MAX(seq)")) {
+      if (sql.includes("MIN(seq)") && sql.includes("MAX(seq)") && sql.includes("rowid <=")) {
         anchorQueries += 1;
       }
       return originalPrepare(sql, ...(rest as []));
     }) as typeof db.prepare;
 
-    const pullRes = await authenticatedInboxPull(0);
+    const pullRes = await authenticatedInboxPull(cursor);
     expect(pullRes.status).toBe(200);
-    expect(anchorQueries).toBeLessThanOrEqual(3);
+    expect(anchorQueries).toBe(1);
+    const body = (await pullRes.json()) as { gaps?: unknown[] };
+    expect(body.gaps ?? []).toHaveLength(0);
   });
 
   it("garbage-collects expired challenge rows", async () => {
@@ -676,6 +682,161 @@ describe("inbox relay regressions (isolated db)", () => {
       }
     ).count;
     expect(after).toBe(before);
+  });
+});
+
+const GAP_PORT = 3007;
+const GAP_BASE = `http://127.0.0.1:${GAP_PORT}`;
+
+describe("inbox gap detection (isolated db)", () => {
+  let server: ServerType;
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: GAP_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${GAP_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  async function authenticatedInboxPull(since: number) {
+    const challengeRes = await fetch(`${GAP_BASE}/inbox/${bobId}?since=${since}`);
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, bob.secretKey);
+    return fetch(
+      `${GAP_BASE}/inbox/${bobId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+    );
+  }
+
+  it("reports no gaps on incremental pull after long consecutive history", async () => {
+    const thread = "110e8400-e29b-41d4-a716-446655440011";
+    for (let seq = 1; seq <= 50; seq += 1) {
+      const postRes = await fetch(`${GAP_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "chat.message",
+            thread,
+            seq,
+            ttl: 3600,
+            payload: utf8ToBytes(`long-${seq}`),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    const syncPull = await authenticatedInboxPull(0);
+    const syncBody = (await syncPull.json()) as { cursor: number };
+    const cursor = syncBody.cursor;
+
+    for (let seq = 51; seq <= 55; seq += 1) {
+      const postRes = await fetch(`${GAP_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "chat.message",
+            thread,
+            seq,
+            ttl: 3600,
+            payload: utf8ToBytes(`long-${seq}`),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    const incrementalPull = await authenticatedInboxPull(cursor);
+    expect(incrementalPull.status).toBe(200);
+    const body = (await incrementalPull.json()) as { gaps?: unknown[] };
+    expect(body.gaps ?? []).toHaveLength(0);
+  });
+
+  it("reports boundary gap on incremental pull after long history", async () => {
+    const thread = "120e8400-e29b-41d4-a716-446655440022";
+    for (let seq = 1; seq <= 2; seq += 1) {
+      const postRes = await fetch(`${GAP_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "chat.message",
+            thread,
+            seq,
+            ttl: 3600,
+            payload: utf8ToBytes(`bound-${seq}`),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    const syncPull = await authenticatedInboxPull(0);
+    const syncBody = (await syncPull.json()) as { cursor: number };
+
+    const gapPost = await fetch(`${GAP_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(
+        createEnvelope({
+          sender: alice,
+          recipientAgentId: bobId,
+          type: "chat.message",
+          thread,
+          seq: 4,
+          ttl: 3600,
+          payload: utf8ToBytes("bound-4"),
+          id: crypto.randomUUID(),
+        }),
+      ),
+    });
+    expect(gapPost.status).toBe(204);
+
+    const gapPull = await authenticatedInboxPull(syncBody.cursor);
+    expect(gapPull.status).toBe(200);
+    const body = (await gapPull.json()) as {
+      gaps: Array<{ last_good_seq: number; expected_seq: number }>;
+    };
+    expect(body.gaps[0]?.last_good_seq).toBe(2);
+    expect(body.gaps[0]?.expected_seq).toBe(3);
   });
 });
 
