@@ -20,8 +20,10 @@ function structured<T>(result: { structuredContent: T }): T {
 describe("session state machine", () => {
   let aliceKeys: KeyPair;
   let bobKeys: KeyPair;
+  let carolKeys: KeyPair;
   let aliceId: string;
   let bobId: string;
+  let carolId: string;
   let aliceMachine: SessionStateMachine;
   let bobMachine: SessionStateMachine;
   let alicePending: ReturnType<typeof createPendingQueue>;
@@ -86,8 +88,10 @@ describe("session state machine", () => {
     vi.useFakeTimers();
     aliceKeys = generateKeyPair();
     bobKeys = generateKeyPair();
+    carolKeys = generateKeyPair();
     aliceId = agentIdFromKeys(aliceKeys);
     bobId = agentIdFromKeys(bobKeys);
+    carolId = agentIdFromKeys(carolKeys);
     alicePending = createPendingQueue();
     bobPending = createPendingQueue();
     aliceAllowlist = new MemoryAllowlistStore();
@@ -745,5 +749,460 @@ describe("session state machine", () => {
     expect(bobAllowlist.get(bobId)).not.toContain(aliceId);
     expect(aliceBonds.find(aliceId, bobId)).toBeUndefined();
     expect(bobBonds.find(bobId, aliceId)).toBeUndefined();
+  });
+
+  async function openSignAndAliceRatify(): Promise<{ thread: string; artifactHash: string }> {
+    const thread = await openAndApprove();
+    const artifactHash = "sha256:non-participant-guard";
+
+    for (const machine of [aliceMachine, bobMachine]) {
+      await machine.handleMsg({
+        thread,
+        type: "challenge",
+        body: JSON.stringify({ report: "pass" }),
+      });
+      await machine.handleMsg({
+        thread,
+        type: "test_report",
+        body: JSON.stringify({
+          artifact_hash: artifactHash,
+          passed: true,
+          runner: "payload-size",
+        }),
+      });
+    }
+    await aliceMachine.handleSign({ thread, artifact_hash: artifactHash });
+    await bobMachine.handleSign({ thread, artifact_hash: artifactHash });
+
+    const aliceRatifyPending = alicePending.list().find((item) => item.kind === "ratify");
+    if (!aliceRatifyPending) {
+      throw new Error("expected alice ratify pending item");
+    }
+    await aliceMachine.handleRatify({
+      pending_id: aliceRatifyPending.id,
+      via_human: true,
+    });
+
+    return { thread, artifactHash };
+  }
+
+  describe("non-participant envelope rejection", () => {
+    it("rejects peer_ratified from a non-participant without closing the session", async () => {
+      const { thread } = await openSignAndAliceRatify();
+
+      const before = structured(await aliceMachine.handleStatus({ thread }));
+      expect(before.ok).toBe(true);
+      if (!before.ok) {
+        return;
+      }
+      expect(before.status).toBe("signed");
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: carolId,
+          type: "session.peer_ratified",
+          thread,
+          payload: "{}",
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("not_a_participant");
+
+      const after = structured(await aliceMachine.handleStatus({ thread }));
+      expect(after.ok).toBe(true);
+      if (!after.ok) {
+        return;
+      }
+      expect(after.status).toBe("signed");
+    });
+
+    it("rejects peer_signed from a non-participant without mutating signHashes", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:carol-signed-attack";
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: carolId,
+          type: "session.peer_signed",
+          thread,
+          payload: JSON.stringify({ artifact_hash: artifactHash }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("not_a_participant");
+
+      const status = structured(await aliceMachine.handleStatus({ thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("live");
+      expect(status.artifact_hash).toBeUndefined();
+    });
+
+    it("rejects open_approved from a non-participant without going live", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: carolId,
+          type: "session.open_approved",
+          thread: opened.thread,
+          payload: JSON.stringify({ thread: opened.thread }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("not_a_participant");
+
+      const status = structured(await aliceMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+    });
+
+    it("rejects open_reject from a non-participant", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: carolId,
+          type: "session.open_reject",
+          thread: opened.thread,
+          payload: JSON.stringify({ reason: "blocked by carol" }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("not_a_participant");
+
+      const status = structured(await aliceMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+    });
+
+    it("rejects peer_turn from a non-participant without bumping turnCount", async () => {
+      const thread = await openAndApprove();
+      const before = structured(await aliceMachine.handleStatus({ thread }));
+      expect(before.ok).toBe(true);
+      if (!before.ok) {
+        return;
+      }
+      const turnBefore = before.turn_count;
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: carolId,
+          type: "session.peer_turn",
+          thread,
+          payload: JSON.stringify({
+            turn_count: turnBefore + 10,
+            msg_type: "propose",
+            body: JSON.stringify({ diff: "injected" }),
+          }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("not_a_participant");
+
+      const after = structured(await aliceMachine.handleStatus({ thread }));
+      expect(after.ok).toBe(true);
+      if (!after.ok) {
+        return;
+      }
+      expect(after.turn_count).toBe(turnBefore);
+    });
+
+    it("rejects malformed peer_test_report payloads", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:malformed-test-report";
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "session.peer_test_report",
+          thread,
+          payload: JSON.stringify({
+            artifact_hash: artifactHash,
+            passed: "yes",
+            runner: "payload-size",
+          }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+
+      const status = structured(await aliceMachine.handleStatus({ thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.tests_legal).toBe(false);
+    });
+
+    it("rejects malformed peer_turn payloads", async () => {
+      const thread = await openAndApprove();
+      const before = structured(await aliceMachine.handleStatus({ thread }));
+      expect(before.ok).toBe(true);
+      if (!before.ok) {
+        return;
+      }
+      const turnBefore = before.turn_count;
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "session.peer_turn",
+          thread,
+          payload: JSON.stringify({
+            turn_count: "abc",
+            msg_type: "propose",
+            body: JSON.stringify({ diff: "bad" }),
+          }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+
+      const after = structured(await aliceMachine.handleStatus({ thread }));
+      expect(after.ok).toBe(true);
+      if (!after.ok) {
+        return;
+      }
+      expect(after.turn_count).toBe(turnBefore);
+    });
+
+    it("rejects malformed session.open payloads missing required fields", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await bobMachine.handleIncomingEnvelope({
+          from: aliceId,
+          type: "session.open",
+          thread: opened.thread,
+          payload: JSON.stringify({ goal: "only goal, no budget" }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
+
+    it("rejects non-object JSON envelope payloads", async () => {
+      const thread = await openAndApprove();
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "session.peer_turn",
+          thread,
+          payload: "null",
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
+  });
+
+  describe("wrong-role envelope rejection", () => {
+    it("rejects open_approved from the initiator without going live", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: aliceId,
+          type: "session.open_approved",
+          thread: opened.thread,
+          payload: JSON.stringify({ thread: opened.thread }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("wrong_role");
+
+      const status = structured(await aliceMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+    });
+
+    it("rejects open_reject from the initiator on the recipient machine", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await bobMachine.handleIncomingEnvelope({
+          from: aliceId,
+          type: "session.open_reject",
+          thread: opened.thread,
+          payload: JSON.stringify({ reason: "forced by initiator" }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("wrong_role");
+
+      const status = structured(await bobMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+    });
+
+    it("rejects open_expired from the initiator on the recipient machine", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await bobMachine.handleIncomingEnvelope({
+          from: aliceId,
+          type: "session.open_expired",
+          thread: opened.thread,
+          payload: JSON.stringify({ thread: opened.thread }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("wrong_role");
+
+      const status = structured(await bobMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+    });
+  });
+
+  describe("session.open initiator binding", () => {
+    it("rejects session.open redelivery from a different initiator on pending session", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await bobMachine.handleIncomingEnvelope({
+          from: carolId,
+          type: "session.open",
+          thread: opened.thread,
+          payload: JSON.stringify({
+            goal: "hijacked goal",
+            acceptance: openPayload.acceptance,
+            budget: openPayload.budget,
+            mandate: openPayload.mandate,
+          }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("initiator_mismatch");
+
+      const status = structured(await bobMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+      expect(status.goal).toBe(openPayload.goal);
+    });
   });
 });
