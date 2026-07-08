@@ -249,17 +249,34 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
     const bobId = publicKeyToAgentId(bobKeys.publicKey);
 
+    const sent = structured(
+      await handleSend(alice, {
+        to: bobId,
+        type: "chat.message",
+        payload: "before revoke",
+      }),
+    );
+    expect(sent.ok).toBe(true);
+
     const revoked = structured(await handleRevoke(alice, { peer: bobId }));
     expect(revoked.ok).toBe(true);
+    if (revoked.ok) {
+      expect(revoked.purged).toBeGreaterThan(0);
+    }
 
     expect(alice.allowlist.get(aliceId)).not.toContain(bobId);
     expect(alice.bonds.find(aliceId, bobId)).toBeUndefined();
 
-    const inboxBefore = await bob.relay.pullInbox(bobKeys, 0);
+    const inboxBefore = await bob.relay.pullInbox(bobKeys, 0, { bonded_only: false });
     expect(inboxBefore.ok).toBe(true);
     if (inboxBefore.ok) {
       const revokeNotice = inboxBefore.envelopes.find((e) => e.type === "revoke.notice");
       expect(revokeNotice).toBeDefined();
+      expect(
+        inboxBefore.envelopes.some(
+          (envelope) => envelope.type === "chat.message" && envelope.from === aliceId,
+        ),
+      ).toBe(false);
     }
   });
 
