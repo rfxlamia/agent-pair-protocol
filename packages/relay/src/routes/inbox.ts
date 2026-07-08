@@ -31,14 +31,58 @@ interface GapInfo {
   expected_seq: number;
 }
 
-function detectGaps(
-  rows: Array<{ thread_id: string; seq: number; sender_agent_id: string }>,
+function seqStep(seqs: number[]): number {
+  const allOdd = seqs.every((seq) => seq % 2 === 1);
+  const allEven = seqs.every((seq) => seq % 2 === 0);
+  return allOdd || allEven ? 2 : 1;
+}
+
+function findGapInSeqs(thread: string, seqs: number[]): GapInfo | null {
+  const sorted = [...new Set(seqs)].sort((a, b) => a - b);
+  if (sorted.length <= 1) {
+    return null;
+  }
+
+  const step = seqStep(sorted);
+  const firstSeq = sorted[0];
+  if (firstSeq === undefined) {
+    return null;
+  }
+
+  let lastGood = firstSeq;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const current = sorted[i];
+    if (current === undefined) {
+      continue;
+    }
+    if (current !== lastGood + step) {
+      return {
+        thread,
+        last_good_seq: lastGood,
+        expected_seq: lastGood + step,
+      };
+    }
+    lastGood = current;
+  }
+
+  return null;
+}
+
+function detectBoundedGaps(
+  db: RelayDatabase,
+  recipientAgentId: string,
+  since: number,
+  pageRows: Array<{ thread_id: string; seq: number; sender_agent_id: string }>,
 ): GapInfo[] {
-  // Gap detection is per (thread, sender). Threads use a shared global sequence
-  // counter across both parties (1, 2, 3, …), so each sender's stream is either
-  // consecutive (+1, legacy per-sender mode) or odd/even (+2, global turn-taking).
+  const anchorStmt = db.prepare(
+    `SELECT MIN(seq) AS min_seq, MAX(seq) AS max_seq
+     FROM inbox
+     WHERE recipient_agent_id = ? AND thread_id = ? AND sender_agent_id = ?
+       AND rowid <= ?`,
+  );
+
   const byThreadSender = new Map<string, number[]>();
-  for (const row of rows) {
+  for (const row of pageRows) {
     const key = `${row.thread_id}\0${row.sender_agent_id}`;
     const seqs = byThreadSender.get(key) ?? [];
     seqs.push(row.seq);
@@ -46,38 +90,23 @@ function detectGaps(
   }
 
   const gaps: GapInfo[] = [];
-  for (const [key, seqs] of byThreadSender) {
-    const thread = key.split("\0")[0] ?? "";
-    const sorted = [...new Set(seqs)].sort((a, b) => a - b);
-    if (sorted.length <= 1) {
-      continue;
+  for (const [key, pageSeqs] of byThreadSender) {
+    const [thread = "", sender = ""] = key.split("\0");
+    const anchor = anchorStmt.get(recipientAgentId, thread, sender, since) as
+      | { min_seq: number | null; max_seq: number | null }
+      | undefined;
+
+    const evalSeqs = [...pageSeqs];
+    if (anchor?.min_seq != null) {
+      evalSeqs.push(anchor.min_seq);
+    }
+    if (anchor?.max_seq != null && anchor.max_seq !== anchor.min_seq) {
+      evalSeqs.push(anchor.max_seq);
     }
 
-    // Parity heuristic: all-odd/all-even streams use +2 (global turn-taking).
-    // Mixed parity falls back to +1 (legacy per-sender or burst patterns).
-    const allOdd = sorted.every((seq) => seq % 2 === 1);
-    const allEven = sorted.every((seq) => seq % 2 === 0);
-    const step = allOdd || allEven ? 2 : 1;
-
-    const firstSeq = sorted[0];
-    if (firstSeq === undefined) {
-      continue;
-    }
-    let lastGood = firstSeq;
-    for (let i = 1; i < sorted.length; i += 1) {
-      const current = sorted[i];
-      if (current === undefined) {
-        continue;
-      }
-      if (current !== lastGood + step) {
-        gaps.push({
-          thread,
-          last_good_seq: lastGood,
-          expected_seq: lastGood + step,
-        });
-        break;
-      }
-      lastGood = current;
+    const gap = findGapInSeqs(thread, evalSeqs);
+    if (gap) {
+      gaps.push(gap);
     }
   }
 
@@ -232,29 +261,16 @@ export function createInboxRoutes(
       received_at: number;
     }>;
 
-    const threadIds = [...new Set(rows.map((row) => row.thread_id))];
-    const gapRows: Array<{
-      thread_id: string;
-      seq: number;
-      sender_agent_id: string;
-    }> = [];
-    for (const threadId of threadIds) {
-      const threadSeqs = db
-        .prepare(
-          `SELECT thread_id, seq, sender_agent_id
-           FROM inbox
-           WHERE recipient_agent_id = ? AND thread_id = ?
-           ORDER BY seq ASC`,
-        )
-        .all(agentId, threadId) as Array<{
-        thread_id: string;
-        seq: number;
-        sender_agent_id: string;
-      }>;
-      gapRows.push(...threadSeqs);
-    }
-
-    const gaps = detectGaps(gapRows);
+    const gaps = detectBoundedGaps(
+      db,
+      agentId,
+      since,
+      rows.map((row) => ({
+        thread_id: row.thread_id,
+        seq: row.seq,
+        sender_agent_id: row.sender_agent_id,
+      })),
+    );
     const envelopes = rows.map((row) => JSON.parse(row.envelope_json));
     const cursor = rows.length > 0 ? Math.max(...rows.map((row) => row.rowid)) : since;
     return c.json({

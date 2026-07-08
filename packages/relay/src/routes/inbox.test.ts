@@ -598,6 +598,70 @@ describe("inbox relay regressions (isolated db)", () => {
     expect(body.gaps[0]?.expected_seq).toBe(3);
   });
 
+  it("bounds gap detection queries for large thread history", async () => {
+    const thread = "990e8400-e29b-41d4-a716-446655440033";
+    for (let seq = 1; seq <= 50; seq += 1) {
+      const envelope = createEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "chat.message",
+        thread,
+        seq,
+        ttl: 3600,
+        payload: utf8ToBytes(`hist-${seq}`),
+        id: crypto.randomUUID(),
+      });
+      db.prepare(
+        `INSERT INTO inbox (
+           id, recipient_agent_id, envelope_json, sender_agent_id,
+           thread_id, seq, msg_type, received_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        crypto.randomUUID(),
+        bobId,
+        serializeEnvelope(envelope),
+        aliceId,
+        thread,
+        seq,
+        "chat.message",
+        Date.now(),
+      );
+    }
+
+    for (let seq = 51; seq <= 55; seq += 1) {
+      const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "chat.message",
+            thread,
+            seq,
+            ttl: 3600,
+            payload: utf8ToBytes(`new-${seq}`),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+      expect(postRes.status).toBe(204);
+    }
+
+    let anchorQueries = 0;
+    const originalPrepare = db.prepare.bind(db);
+    db.prepare = ((sql: string, ...rest: unknown[]) => {
+      if (sql.includes("MIN(seq)") && sql.includes("MAX(seq)")) {
+        anchorQueries += 1;
+      }
+      return originalPrepare(sql, ...(rest as []));
+    }) as typeof db.prepare;
+
+    const pullRes = await authenticatedInboxPull(0);
+    expect(pullRes.status).toBe(200);
+    expect(anchorQueries).toBeLessThanOrEqual(3);
+  });
+
   it("garbage-collects expired challenge rows", async () => {
     const before = (
       db.prepare("SELECT COUNT(*) AS count FROM challenges").get() as {
