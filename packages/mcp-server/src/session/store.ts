@@ -17,10 +17,7 @@ export function createSessionStore(): SessionStore {
       sessions.set(session.thread, structuredClone(session));
     },
     list() {
-      return sessions
-        .values()
-        .map((session) => structuredClone(session))
-        .toArray();
+      return [...sessions.values()].map((session) => structuredClone(session));
     },
   };
 }
