@@ -1059,4 +1059,150 @@ describe("session state machine", () => {
       expect(rejected.error).toBe("invalid_payload");
     });
   });
+
+  describe("wrong-role envelope rejection", () => {
+    it("rejects open_approved from the initiator without going live", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: aliceId,
+          type: "session.open_approved",
+          thread: opened.thread,
+          payload: JSON.stringify({ thread: opened.thread }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("wrong_role");
+
+      const status = structured(await aliceMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+    });
+
+    it("rejects open_reject from the initiator on the recipient machine", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await bobMachine.handleIncomingEnvelope({
+          from: aliceId,
+          type: "session.open_reject",
+          thread: opened.thread,
+          payload: JSON.stringify({ reason: "forced by initiator" }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("wrong_role");
+
+      const status = structured(await bobMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+    });
+
+    it("rejects open_expired from the initiator on the recipient machine", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await bobMachine.handleIncomingEnvelope({
+          from: aliceId,
+          type: "session.open_expired",
+          thread: opened.thread,
+          payload: JSON.stringify({ thread: opened.thread }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("wrong_role");
+
+      const status = structured(await bobMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+    });
+  });
+
+  describe("session.open initiator binding", () => {
+    it("rejects session.open redelivery from a different initiator on pending session", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await bobMachine.handleIncomingEnvelope({
+          from: carolId,
+          type: "session.open",
+          thread: opened.thread,
+          payload: JSON.stringify({
+            goal: "hijacked goal",
+            acceptance: openPayload.acceptance,
+            budget: openPayload.budget,
+            mandate: openPayload.mandate,
+          }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("initiator_mismatch");
+
+      const status = structured(await bobMachine.handleStatus({ thread: opened.thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("pending");
+      expect(status.goal).toBe(openPayload.goal);
+    });
+  });
 });
