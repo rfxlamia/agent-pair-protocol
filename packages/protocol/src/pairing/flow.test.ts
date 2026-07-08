@@ -1,5 +1,5 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
 import { sign } from "../crypto/sign.js";
 import {
@@ -12,6 +12,7 @@ import {
   pairJoin,
   pairRetry,
 } from "./flow.js";
+import { CODE_WORDS, generatePairingCode } from "./pairing-words.js";
 import { init as initPake } from "./pake-adapter.js";
 
 function canonicalAllowlistBytes(agentId: string, allowed: string[]): Uint8Array {
@@ -78,6 +79,48 @@ class MemoryAllowlistStore implements LocalAllowlistStore {
     this.store.set(agentId, [...allowed]);
   }
 }
+
+describe("generatePairingCode", () => {
+  it("uses a 256-word list with unique lowercase entries", () => {
+    expect(CODE_WORDS).toHaveLength(256);
+    expect(new Set(CODE_WORDS).size).toBe(256);
+    for (const word of CODE_WORDS) {
+      expect(word).toMatch(/^[a-z]+$/);
+      expect(word.length).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it("matches NN-word-word-word format with words from CODE_WORDS", () => {
+    const code = generatePairingCode();
+    expect(code).toMatch(/^\d{2}-[a-z]+-[a-z]+-[a-z]+$/);
+    const match = code.match(/^(\d{2})-([a-z]+)-([a-z]+)-([a-z]+)$/);
+    expect(match).not.toBeNull();
+    const [, num, w1, w2, w3] = match as RegExpMatchArray;
+    expect(Number(num)).toBeGreaterThanOrEqual(10);
+    expect(Number(num)).toBeLessThanOrEqual(99);
+    expect(CODE_WORDS).toContain(w1);
+    expect(CODE_WORDS).toContain(w2);
+    expect(CODE_WORDS).toContain(w3);
+  });
+
+  it("does not call Math.random during generation", () => {
+    const mathRandom = vi.spyOn(Math, "random").mockImplementation(() => {
+      throw new Error("Math.random must not be used for pairing codes");
+    });
+    expect(() => generatePairingCode()).not.toThrow();
+    mathRandom.mockRestore();
+  });
+
+  it("produces highly unique codes in 10,000 generations", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 10_000; i++) {
+      seen.add(generatePairingCode());
+    }
+    // ~2^30 space → birthday bound gives ~3% chance of any collision in 10k draws.
+    // Require strong uniqueness without a flaky zero-collision assertion.
+    expect(seen.size).toBeGreaterThanOrEqual(9_990);
+  });
+});
 
 describe("pairing flow", () => {
   let initiatorKeys: KeyPair;

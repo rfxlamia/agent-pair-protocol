@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { type KeyPair, publicKeyToAgentId } from "../crypto/keys.js";
+import { generatePairingCode } from "./pairing-words.js";
 import { type PakeSessionHandle, finish, init, respond, start } from "./pake-adapter.js";
 
 export const PAIR_TTL_MS = 5 * 60 * 1000;
@@ -87,24 +88,6 @@ export interface PairInitOutput {
   sessionId: string;
   proposal: PairProposal;
   expiresAt: number;
-}
-
-const CODE_WORDS_A = ["kancil", "senja", "biru", "hijau", "merah", "putih"];
-const CODE_WORDS_B = ["awan", "laut", "padi", "bintang", "kapal", "hujan"];
-
-function pickRandomWord(words: readonly string[]): string {
-  const word = words[Math.floor(Math.random() * words.length)];
-  if (!word) {
-    throw new Error("word list must not be empty");
-  }
-  return word;
-}
-
-function generatePairingCode(): string {
-  const num = 1 + Math.floor(Math.random() * 9);
-  const a = pickRandomWord(CODE_WORDS_A);
-  const b = pickRandomWord(CODE_WORDS_B);
-  return `${num}-${a}-${b}`;
 }
 
 function generateSessionId(): string {
@@ -457,11 +440,6 @@ export async function pairInitComplete(input: {
     (message) => message.phase === "confirm" && message.agentId !== initiatorAgentId,
   );
   if (!joinerConfirm || joinerConfirm.phase !== "confirm") {
-    // Narrow PairWireMessage union after .find() — runtime guard is redundant.
-    const bondFail = await input.relay.pollPakeMessage(pending.sessionId);
-    if (bondFail && decodeWireMessage(bondFail).phase === "bond_fail") {
-      return { status: "pake_failed" };
-    }
     return { status: "pake_failed" };
   }
   if (joinerConfirm.fingerprint !== fingerprint) {
