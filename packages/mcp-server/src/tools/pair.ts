@@ -262,6 +262,8 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
   const agentId = publicKeyToAgentId(keyPair.publicKey);
 
   const previous = ctx.allowlist.get(agentId);
+  const purge = await ctx.relay.purgeInboxDyad(input.peer, keyPair);
+
   const next = previous.filter((peer) => peer !== input.peer);
   ctx.allowlist.set(agentId, next);
   ctx.bonds.remove(agentId, input.peer);
@@ -285,7 +287,12 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
   });
   await ctx.relay.sendEnvelope(input.peer, notice);
 
-  const result = { ok: true, revoked: input.peer, allowed: next };
+  const result = {
+    ok: true,
+    revoked: input.peer,
+    allowed: next,
+    ...(purge.ok ? { purged: purge.deleted } : { purge_warning: purge.error }),
+  };
   assertNoSecrets(result);
   return toolTextResult(result);
 }
