@@ -69,3 +69,11 @@ export {
   type SessionStatus,
   type TestReport,
 } from "./session/types.js";
+export {
+  parseOpenEnvelopePayload,
+  parseOpenRejectEnvelopePayload,
+  parsePeerSignedEnvelopePayload,
+  parsePeerTestReportEnvelopePayload,
+  parsePeerTurnEnvelopePayload,
+  parseSignalEnvelopePayload,
+} from "./session/validate.js";
