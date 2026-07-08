@@ -23,7 +23,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@agentpair/protocol": "^0.1.1",
+    "@agentpair/protocol": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@noble/ciphers": "^2.2.0",
     "zod": "^3.25.67"

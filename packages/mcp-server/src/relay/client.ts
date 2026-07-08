@@ -31,10 +31,6 @@ export interface PairManifest {
   expiresAt: number;
 }
 
-export interface RelayTestHooks {
-  failAllowlistFor?: string | null;
-}
-
 function canonicalAllowlistBytes(agentId: string, allowed: string[]): Uint8Array {
   const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
   return utf8ToBytes(JSON.stringify(ordered));
@@ -64,11 +60,9 @@ async function sleep(ms: number): Promise<void> {
 
 export class HttpRelayClient implements PairingRelayClient {
   readonly baseUrl: string;
-  testHooks: RelayTestHooks;
 
-  constructor(baseUrl = resolveRelayUrl(), testHooks: RelayTestHooks = {}) {
+  constructor(baseUrl = resolveRelayUrl()) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
-    this.testHooks = testHooks;
   }
 
   async postPakeMessage(sessionId: string, body: string): Promise<void> {
@@ -102,10 +96,6 @@ export class HttpRelayClient implements PairingRelayClient {
     allowed: string[],
     secretKey: Uint8Array,
   ): Promise<{ ok: boolean }> {
-    if (this.testHooks.failAllowlistFor === agentId) {
-      return { ok: false };
-    }
-
     const body = signAllowlist(agentId, allowed, secretKey);
     const res = await fetch(`${this.baseUrl}/allowlist/${encodeURIComponent(agentId)}`, {
       method: "PUT",
