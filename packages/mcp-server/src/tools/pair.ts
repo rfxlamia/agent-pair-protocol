@@ -271,7 +271,7 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
     return toolTextResult(result);
   }
 
-  const purge = await ctx.relay.purgeInboxDyad(input.peer, keyPair);
+  const purge = await purgeInboxWithRetry(ctx, input.peer, keyPair);
 
   ctx.allowlist.set(agentId, next);
   ctx.bonds.remove(agentId, input.peer);
@@ -291,8 +291,23 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
     ok: true,
     revoked: input.peer,
     allowed: next,
-    ...(purge.ok ? { purged: purge.deleted } : { purge_warning: purge.error }),
+    ...(purge.ok
+      ? { purged: purge.deleted, ...(purge.peer_purged ? { peer_purged: true } : {}) }
+      : { purge_warning: purge.error, inbox_purge_incomplete: true }),
   };
   assertNoSecrets(result);
   return toolTextResult(result);
+}
+
+async function purgeInboxWithRetry(
+  ctx: AgentContext,
+  peerAgentId: string,
+  keyPair: Awaited<ReturnType<AgentContext["keyStore"]["loadOrCreate"]>>,
+  attempts = 2,
+) {
+  let last = await ctx.relay.purgeInboxDyad(peerAgentId, keyPair);
+  for (let attempt = 1; attempt < attempts && !last.ok; attempt += 1) {
+    last = await ctx.relay.purgeInboxDyad(peerAgentId, keyPair);
+  }
+  return last;
 }

@@ -25,6 +25,7 @@ function structured<T>(result: { structuredContent: T }): T {
 class StubInboxRelay {
   pulls: number[] = [];
   pullBondedOnly: boolean[] = [];
+  pullSenders: Array<string[] | undefined> = [];
   private pullIndex = 0;
   responses: Array<{
     envelopes: Envelope[];
@@ -35,14 +36,24 @@ class StubInboxRelay {
     this.responses = responses;
   }
 
-  async pullInbox(_keyPair: KeyPair, since = 0, options: { bonded_only?: boolean } = {}) {
+  async pullInbox(
+    _keyPair: KeyPair,
+    since = 0,
+    options: { bonded_only?: boolean; senders?: string[] } = {},
+  ) {
     this.pulls.push(since);
     this.pullBondedOnly.push(options.bonded_only !== false);
+    this.pullSenders.push(options.senders);
     const next = this.responses[this.pullIndex] ?? { envelopes: [], cursor: since };
     this.pullIndex += 1;
+    let envelopes = next.envelopes;
+    if (options.senders && options.senders.length > 0) {
+      const allowed = new Set(options.senders);
+      envelopes = envelopes.filter((envelope) => allowed.has(envelope.from));
+    }
     return {
       ok: true as const,
-      envelopes: next.envelopes,
+      envelopes,
       cursor: next.cursor,
     };
   }
@@ -190,7 +201,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       return;
     }
     expect(result.envelopes).toHaveLength(2);
-    expect(result.filtered_count).toBe(18);
+    expect(result.filtered_count).toBe(0);
     expect(result.new_count).toBe(2);
     expect(result.envelopes.every((envelope) => envelope.from === currentPeerId)).toBe(true);
     expect(result.envelopes.some((envelope) => envelope.from === stalePeerId)).toBe(false);
@@ -268,6 +279,53 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
 
     structured(await handleInbox(ctx, { since: 0, include_history: true }));
     expect(relay.pullBondedOnly).toEqual([false]);
+  });
+
+  it("passes bonded senders to relay when bonds are narrower than allowlist", async () => {
+    const bondedPeer = generateKeyPair();
+    const extraPeer = generateKeyPair();
+    const bondedPeerId = publicKeyToAgentId(bondedPeer.publicKey);
+    const extraPeerId = publicKeyToAgentId(extraPeer.publicKey);
+
+    const relay = new StubInboxRelay([{ envelopes: [], cursor: 1 }]);
+    const allowlist = new MemoryAllowlistStore();
+    const bonds = new MemoryBondStore();
+    const ctx = createAgentContext({
+      keyStore: createKeyStore(),
+      relay: relay as unknown as HttpRelayClient,
+      bonds,
+      allowlist,
+      pending: createPendingQueue(),
+      inboxCursor: new MemoryInboxCursorStore(),
+    });
+    const recipientKeys = await ctx.keyStore.loadOrCreate();
+    const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
+    relay.responses[0] = {
+      envelopes: [
+        makeEnvelope(bondedPeer, recipientId, "bonded", 1),
+        makeEnvelope(extraPeer, recipientId, "extra", 2),
+      ],
+      cursor: 2,
+    };
+
+    allowlist.set(recipientId, [bondedPeerId, extraPeerId]);
+    bonds.add(recipientId, {
+      peer: bondedPeerId,
+      scope: ["session.negotiate"],
+      mode: "bonded_contact",
+      profiles: ["core/1"],
+    });
+
+    const result = structured(await handleInbox(ctx, { since: 0 }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(relay.pullSenders[0]).toEqual([bondedPeerId]);
+    expect(result.envelopes).toHaveLength(1);
+    expect(result.envelopes[0]?.payload).toBe("bonded");
+    expect(result.filtered_count).toBe(0);
+    expect(result.relay_filtered_count).toBeUndefined();
   });
 
   it("falls back to allowlist peers when bonds are empty", async () => {
