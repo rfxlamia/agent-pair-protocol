@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createMcpServer } from "../index.js";
 import {
@@ -11,18 +14,21 @@ import {
 
 describe("e2e happy path", () => {
   let env: DualRelayEnv;
+  let mcpDataDir: string;
 
   beforeAll(async () => {
     env = await startDualRelay(3021);
+    mcpDataDir = await mkdtemp(join(tmpdir(), "agentpair-happy-mcp-"));
   });
 
   afterAll(async () => {
     await env.cleanup();
+    await rm(mcpDataDir, { recursive: true, force: true });
   });
 
   it("pair → session → ratify produces co-signed hash via relay transport", async () => {
-    const aliceMcp = createMcpServer({ relayUrl: env.relayUrl });
-    const bobMcp = createMcpServer({ relayUrl: env.relayUrl });
+    const aliceMcp = createMcpServer({ relayUrl: env.relayUrl, dataDir: mcpDataDir });
+    const bobMcp = createMcpServer({ relayUrl: env.relayUrl, dataDir: mcpDataDir });
     expect(aliceMcp.server).toBeDefined();
     expect(bobMcp.server).toBeDefined();
 
