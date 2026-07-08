@@ -5,6 +5,8 @@ services:
       dockerfile: packages/relay/Dockerfile
     ports:
       - "127.0.0.1:3001:3001"
+    environment:
+      - AGENTPAIR_TRUST_PROXY=1
     volumes:
       - relay-data:/data
     networks:
