@@ -27,6 +27,7 @@ export interface JsonPersistentStore<T> {
   mutate(updater: (data: T) => void): void;
   replace(data: T): void;
   flush(): Promise<void>;
+  lastFlushError(): Error | undefined;
 }
 
 export function createJsonPersistentStore<T>(options: {
@@ -40,6 +41,22 @@ export function createJsonPersistentStore<T>(options: {
   let loaded = false;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let flushPromise: Promise<void> | undefined;
+  let lastFlushError: Error | undefined;
+
+  function logFlushFailure(error: unknown): void {
+    lastFlushError = error instanceof Error ? error : new Error(String(error));
+    console.error(`[agentpair] store flush failed for ${options.filePath}`, lastFlushError.message);
+  }
+
+  function scheduleFlush(): void {
+    void flush()
+      .then(() => {
+        lastFlushError = undefined;
+      })
+      .catch((error) => {
+        logFlushFailure(error);
+      });
+  }
 
   function loadSync(): void {
     if (loaded) {
@@ -73,12 +90,7 @@ export function createJsonPersistentStore<T>(options: {
 
   function scheduleSave(): void {
     if (debounceMs <= 0) {
-      void flush().catch((error) => {
-        console.error(
-          `[agentpair] store flush failed for ${options.filePath}`,
-          error instanceof Error ? error.message : error,
-        );
-      });
+      scheduleFlush();
       return;
     }
     if (debounceTimer) {
@@ -86,12 +98,7 @@ export function createJsonPersistentStore<T>(options: {
     }
     debounceTimer = setTimeout(() => {
       debounceTimer = undefined;
-      void flush().catch((error) => {
-        console.error(
-          `[agentpair] store flush failed for ${options.filePath}`,
-          error instanceof Error ? error.message : error,
-        );
-      });
+      scheduleFlush();
     }, debounceMs);
   }
 
@@ -103,9 +110,13 @@ export function createJsonPersistentStore<T>(options: {
     if (flushPromise) {
       await flushPromise;
     }
-    flushPromise = writeAtomic(options.filePath, data);
+    flushPromise = writeAtomicWithRetry(options.filePath, data);
     try {
       await flushPromise;
+      lastFlushError = undefined;
+    } catch (error) {
+      logFlushFailure(error);
+      throw lastFlushError;
     } finally {
       flushPromise = undefined;
     }
@@ -127,7 +138,19 @@ export function createJsonPersistentStore<T>(options: {
       scheduleSave();
     },
     flush,
+    lastFlushError() {
+      return lastFlushError;
+    },
   };
+}
+
+async function writeAtomicWithRetry<T>(filePath: string, data: T): Promise<void> {
+  try {
+    await writeAtomic(filePath, data);
+  } catch {
+    await writeAtomic(filePath, data);
+    console.error(`[agentpair] store flush retry succeeded for ${filePath}`);
+  }
 }
 
 async function writeAtomic<T>(filePath: string, data: T): Promise<void> {
