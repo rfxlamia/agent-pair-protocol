@@ -98,7 +98,14 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       title: "Pull inbox",
       description: "Pull signed envelopes from the relay using challenge-response auth.",
       inputSchema: {
-        since: z.number().optional().describe("Sequence cursor; defaults to 0"),
+        since: z
+          .number()
+          .optional()
+          .describe("Relay rowid cursor; defaults to last persisted cursor"),
+        include_history: z
+          .boolean()
+          .optional()
+          .describe("When true, return envelopes from all senders (debug); default false"),
       },
     },
     async (input) => handleInbox(context, input),
