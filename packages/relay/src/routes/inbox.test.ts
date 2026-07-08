@@ -357,9 +357,11 @@ describe("inbox relay routes", () => {
     const filteredBody = (await filtered.json()) as {
       envelopes: Array<{ from: string }>;
       cursor: number;
+      filtered_count: number;
     };
     expect(filteredBody.envelopes.every((envelope) => envelope.from === aliceId)).toBe(true);
     expect(filteredBody.envelopes.some((envelope) => envelope.from === strangerId)).toBe(false);
+    expect(filteredBody.filtered_count).toBeGreaterThanOrEqual(1);
     expect(filteredBody.cursor).toBeGreaterThan(0);
 
     const full = await pullBobInbox(0, false);

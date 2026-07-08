@@ -155,6 +155,7 @@ export class HttpRelayClient implements PairingRelayClient {
           last_good_seq: number;
           expected_seq?: number;
         }>;
+        filtered_count?: number;
       }
     | { ok: false; error: string }
   > {
@@ -186,6 +187,7 @@ export class HttpRelayClient implements PairingRelayClient {
         last_good_seq: number;
         expected_seq?: number;
       }>;
+      filtered_count?: number;
     };
     const envelopes = (payload.envelopes ?? []).map((raw) =>
       typeof raw === "string" ? deserializeEnvelope(raw) : raw,
@@ -195,6 +197,7 @@ export class HttpRelayClient implements PairingRelayClient {
       envelopes,
       cursor: payload.cursor,
       relay_gaps: payload.gaps,
+      filtered_count: payload.filtered_count,
     };
   }
 

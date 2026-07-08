@@ -163,6 +163,8 @@ export async function handleInbox(
   const gapWarnings = detectClientThreadGaps(ctx);
   const cursor = pull.cursor ?? sinceUsed;
   ctx.inboxCursor.set(cursor);
+  const relayFilteredCount = pull.filtered_count ?? 0;
+  const totalFilteredCount = relayFilteredCount + filteredCount;
 
   const result = {
     ok: true,
@@ -170,7 +172,9 @@ export async function handleInbox(
     since_used: sinceUsed,
     cursor,
     new_count: envelopes.length,
-    filtered_count: filteredCount,
+    filtered_count: totalFilteredCount,
+    ...(relayFilteredCount > 0 ? { relay_filtered_count: relayFilteredCount } : {}),
+    ...(filteredCount > 0 ? { mcp_filtered_count: filteredCount } : {}),
     bonded_peers: bondedPeers,
     envelopes,
     ...(bondsEmpty ? { bonds_empty: true } : {}),

@@ -24,6 +24,7 @@ function structured<T>(result: { structuredContent: T }): T {
 
 class StubInboxRelay {
   pulls: number[] = [];
+  pullBondedOnly: boolean[] = [];
   private pullIndex = 0;
   responses: Array<{
     envelopes: Envelope[];
@@ -34,8 +35,9 @@ class StubInboxRelay {
     this.responses = responses;
   }
 
-  async pullInbox(_keyPair: KeyPair, since = 0) {
+  async pullInbox(_keyPair: KeyPair, since = 0, options: { bonded_only?: boolean } = {}) {
     this.pulls.push(since);
+    this.pullBondedOnly.push(options.bonded_only !== false);
     const next = this.responses[this.pullIndex] ?? { envelopes: [], cursor: since };
     this.pullIndex += 1;
     return {
@@ -236,6 +238,36 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     expect(result.envelopes).toHaveLength(20);
     expect(result.filtered_count).toBe(0);
     expect(result.new_count).toBe(20);
+  });
+
+  it("passes bonded_only=false to relay when include_history is true", async () => {
+    const peer = generateKeyPair();
+    const peerId = publicKeyToAgentId(peer.publicKey);
+    const relay = new StubInboxRelay([{ envelopes: [], cursor: 0 }]);
+    const bonds = new MemoryBondStore();
+    const ctx = createAgentContext({
+      keyStore: createKeyStore(),
+      relay: relay as unknown as HttpRelayClient,
+      bonds,
+      allowlist: new MemoryAllowlistStore(),
+      pending: createPendingQueue(),
+      inboxCursor: new MemoryInboxCursorStore(),
+    });
+    const recipientKeys = await ctx.keyStore.loadOrCreate();
+    const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
+    relay.responses[0] = {
+      envelopes: [makeEnvelope(peer, recipientId, "history", 1)],
+      cursor: 1,
+    };
+    bonds.add(recipientId, {
+      peer: peerId,
+      scope: ["session.negotiate"],
+      mode: "bonded_contact",
+      profiles: ["core/1"],
+    });
+
+    structured(await handleInbox(ctx, { since: 0, include_history: true }));
+    expect(relay.pullBondedOnly).toEqual([false]);
   });
 
   it("falls back to allowlist peers when bonds are empty", async () => {

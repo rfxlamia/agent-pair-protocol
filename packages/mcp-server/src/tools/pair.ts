@@ -262,19 +262,19 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
   const agentId = publicKeyToAgentId(keyPair.publicKey);
 
   const previous = ctx.allowlist.get(agentId);
-  const purge = await ctx.relay.purgeInboxDyad(input.peer, keyPair);
-
   const next = previous.filter((peer) => peer !== input.peer);
-  ctx.allowlist.set(agentId, next);
-  ctx.bonds.remove(agentId, input.peer);
 
   const push = await ctx.relay.putAllowlist(agentId, next, keyPair.secretKey);
   if (!push.ok) {
-    ctx.allowlist.set(agentId, previous);
     const result = { ok: false, error: "allowlist_push_failed" };
     assertNoSecrets(result);
     return toolTextResult(result);
   }
+
+  const purge = await ctx.relay.purgeInboxDyad(input.peer, keyPair);
+
+  ctx.allowlist.set(agentId, next);
+  ctx.bonds.remove(agentId, input.peer);
 
   const notice = createEnvelope({
     sender: keyPair,
