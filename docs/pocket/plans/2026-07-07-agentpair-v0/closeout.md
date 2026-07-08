@@ -48,7 +48,7 @@ Non-blocking observations from review — accepted at close, recorded for follow
 - **T3** (Minor): getrandom backend configured two ways (Cargo feature vs rustflags cfg) — packages/protocol/wasm/spake2-pake/.cargo/config.toml:2
 - **T3** (Minor): Decision doc says committed pkg/ for tests but wasm/pkg/ not committed — docs/pocket/decisions/pake-selection.md:30
 - **T3** (Minor): PakeSessionHandle lacks explicit WASM session free(); relies on FinalizationRegistry — packages/protocol/src/pairing/pake-adapter.ts:7-10
-- **T4** (Minor): Pairing code uses Math.random() instead of CSPRNG — packages/protocol/src/pairing/flow.ts:105-110
+- **T4** (Resolved): Pairing code CSPRNG + ~2^30 entropy — `packages/protocol/src/pairing/pairing-words.ts` (issue #2)
 - **T4** (Minor): Dead/nonsensical ternary in test relay mock — packages/protocol/src/pairing/flow.test.ts:71-73
 - **T4** (Minor): respond() ignores _initiatorMessage parameter — packages/protocol/src/pairing/pake-adapter.ts:72-78
 - **T5** (Minor): verifyChallenge returns 404 for unknown nonce; spec says 403 — packages/relay/src/routes/inbox.ts:88-90

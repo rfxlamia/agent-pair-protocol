@@ -240,6 +240,7 @@ server.registerTool(
 | `crypto/encrypt.ts` | X25519 ECDH + XChaCha20-Poly1305 |
 | `crypto/envelope.ts` | `createEnvelope`, `verifyEnvelope`, `decryptEnvelopePayload` |
 | `pairing/flow.ts` | `pairInit`, `pairJoin`, `pairInitComplete` |
+| `pairing/pairing-words.ts` | Kode pairing CSPRNG (`generatePairingCode`) |
 | `pairing/pake-adapter.ts` | Adapter ke WASM SPAKE2 |
 | `wasm/spake2-pake/` | Rust crate → wasm-pack |
 
@@ -266,7 +267,9 @@ pairJoin()  → fetch manifest → human gate → SPAKE2 via relay
 pairInitComplete()  → initiator side menyelesaikan SPAKE2 setelah joiner approve
 ```
 
-Implementasi: `packages/protocol/src/pairing/flow.ts`.
+Kode pairing: format `NN-kata-kata-kata` (contoh `42-kancil-senja-awan`), dibuat dengan `crypto.randomInt` dari ~2^30 ruang kombinasi, TTL 5 menit.
+
+Implementasi: `packages/protocol/src/pairing/flow.ts` + `pairing-words.ts`.
 
 ---
 
@@ -498,7 +501,6 @@ Dari closeout review — non-blocking tapi perlu diketahui developer:
 | Inbox | `since` cursor di relay belum lengkap |
 | Session | `processSessionInboxEnvelope` perlu dipanggil via `inbox()` pull |
 | Budget | Exhaustion enforcement belum penuh di state machine |
-| Pairing code | `Math.random()` bukan CSPRNG |
 | npm publish | Pipeline siap — `pnpm publish:packages` (butuh org `@agentpair`) |
 
 Lihat `docs/pocket/plans/2026-07-07-agentpair-v0/closeout.md` untuk daftar lengkap.
