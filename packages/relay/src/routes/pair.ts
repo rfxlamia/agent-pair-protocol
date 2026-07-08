@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { RelayDatabase } from "../db/index.js";
-import { createRateLimiter } from "../middleware/rate-limit.js";
+import type { createRateLimiter } from "../middleware/rate-limit.js";
 
 const PAIR_TTL_MS = 5 * 60 * 1000;
 
@@ -30,21 +30,15 @@ export function createPairRoutes(
   routes.get("/pair/:sessionId", (c) => {
     const sessionId = c.req.param("sessionId");
     const row = db
-      .prepare(
-        "SELECT message_json, expires_at FROM pair_sessions WHERE session_id = ?",
-      )
-      .get(sessionId) as
-      | { message_json: string; expires_at: number }
-      | undefined;
+      .prepare("SELECT message_json, expires_at FROM pair_sessions WHERE session_id = ?")
+      .get(sessionId) as { message_json: string; expires_at: number } | undefined;
 
     if (!row) {
       return c.json({ error: "session_not_found" }, 404);
     }
 
     if (row.expires_at < Date.now()) {
-      db.prepare("DELETE FROM pair_sessions WHERE session_id = ?").run(
-        sessionId,
-      );
+      db.prepare("DELETE FROM pair_sessions WHERE session_id = ?").run(sessionId);
       return c.json({ error: "session_expired" }, 410);
     }
 

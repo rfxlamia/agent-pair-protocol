@@ -14,12 +14,7 @@ export function toolTextResult(data: unknown): {
   };
 }
 
-const SECRET_PATTERNS = [
-  /secretKey/i,
-  /privateKey/i,
-  /secret_key/i,
-  /private_key/i,
-];
+const SECRET_PATTERNS = [/secretKey/i, /privateKey/i, /secret_key/i, /private_key/i];
 
 export function stripSecrets<T>(value: T): T {
   return scrub(value, new WeakSet()) as T;
@@ -80,10 +75,7 @@ function walkForSecretKeys(value: unknown, seen: WeakSet<object>): void {
 export function parseBondMode(
   mode: string,
 ): { ok: true; mode: BondMode } | { ok: false; error: string } {
-  if (
-    mode === "ephemeral_until_session_closes" ||
-    mode === "bonded_contact"
-  ) {
+  if (mode === "ephemeral_until_session_closes" || mode === "bonded_contact") {
     return { ok: true, mode };
   }
   return { ok: false, error: "invalid_mode" };

@@ -12,10 +12,7 @@ type PackageJson = {
  * Resolve a dependency's CLI entry to an absolute path.
  * Works under pnpm's isolated layout and npm's hoisted npx installs.
  */
-export function resolvePackageBin(
-  packageName: string,
-  binName?: string,
-): string {
+export function resolvePackageBin(packageName: string, binName?: string): string {
   const packageJsonPath = require.resolve(`${packageName}/package.json`);
   const packageDir = dirname(packageJsonPath);
   const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as PackageJson;

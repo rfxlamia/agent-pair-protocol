@@ -18,9 +18,7 @@ function clientIp(c: Context): string {
   return c.req.header("x-real-ip") ?? "unknown";
 }
 
-export function createRateLimiter(
-  options: RateLimitOptions,
-): MiddlewareHandler {
+export function createRateLimiter(options: RateLimitOptions): MiddlewareHandler {
   const buckets = new Map<string, Bucket>();
 
   return async (c: Context, next: Next) => {

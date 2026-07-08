@@ -69,9 +69,16 @@ export function detectGlobalThreadGap(
     return null;
   }
 
-  let lastGood = global[0]!;
+  const firstSeq = global[0];
+  if (firstSeq === undefined) {
+    return null;
+  }
+  let lastGood = firstSeq;
   for (let i = 1; i < global.length; i += 1) {
-    const current = global[i]!;
+    const current = global[i];
+    if (current === undefined) {
+      continue;
+    }
     if (current !== lastGood + 1) {
       return {
         thread,
@@ -86,10 +93,7 @@ export function detectGlobalThreadGap(
 }
 
 export function detectClientThreadGaps(ctx: AgentContext): ThreadGap[] {
-  const threads = new Set([
-    ...sentMap(ctx).keys(),
-    ...peerMap(ctx).keys(),
-  ]);
+  const threads = new Set([...sentMap(ctx).keys(), ...peerMap(ctx).keys()]);
   const gaps: ThreadGap[] = [];
 
   for (const thread of threads) {

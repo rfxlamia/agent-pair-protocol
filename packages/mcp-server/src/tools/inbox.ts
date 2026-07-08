@@ -65,10 +65,7 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
           if (effect.ok === true) {
             seen.add(envelope.id);
           }
-          if (
-            effect.ok === true &&
-            typeof effect.pending_id === "string"
-          ) {
+          if (effect.ok === true && typeof effect.pending_id === "string") {
             pendingId = effect.pending_id;
           }
         }
@@ -112,9 +109,7 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
     cursor: pull.cursor ?? since,
     envelopes,
     ...(gapWarnings.length > 0 ? { gap_warnings: gapWarnings } : {}),
-    ...(pull.relay_gaps && pull.relay_gaps.length > 0
-      ? { relay_gaps: pull.relay_gaps }
-      : {}),
+    ...(pull.relay_gaps && pull.relay_gaps.length > 0 ? { relay_gaps: pull.relay_gaps } : {}),
   };
   assertNoSecrets(result);
   return toolTextResult(result);

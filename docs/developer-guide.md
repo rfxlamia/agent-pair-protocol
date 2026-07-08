@@ -70,6 +70,19 @@ pnpm build
 Output WASM: `packages/protocol/wasm/pkg/spake2_pake.js`
 Compiled JS: `packages/protocol/dist/`, `packages/mcp-server/dist/`
 
+### Quality gates (git hooks)
+
+`pnpm install` installs Husky hooks automatically:
+
+| Hook | Runs |
+|------|------|
+| **pre-commit** | Biome lint/format on staged `*.{ts,js,json}` only |
+| **pre-push** | `pnpm -r --if-present typecheck` then `pnpm test` (build runs via `pretest`) |
+
+Manual checks: `pnpm lint`, `pnpm format`, `pnpm test`.
+
+Emergency bypass: `git commit --no-verify` or `git push --no-verify` skips hooks (use sparingly).
+
 ---
 
 ## Menjalankan relay lokal

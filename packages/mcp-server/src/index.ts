@@ -1,10 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { AgentContext } from "./tools/pair.js";
-import { createAgentContext } from "./tools/pair.js";
+import { HttpRelayClient, resolveRelayUrl } from "./relay/client.js";
+import { createKeyStore } from "./store/keys.js";
+import { createPendingQueue } from "./store/pending.js";
+import { handleHumanApprove } from "./tools/human-approve.js";
 import { handleInbox, handleSend } from "./tools/inbox.js";
 import { handleListBonds } from "./tools/list-bonds.js";
-import { handleHumanApprove } from "./tools/human-approve.js";
+import type { AgentContext } from "./tools/pair.js";
+import { createAgentContext } from "./tools/pair.js";
 import {
   handlePairInit,
   handlePairInitCompleteTool,
@@ -17,9 +20,6 @@ import {
   handleSessionSign,
   handleSessionStatus,
 } from "./tools/session.js";
-import { createKeyStore } from "./store/keys.js";
-import { createPendingQueue } from "./store/pending.js";
-import { HttpRelayClient, resolveRelayUrl } from "./relay/client.js";
 
 export interface CreateMcpServerOptions {
   context?: AgentContext;
@@ -65,8 +65,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     "pair_join",
     {
       title: "Join pairing",
-      description:
-        "Look up a pairing code and queue human approval before SPAKE2 completes.",
+      description: "Look up a pairing code and queue human approval before SPAKE2 completes.",
       inputSchema: {
         code: z.string().describe("Out-of-band pairing code"),
       },
@@ -93,10 +92,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       title: "Pull inbox",
       description: "Pull signed envelopes from the relay using challenge-response auth.",
       inputSchema: {
-        since: z
-          .number()
-          .optional()
-          .describe("Sequence cursor; defaults to 0"),
+        since: z.number().optional().describe("Sequence cursor; defaults to 0"),
       },
     },
     async (input) => handleInbox(context, input),
@@ -150,13 +146,8 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
         "Approve or reject a pending human-gated action. Requires via_human=true after user confirmation in chat.",
       inputSchema: {
         pending_id: z.string(),
-        decision: z
-          .string()
-          .describe('Use "approve" or "reject:<reason>"'),
-        via_human: z
-          .boolean()
-          .optional()
-          .describe("Must be true when the human confirmed in chat"),
+        decision: z.string().describe('Use "approve" or "reject:<reason>"'),
+        via_human: z.boolean().optional().describe("Must be true when the human confirmed in chat"),
       },
     },
     async (input) => handleHumanApprove(context, input),
@@ -212,8 +203,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     "session_sign",
     {
       title: "Sign session artifact",
-      description:
-        "Sign an artifact hash when executable tests are green and challenges filed.",
+      description: "Sign an artifact hash when executable tests are green and challenges filed.",
       inputSchema: {
         thread: z.string(),
         artifact_hash: z.string(),

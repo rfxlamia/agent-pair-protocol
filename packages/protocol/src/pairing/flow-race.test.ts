@@ -1,8 +1,7 @@
-import { describe, expect, it, beforeAll, beforeEach } from "vitest";
-import { generateKeyPair, publicKeyToAgentId, type KeyPair } from "../crypto/keys.js";
-import { sign } from "../crypto/sign.js";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
-import { init as initPake } from "./pake-adapter.js";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
+import { sign } from "../crypto/sign.js";
 import {
   InMemoryPairingRegistry,
   type LocalAllowlistStore,
@@ -11,6 +10,7 @@ import {
   pairInitComplete,
   pairJoin,
 } from "./flow.js";
+import { init as initPake } from "./pake-adapter.js";
 
 function canonicalAllowlistBytes(agentId: string, allowed: string[]): Uint8Array {
   const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
@@ -96,41 +96,37 @@ describe("pairing flow race conditions", () => {
     joinerAllowlist = new MemoryAllowlistStore();
   });
 
-  it(
-    "joiner and initiator both bond when initiator allowlist push is slow",
-    async () => {
-      const pending = await pairInit({
-        scope: ["session.negotiate"],
-        mode: "ephemeral_until_session_closes",
-        keyPair: initiatorKeys,
-        relay,
-        registry,
-      });
+  it("joiner and initiator both bond when initiator allowlist push is slow", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+    });
 
-      const joinPromise = pairJoin({
-        code: pending.code,
-        keyPair: joinerKeys,
-        relay,
-        registry,
-        localAllowlist: joinerAllowlist,
-        decision: { approve: true },
-      });
+    const joinPromise = pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+    });
 
-      const initResult = await pairInitComplete({
-        code: pending.code,
-        keyPair: initiatorKeys,
-        relay,
-        registry,
-        localAllowlist: initiatorAllowlist,
-      });
+    const initResult = await pairInitComplete({
+      code: pending.code,
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      localAllowlist: initiatorAllowlist,
+    });
 
-      const joinResult = await joinPromise;
+    const joinResult = await joinPromise;
 
-      expect(initResult.status).toBe("bonded");
-      expect(joinResult.status).toBe("bonded");
-      expect(initiatorAllowlist.get(initiatorId)).toContain(joinerId);
-      expect(joinerAllowlist.get(joinerId)).toContain(initiatorId);
-    },
-    20000,
-  );
+    expect(initResult.status).toBe("bonded");
+    expect(joinResult.status).toBe("bonded");
+    expect(initiatorAllowlist.get(initiatorId)).toContain(joinerId);
+    expect(joinerAllowlist.get(joinerId)).toContain(initiatorId);
+  }, 20000);
 });

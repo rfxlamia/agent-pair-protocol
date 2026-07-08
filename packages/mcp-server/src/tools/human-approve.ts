@@ -1,9 +1,6 @@
-import type { AgentContext } from "./pair.js";
-import {
-  executePairJoinApproval,
-  handlePairInitComplete,
-} from "./pair.js";
 import { parseHumanDecision } from "../store/pending.js";
+import type { AgentContext } from "./pair.js";
+import { executePairJoinApproval, handlePairInitComplete } from "./pair.js";
 import {
   handleSessionApproveOpen,
   handleSessionRatify,
@@ -103,9 +100,6 @@ function spreadFlowError(
   return {};
 }
 
-export async function completeInitiatorPairing(
-  ctx: AgentContext,
-  code: string,
-) {
+export async function completeInitiatorPairing(ctx: AgentContext, code: string) {
   return handlePairInitComplete(ctx, { code });
 }

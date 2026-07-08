@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { serve } from "@hono/node-server";
-import type { ServerType } from "@hono/node-server";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createEnvelope,
   generateKeyPair,
@@ -9,27 +9,24 @@ import {
   verifyEnvelope,
 } from "@agentpair/protocol";
 import { createRelayApp } from "@agentpair/relay";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { serve } from "@hono/node-server";
+import type { ServerType } from "@hono/node-server";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { HttpRelayClient } from "../relay/client.js";
+import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
+import { MemoryBondStore } from "../store/bonds.js";
 import { createKeyStore } from "../store/keys.js";
 import { createPendingQueue } from "../store/pending.js";
-import {
-  createFileAllowlistStore,
-  MemoryAllowlistStore,
-} from "../store/allowlist.js";
-import { MemoryBondStore } from "../store/bonds.js";
-import { HttpRelayClient } from "../relay/client.js";
+import { handleHumanApprove } from "./human-approve.js";
+import { completeInitiatorPairing } from "./human-approve.js";
+import { handleInbox, handleSend } from "./inbox.js";
 import {
   createAgentContext,
   handlePairInit,
-  handlePairJoin,
   handlePairInitComplete,
+  handlePairJoin,
   handleRevoke,
 } from "./pair.js";
-import { handleHumanApprove } from "./human-approve.js";
-import { handleInbox, handleSend } from "./inbox.js";
-import { completeInitiatorPairing } from "./human-approve.js";
 
 const TEST_PORT = 3011;
 const RELAY_URL = `http://127.0.0.1:${TEST_PORT}`;

@@ -1,13 +1,13 @@
+import { bytesToUtf8, utf8ToBytes } from "@noble/ciphers/utils.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { describe, expect, it } from "vitest";
-import { generateKeyPair, publicKeyToAgentId } from "./crypto/keys.js";
 import {
   createEnvelope,
   decryptEnvelopePayload,
   serializeEnvelope,
   verifyEnvelope,
 } from "./crypto/envelope.js";
-import { bytesToUtf8, utf8ToBytes } from "@noble/ciphers/utils.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
+import { generateKeyPair, publicKeyToAgentId } from "./crypto/keys.js";
 
 describe("envelope", () => {
   it("round-trips encrypt, sign, verify, and decrypt", () => {
@@ -45,7 +45,7 @@ describe("envelope", () => {
       payload: utf8ToBytes("tamper me"),
     });
 
-    const tampered = { ...envelope, sig: envelope.sig.slice(0, -2) + "XX" };
+    const tampered = { ...envelope, sig: `${envelope.sig.slice(0, -2)}XX` };
     expect(verifyEnvelope(tampered, alice.publicKey)).toBe(false);
   });
 
@@ -66,11 +66,7 @@ describe("envelope", () => {
     const serialized = serializeEnvelope(envelope);
     const secretHex = bytesToHex(alice.secretKey);
     expect(serialized).not.toContain(secretHex);
-    expect(serialized).not.toContain(
-      Buffer.from(alice.secretKey).toString("base64"),
-    );
-    expect(serialized).not.toContain(
-      Buffer.from(alice.secretKey).toString("base64url"),
-    );
+    expect(serialized).not.toContain(Buffer.from(alice.secretKey).toString("base64"));
+    expect(serialized).not.toContain(Buffer.from(alice.secretKey).toString("base64url"));
   });
 });

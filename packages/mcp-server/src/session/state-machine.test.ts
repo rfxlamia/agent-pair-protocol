@@ -1,16 +1,12 @@
+import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "@agentpair/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  publicKeyToAgentId,
-  generateKeyPair,
-  type KeyPair,
-} from "@agentpair/protocol";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
 import { MemoryBondStore } from "../store/bonds.js";
 import { createPendingQueue } from "../store/pending.js";
 import {
   SESSION_OPEN_TTL_MS,
-  createSessionStateMachine,
   type SessionStateMachine,
+  createSessionStateMachine,
 } from "./state-machine.js";
 
 function agentIdFromKeys(keys: KeyPair): string {
@@ -36,14 +32,16 @@ describe("session state machine", () => {
   let bobBonds: MemoryBondStore;
 
   function createLinkedMachines() {
-    let alice!: SessionStateMachine;
-    let bob!: SessionStateMachine;
+    const peers = new Map<string, SessionStateMachine>();
 
     const deliver = async (
       fromId: string,
       input: { to: string; type: string; payload: string; thread: string },
     ) => {
-      const peer = input.to === aliceId ? alice : bob;
+      const peer = peers.get(input.to);
+      if (!peer) {
+        throw new Error(`unknown peer: ${input.to}`);
+      }
       await peer.handleIncomingEnvelope({
         from: fromId,
         type: input.type,
@@ -52,7 +50,7 @@ describe("session state machine", () => {
       });
     };
 
-    alice = createSessionStateMachine({
+    const alice = createSessionStateMachine({
       agentId: aliceId,
       keyPair: aliceKeys,
       pending: alicePending,
@@ -65,7 +63,8 @@ describe("session state machine", () => {
         },
       },
     });
-    bob = createSessionStateMachine({
+    peers.set(aliceId, alice);
+    const bob = createSessionStateMachine({
       agentId: bobId,
       keyPair: bobKeys,
       pending: bobPending,
@@ -78,6 +77,7 @@ describe("session state machine", () => {
         },
       },
     });
+    peers.set(bobId, bob);
 
     return { alice, bob };
   }
@@ -146,11 +146,13 @@ describe("session state machine", () => {
       throw new Error("session open failed");
     }
 
-    const bobPendingItems = bobPending
-      .list()
-      .filter((item) => item.kind === "session_open");
+    const bobPendingItems = bobPending.list().filter((item) => item.kind === "session_open");
     expect(bobPendingItems.length).toBe(1);
-    const pendingId = bobPendingItems[0]!.id;
+    const bobPendingItem = bobPendingItems[0];
+    if (!bobPendingItem) {
+      throw new Error("expected session_open pending item");
+    }
+    const pendingId = bobPendingItem.id;
 
     const approved = structured(
       await bobMachine.handleApproveOpen({
@@ -174,31 +176,29 @@ describe("session state machine", () => {
       return;
     }
 
-    const aliceStatus = structured(
-      await aliceMachine.handleStatus({ thread: opened.thread }),
-    );
+    const aliceStatus = structured(await aliceMachine.handleStatus({ thread: opened.thread }));
     expect(aliceStatus.ok).toBe(true);
     if (!aliceStatus.ok) {
       return;
     }
     expect(aliceStatus.status).toBe("pending");
 
-    const bobPendingItems = bobPending
-      .list()
-      .filter((item) => item.kind === "session_open");
+    const bobPendingItems = bobPending.list().filter((item) => item.kind === "session_open");
     expect(bobPendingItems).toHaveLength(1);
+    const bobPendingItem = bobPendingItems[0];
+    if (!bobPendingItem) {
+      throw new Error("expected session_open pending item");
+    }
 
     const approved = structured(
       await bobMachine.handleApproveOpen({
-        pending_id: bobPendingItems[0]!.id,
+        pending_id: bobPendingItem.id,
         via_human: true,
       }),
     );
     expect(approved.ok).toBe(true);
 
-    const liveStatus = structured(
-      await aliceMachine.handleStatus({ thread: opened.thread }),
-    );
+    const liveStatus = structured(await aliceMachine.handleStatus({ thread: opened.thread }));
     expect(liveStatus.ok).toBe(true);
     if (!liveStatus.ok) {
       return;
@@ -217,9 +217,11 @@ describe("session state machine", () => {
       throw new Error("open failed");
     }
 
-    const pendingId = bobPending
-      .list()
-      .find((item) => item.kind === "session_open")!.id;
+    const bobOpenPending = bobPending.list().find((item) => item.kind === "session_open");
+    if (!bobOpenPending) {
+      throw new Error("expected session_open pending item");
+    }
+    const pendingId = bobOpenPending.id;
     const rejected = structured(
       await bobMachine.handleRejectOpen({
         pending_id: pendingId,
@@ -229,9 +231,7 @@ describe("session state machine", () => {
     );
     expect(rejected.ok).toBe(true);
 
-    const aliceStatus = structured(
-      await aliceMachine.handleStatus({ thread: opened.thread }),
-    );
+    const aliceStatus = structured(await aliceMachine.handleStatus({ thread: opened.thread }));
     expect(aliceStatus.ok).toBe(true);
     if (!aliceStatus.ok) {
       return;
@@ -260,9 +260,7 @@ describe("session state machine", () => {
     }
     expect(expired.expired).toContain(opened.thread);
 
-    const aliceStatus = structured(
-      await aliceMachine.handleStatus({ thread: opened.thread }),
-    );
+    const aliceStatus = structured(await aliceMachine.handleStatus({ thread: opened.thread }));
     expect(aliceStatus.ok).toBe(true);
     if (!aliceStatus.ok) {
       return;
@@ -283,9 +281,7 @@ describe("session state machine", () => {
 
     vi.advanceTimersByTime(SESSION_OPEN_TTL_MS + 1);
 
-    const bobStatus = structured(
-      await bobMachine.handleStatus({ thread: opened.thread }),
-    );
+    const bobStatus = structured(await bobMachine.handleStatus({ thread: opened.thread }));
     expect(bobStatus.ok).toBe(true);
     if (!bobStatus.ok) {
       return;
@@ -496,14 +492,11 @@ describe("session state machine", () => {
     await aliceMachine.handleSign({ thread, artifact_hash: artifactHash });
     await bobMachine.handleSign({ thread, artifact_hash: artifactHash });
 
-    const aliceRatifyPending = alicePending
-      .list()
-      .find((item) => item.kind === "ratify");
-    const bobRatifyPending = bobPending
-      .list()
-      .find((item) => item.kind === "ratify");
-    expect(aliceRatifyPending).toBeDefined();
-    expect(bobRatifyPending).toBeDefined();
+    const aliceRatifyPending = alicePending.list().find((item) => item.kind === "ratify");
+    const bobRatifyPending = bobPending.list().find((item) => item.kind === "ratify");
+    if (!aliceRatifyPending || !bobRatifyPending) {
+      throw new Error("expected ratify pending items");
+    }
 
     const agentRatify = structured(
       await aliceMachine.handleRatify({
@@ -520,7 +513,7 @@ describe("session state machine", () => {
 
     const aliceApproved = structured(
       await aliceMachine.handleRatify({
-        pending_id: aliceRatifyPending!.id,
+        pending_id: aliceRatifyPending.id,
         via_human: true,
       }),
     );
@@ -529,13 +522,11 @@ describe("session state machine", () => {
       return;
     }
     expect(aliceApproved.status).toBe("awaiting_peer_ratify");
-    expect(alicePending.list().filter((item) => item.kind === "ratify")).toHaveLength(
-      0,
-    );
+    expect(alicePending.list().filter((item) => item.kind === "ratify")).toHaveLength(0);
 
     const bobApproved = structured(
       await bobMachine.handleRatify({
-        pending_id: bobRatifyPending!.id,
+        pending_id: bobRatifyPending.id,
         via_human: true,
       }),
     );
@@ -548,9 +539,7 @@ describe("session state machine", () => {
     expect(bobApproved.signatures).toBeDefined();
     expect(bobPending.list().filter((item) => item.kind === "ratify")).toHaveLength(0);
 
-    const aliceFinal = structured(
-      await aliceMachine.handleStatus({ thread }),
-    );
+    const aliceFinal = structured(await aliceMachine.handleStatus({ thread }));
     expect(aliceFinal.ok).toBe(true);
     if (!aliceFinal.ok) {
       return;
@@ -582,9 +571,7 @@ describe("session state machine", () => {
     await aliceMachine.handleSign({ thread, artifact_hash: artifactHash });
     await bobMachine.handleSign({ thread, artifact_hash: artifactHash });
 
-    expect(
-      alicePending.list().filter((item) => item.kind === "ratify"),
-    ).toHaveLength(1);
+    expect(alicePending.list().filter((item) => item.kind === "ratify")).toHaveLength(1);
 
     const approved = structured(
       await aliceMachine.handleRatify({
@@ -597,9 +584,7 @@ describe("session state machine", () => {
     if (!approved.ok) {
       return;
     }
-    expect(
-      alicePending.list().filter((item) => item.kind === "ratify"),
-    ).toHaveLength(0);
+    expect(alicePending.list().filter((item) => item.kind === "ratify")).toHaveLength(0);
   });
 
   it("session_sign rejects when codegen-compile test_report is red", async () => {
@@ -659,11 +644,13 @@ describe("session state machine", () => {
       return;
     }
 
-    const bobPendingItems = bobPending
-      .list()
-      .filter((item) => item.kind === "session_open");
+    const bobPendingItems = bobPending.list().filter((item) => item.kind === "session_open");
+    const bobPendingItem = bobPendingItems[0];
+    if (!bobPendingItem) {
+      throw new Error("expected session_open pending item");
+    }
     await bobMachine.handleApproveOpen({
-      pending_id: bobPendingItems[0]!.id,
+      pending_id: bobPendingItem.id,
       via_human: true,
     });
 
@@ -700,9 +687,7 @@ describe("session state machine", () => {
     }
     expect(exhausted.error).toBe("budget_exhausted");
 
-    const budgetExtendPending = alicePending
-      .list()
-      .find((item) => item.kind === "budget_extend");
+    const budgetExtendPending = alicePending.list().find((item) => item.kind === "budget_extend");
     expect(budgetExtendPending).toBeDefined();
   });
 
@@ -741,12 +726,11 @@ describe("session state machine", () => {
     await aliceMachine.handleSign({ thread, artifact_hash: artifactHash });
     await bobMachine.handleSign({ thread, artifact_hash: artifactHash });
 
-    const aliceRatifyPending = alicePending
-      .list()
-      .find((item) => item.kind === "ratify")!;
-    const bobRatifyPending = bobPending
-      .list()
-      .find((item) => item.kind === "ratify")!;
+    const aliceRatifyPending = alicePending.list().find((item) => item.kind === "ratify");
+    const bobRatifyPending = bobPending.list().find((item) => item.kind === "ratify");
+    if (!aliceRatifyPending || !bobRatifyPending) {
+      throw new Error("expected ratify pending items");
+    }
 
     await aliceMachine.handleRatify({
       pending_id: aliceRatifyPending.id,

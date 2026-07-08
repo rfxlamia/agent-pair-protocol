@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  type DualRelayEnv,
   createDualAgent,
   runPairingFlow,
   startDualRelay,
-  type DualRelayEnv,
 } from "../e2e/dual-server.js";
-import { createAgentContext } from "./pair.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { handleInbox } from "./inbox.js";
+import { createAgentContext } from "./pair.js";
 import { handleSessionMsg, handleSessionOpen, handleSessionStatus } from "./session.js";
 
 function structured<T>(result: { structuredContent: T }): T {
@@ -70,8 +70,7 @@ describe("inbox session negotiation fixes", () => {
     if (!bobInbox.ok) return;
 
     const peerTurn = bobInbox.envelopes.find(
-      (envelope) =>
-        envelope.type === "session.peer_turn" && envelope.thread === opened.thread,
+      (envelope) => envelope.type === "session.peer_turn" && envelope.thread === opened.thread,
     );
     expect(peerTurn).toBeDefined();
     if (!peerTurn) return;
@@ -80,9 +79,7 @@ describe("inbox session negotiation fixes", () => {
     expect(payload.msg_type).toBe("propose");
     expect(payload.body).toBe(proposalBody);
 
-    const status = structured(
-      await handleSessionStatus(bob.ctx, { thread: opened.thread }),
-    );
+    const status = structured(await handleSessionStatus(bob.ctx, { thread: opened.thread }));
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.turn_count).toBe(1);
@@ -144,9 +141,7 @@ describe("inbox session negotiation fixes", () => {
     structured(await handleInbox(restartedBob, { since: cursorAfterLive }));
     structured(await handleInbox(restartedBob, { since: 0 }));
 
-    const status = structured(
-      await handleSessionStatus(restartedBob, { thread: opened.thread }),
-    );
+    const status = structured(await handleSessionStatus(restartedBob, { thread: opened.thread }));
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.turn_count).toBe(1);
@@ -195,9 +190,7 @@ describe("inbox session negotiation fixes", () => {
     expect(bobInbox.ok).toBe(true);
     if (!bobInbox.ok) return;
 
-    const status = structured(
-      await handleSessionStatus(bob.ctx, { thread: opened.thread }),
-    );
+    const status = structured(await handleSessionStatus(bob.ctx, { thread: opened.thread }));
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.peer_messages?.[0]?.body).toBe(proposalBody);
@@ -245,9 +238,7 @@ describe("inbox session negotiation fixes", () => {
     );
     expect(legacyTurn.ok).toBe(true);
 
-    const status = structured(
-      await handleSessionStatus(bob.ctx, { thread: opened.thread }),
-    );
+    const status = structured(await handleSessionStatus(bob.ctx, { thread: opened.thread }));
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.turn_count).toBe(1);

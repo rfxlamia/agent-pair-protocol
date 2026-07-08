@@ -1,5 +1,6 @@
-import { serve } from "@hono/node-server";
-import type { ServerType } from "@hono/node-server";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { init as initPake } from "@agentpair/protocol";
 import {
   agentIdToPublicKey,
@@ -7,27 +8,26 @@ import {
   publicKeyToAgentId,
 } from "@agentpair/protocol";
 import { createRelayApp } from "@agentpair/relay";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { serve } from "@hono/node-server";
+import type { ServerType } from "@hono/node-server";
+import { HttpRelayClient } from "../relay/client.js";
+import { MemoryAllowlistStore } from "../store/allowlist.js";
 import { createKeyStore } from "../store/keys.js";
 import { createPendingQueue } from "../store/pending.js";
-import { MemoryAllowlistStore } from "../store/allowlist.js";
-import { HttpRelayClient } from "../relay/client.js";
-import {
-  createAgentContext,
-  handlePairInit,
-  handlePairJoin,
-  handlePairInitComplete,
-  type AgentContext,
-} from "../tools/pair.js";
 import { handleHumanApprove } from "../tools/human-approve.js";
 import {
-  handleSessionOpen,
+  type AgentContext,
+  createAgentContext,
+  handlePairInit,
+  handlePairInitComplete,
+  handlePairJoin,
+} from "../tools/pair.js";
+import {
   handleSessionMsg,
+  handleSessionOpen,
+  handleSessionRatify,
   handleSessionSign,
   handleSessionStatus,
-  handleSessionRatify,
   processSessionInboxEnvelope,
 } from "../tools/session.js";
 
@@ -112,10 +112,7 @@ export async function startDualRelay(port = 3020): Promise<DualRelayEnv> {
   };
 }
 
-export async function createDualAgent(
-  env: DualRelayEnv,
-  label: string,
-): Promise<DualAgent> {
+export async function createDualAgent(env: DualRelayEnv, label: string): Promise<DualAgent> {
   const dir = await mkdtemp(join(tmpdir(), `agentpair-e2e-${label}-`));
   env.tempDirs.push(dir);
   const keyPath = join(dir, "keys.json");
@@ -175,9 +172,7 @@ export async function runPairingFlow(
     throw new Error(`pair_init failed: ${JSON.stringify(initResult)}`);
   }
 
-  const joinResult = structured(
-    await handlePairJoin(joiner.ctx, { code: initResult.code }),
-  );
+  const joinResult = structured(await handlePairJoin(joiner.ctx, { code: initResult.code }));
   if (!joinResult.ok) {
     throw new Error(`pair_join failed: ${JSON.stringify(joinResult)}`);
   }
@@ -227,9 +222,7 @@ export async function runSessionHappyPath(
 
   await syncInboxes([initiator.ctx, joiner.ctx]);
 
-  const bobPending = joiner.ctx.pending
-    .list()
-    .find((item) => item.kind === "session_open");
+  const bobPending = joiner.ctx.pending.list().find((item) => item.kind === "session_open");
   if (!bobPending) {
     throw new Error("joiner missing session_open pending");
   }
@@ -299,12 +292,8 @@ export async function runSessionHappyPath(
   }
   await syncInboxes([initiator.ctx, joiner.ctx]);
 
-  const aliceRatifyStatus = structured(
-    await handleSessionStatus(initiator.ctx, { thread }),
-  );
-  const bobRatifyStatus = structured(
-    await handleSessionStatus(joiner.ctx, { thread }),
-  );
+  const aliceRatifyStatus = structured(await handleSessionStatus(initiator.ctx, { thread }));
+  const bobRatifyStatus = structured(await handleSessionStatus(joiner.ctx, { thread }));
   if (
     !aliceRatifyStatus.ok ||
     !bobRatifyStatus.ok ||
@@ -341,9 +330,7 @@ export async function runSessionHappyPath(
   }
   await syncInboxes([initiator.ctx, joiner.ctx]);
 
-  const finalStatus = structured(
-    await handleSessionStatus(initiator.ctx, { thread }),
-  );
+  const finalStatus = structured(await handleSessionStatus(initiator.ctx, { thread }));
   if (!finalStatus.ok || finalStatus.status !== "closed") {
     throw new Error(`session not closed: ${JSON.stringify(finalStatus)}`);
   }
