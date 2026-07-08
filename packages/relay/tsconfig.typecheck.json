@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/db/**/*.ts",
+    "src/middleware/**/*.ts",
+    "src/routes/pair.ts",
+    "src/routes/allowlist.ts",
+    "src/routes/card.ts",
+    "src/routes/health.ts",
+    "src/routes/inbox.ts"
+  ]
+}
