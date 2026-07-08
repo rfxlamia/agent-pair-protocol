@@ -69,3 +69,4 @@ export {
   type SessionStatus,
   type TestReport,
 } from "./session/types.js";
+export { createSessionStore, type SessionStore } from "./session/store.js";
