@@ -494,6 +494,12 @@ cd ../mcp-server && pnpm publish
 
 **Penting:** gunakan `pnpm publish`, bukan `npm publish` — hanya pnpm yang menulis ulang `workspace:*` ke versi semver.
 
+**Urutan publish release ini** (`@agentpair/protocol@0.2.0` → `agentpair@0.1.12`):
+
+1. Publish protocol dulu: `cd packages/protocol && pnpm publish --access public`
+2. Verifikasi registry: `npm view @agentpair/protocol version` harus menampilkan `0.2.0`
+3. Baru publish mcp-server: `cd packages/mcp-server && pnpm publish`
+
 Verifikasi tarball sebelum publish:
 
 ```bash
