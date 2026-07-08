@@ -11,10 +11,12 @@ import {
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { HttpRelayClient } from "../relay/client.js";
-import { MemoryAllowlistStore } from "../store/allowlist.js";
-import { type BondStore, MemoryBondStore } from "../store/bonds.js";
+import { type SessionStore, createSessionStore } from "../session/store.js";
+import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
+import { type BondStore, FileBondStore, MemoryBondStore } from "../store/bonds.js";
 import type { KeyStore } from "../store/keys.js";
-import { type PendingQueue, createPendingQueue } from "../store/pending.js";
+import { type PendingQueue, createFilePendingQueue, createPendingQueue } from "../store/pending.js";
+import { createFileSessionStore } from "../store/session-store.js";
 import {
   runInitiatorCompletionOnce,
   scheduleInitiatorPairingCompletion,
@@ -28,23 +30,53 @@ export interface AgentContext {
   allowlist: LocalAllowlistStore;
   bonds: BondStore;
   pending: PendingQueue;
+  sessionStore: SessionStore;
+}
+
+type AllowlistWithInit = LocalAllowlistStore & {
+  init?: (forAgentId: string) => Promise<void>;
+};
+
+export async function ensureAllowlistReady(ctx: AgentContext): Promise<void> {
+  const allowlist = ctx.allowlist as AllowlistWithInit;
+  if (typeof allowlist.init !== "function") {
+    return;
+  }
+  const keyPair = await ctx.keyStore.loadOrCreate();
+  const agentId = publicKeyToAgentId(keyPair.publicKey);
+  await allowlist.init(agentId);
 }
 
 export function createAgentContext(options: {
   keyStore: KeyStore;
   relay: HttpRelayClient;
+  dataDir?: string;
   registry?: PairingRegistry;
   allowlist?: LocalAllowlistStore;
   bonds?: BondStore;
   pending?: PendingQueue;
+  sessionStore?: SessionStore;
 }): AgentContext {
+  const useFileStores = options.dataDir !== undefined;
+
   return {
     keyStore: options.keyStore,
     relay: options.relay,
     registry: options.registry ?? new InMemoryPairingRegistry(),
-    allowlist: options.allowlist ?? new MemoryAllowlistStore(),
-    bonds: options.bonds ?? new MemoryBondStore(),
-    pending: options.pending ?? createPendingQueue(),
+    allowlist:
+      options.allowlist ??
+      (useFileStores
+        ? createFileAllowlistStore({ dataDir: options.dataDir })
+        : new MemoryAllowlistStore()),
+    bonds:
+      options.bonds ??
+      (useFileStores ? new FileBondStore({ dataDir: options.dataDir }) : new MemoryBondStore()),
+    pending:
+      options.pending ??
+      (useFileStores ? createFilePendingQueue({ dataDir: options.dataDir }) : createPendingQueue()),
+    sessionStore:
+      options.sessionStore ??
+      (useFileStores ? createFileSessionStore({ dataDir: options.dataDir }) : createSessionStore()),
   };
 }
 
@@ -159,6 +191,7 @@ export async function executePairJoinApproval(
   },
 ): Promise<PairFlowResult> {
   await ensureJoinerRegistry(ctx, input.code);
+  await ensureAllowlistReady(ctx);
   const keyPair = await ctx.keyStore.loadOrCreate();
   return pairJoin({
     code: input.code,
@@ -212,6 +245,7 @@ function pairFlowToolResult(flow: PairFlowResult) {
 }
 
 export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
+  await ensureAllowlistReady(ctx);
   const keyPair = await ctx.keyStore.loadOrCreate();
   const agentId = publicKeyToAgentId(keyPair.publicKey);
 

@@ -4,9 +4,8 @@ import {
   type SessionStateMachine,
   type SessionStatus,
   createSessionStateMachine,
-  createSessionStore,
 } from "../session/state-machine.js";
-import type { AgentContext } from "./pair.js";
+import { type AgentContext, ensureAllowlistReady } from "./pair.js";
 import { assertNoSecrets } from "./util.js";
 
 const sessionMachines = new WeakMap<AgentContext, SessionStateMachine>();
@@ -66,6 +65,7 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
     return cached;
   }
 
+  await ensureAllowlistReady(ctx);
   const keyPair = await ctx.keyStore.loadOrCreate();
   const agentId = publicKeyToAgentId(keyPair.publicKey);
   const machine = createSessionStateMachine(
@@ -91,7 +91,7 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
         },
       },
     },
-    createSessionStore(),
+    ctx.sessionStore,
   );
   sessionMachines.set(ctx, machine);
   return machine;

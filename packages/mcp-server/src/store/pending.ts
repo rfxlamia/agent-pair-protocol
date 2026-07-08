@@ -1,4 +1,24 @@
 import type { PairProposal } from "@agentpair/protocol";
+import { parsePendingItemRecords } from "./persistence-validate.js";
+import { createJsonPersistentStore, resolveDataDir, storePath } from "./persistent-store.js";
+
+interface PendingFile {
+  v: 1;
+  items: Record<string, PendingItem>;
+}
+
+const EMPTY_PENDING_FILE: PendingFile = { v: 1, items: {} };
+
+function validatePendingFile(parsed: unknown): PendingFile | undefined {
+  if (typeof parsed !== "object" || parsed === null) {
+    return undefined;
+  }
+  const items = parsePendingItemRecords((parsed as PendingFile).items);
+  if (!items) {
+    return undefined;
+  }
+  return { v: 1, items: items as unknown as Record<string, PendingItem> };
+}
 
 export type PendingKind = "pair_join" | "session_open" | "ratify" | "budget_extend";
 
@@ -79,6 +99,55 @@ export interface PendingQueue {
 export function createPendingQueue(): PendingQueue {
   const items = new Map<string, PendingItem>();
 
+  return buildPendingQueue(items);
+}
+
+export function resolvePendingPath(dataDir?: string): string {
+  return storePath(resolveDataDir(dataDir), "pending.json");
+}
+
+export function createFilePendingQueue(
+  options: { filePath?: string; dataDir?: string } = {},
+): PendingQueue & {
+  flush(): Promise<void>;
+} {
+  const filePath = options.filePath ?? resolvePendingPath(options.dataDir);
+  const backing = createJsonPersistentStore({
+    filePath,
+    defaultData: structuredClone(EMPTY_PENDING_FILE),
+    validate: validatePendingFile,
+  });
+
+  const items = new Map<string, PendingItem>();
+  for (const [id, item] of Object.entries(backing.read().items)) {
+    items.set(id, item);
+  }
+
+  const queue = buildPendingQueue(
+    items,
+    (item) => {
+      backing.mutate((data) => {
+        data.items[item.id] = item;
+      });
+    },
+    (id) => {
+      backing.mutate((data) => {
+        delete data.items[id];
+      });
+    },
+  );
+
+  return {
+    ...queue,
+    flush: () => backing.flush(),
+  };
+}
+
+function buildPendingQueue(
+  items: Map<string, PendingItem>,
+  onAdd?: (item: PendingItem) => void,
+  onRemove?: (id: string) => void,
+): PendingQueue {
   return {
     add(input) {
       const item: PairJoinPending = {
@@ -89,6 +158,7 @@ export function createPendingQueue(): PendingQueue {
         proposal: input.proposal,
       };
       items.set(item.id, item);
+      onAdd?.(item);
       return item;
     },
     addSessionOpen(input) {
@@ -105,6 +175,7 @@ export function createPendingQueue(): PendingQueue {
         expiresAt: input.expiresAt,
       };
       items.set(item.id, item);
+      onAdd?.(item);
       return item;
     },
     addRatify(input) {
@@ -117,6 +188,7 @@ export function createPendingQueue(): PendingQueue {
         artifactHash: input.artifactHash,
       };
       items.set(item.id, item);
+      onAdd?.(item);
       return item;
     },
     addBudgetExtend(input) {
@@ -128,6 +200,7 @@ export function createPendingQueue(): PendingQueue {
         peer: input.peer,
       };
       items.set(item.id, item);
+      onAdd?.(item);
       return item;
     },
     get(id) {
@@ -138,6 +211,7 @@ export function createPendingQueue(): PendingQueue {
     },
     remove(id) {
       items.delete(id);
+      onRemove?.(id);
     },
   };
 }
