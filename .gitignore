@@ -70,3 +70,4 @@ packages/runner-esp32/.build/
 # keep local until launch
 ROADMAP.md
 CLAUDE.md
+.worktree/
