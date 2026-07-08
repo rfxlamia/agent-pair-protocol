@@ -13,6 +13,17 @@ import type { createRateLimiter } from "../middleware/rate-limit.js";
 import { isSenderAllowed } from "./allowlist.js";
 
 const CHALLENGE_TTL_MS = 60 * 1000;
+const LEGACY_CURSOR_THRESHOLD = 1_000_000_000_000;
+
+function normalizeSince(since: number): number {
+  if (!Number.isFinite(since) || since < 0) {
+    return 0;
+  }
+  if (since > LEGACY_CURSOR_THRESHOLD) {
+    return 0;
+  }
+  return since;
+}
 
 interface GapInfo {
   thread: string;
@@ -191,7 +202,7 @@ export function createInboxRoutes(
 
   routes.get("/inbox/:agentId", (c) => {
     const agentId = c.req.param("agentId");
-    const since = Number(c.req.query("since") ?? "0");
+    const since = normalizeSince(Number(c.req.query("since") ?? "0"));
     const challenge = c.req.query("challenge");
     const sig = c.req.query("sig");
 
@@ -207,15 +218,17 @@ export function createInboxRoutes(
 
     const rows = db
       .prepare(
-        `SELECT envelope_json, thread_id, seq, received_at
+        `SELECT rowid, envelope_json, thread_id, seq, sender_agent_id, received_at
          FROM inbox
-         WHERE recipient_agent_id = ? AND received_at > ?
-         ORDER BY received_at ASC`,
+         WHERE recipient_agent_id = ? AND rowid > ?
+         ORDER BY rowid ASC`,
       )
       .all(agentId, since) as Array<{
+      rowid: number;
       envelope_json: string;
       thread_id: string;
       seq: number;
+      sender_agent_id: string;
       received_at: number;
     }>;
 
@@ -243,7 +256,7 @@ export function createInboxRoutes(
 
     const gaps = detectGaps(gapRows);
     const envelopes = rows.map((row) => JSON.parse(row.envelope_json));
-    const cursor = rows.length > 0 ? Math.max(...rows.map((row) => row.received_at)) : since;
+    const cursor = rows.length > 0 ? Math.max(...rows.map((row) => row.rowid)) : since;
     return c.json({
       envelopes,
       cursor,
