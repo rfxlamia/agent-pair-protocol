@@ -465,54 +465,6 @@ describe("inbox relay regressions (isolated db)", () => {
     expect(body.cursor).toBe(row.rowid);
   });
 
-  it("does not lose envelopes inserted in the same millisecond", async () => {
-    const thread = "dd0e8400-e29b-41d4-a716-446655440066";
-    const receivedAt = Date.now();
-    const ids = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
-    const rowids: number[] = [];
-
-    for (const [index, id] of ids.entries()) {
-      const envelope = createEnvelope({
-        sender: alice,
-        recipientAgentId: bobId,
-        type: "chat.message",
-        thread,
-        seq: index + 1,
-        ttl: 3600,
-        payload: utf8ToBytes(`burst-${index + 1}`),
-        id,
-      });
-      const result = db
-        .prepare(
-          `INSERT INTO inbox (
-           id, recipient_agent_id, envelope_json, sender_agent_id,
-           thread_id, seq, msg_type, received_at, expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          id,
-          bobId,
-          serializeEnvelope(envelope),
-          aliceId,
-          thread,
-          index + 1,
-          "chat.message",
-          receivedAt,
-          receivedAt + 3_600_000,
-        );
-      rowids.push(Number(result.lastInsertRowid));
-    }
-
-    const secondPull = await authenticatedInboxPull(rowids[0] ?? 0);
-    expect(secondPull.status).toBe(200);
-    const secondBody = (await secondPull.json()) as {
-      envelopes: Array<{ id: string }>;
-    };
-    expect(secondBody.envelopes.map((envelope) => envelope.id).sort()).toEqual(
-      [ids[1], ids[2]].sort(),
-    );
-  });
-
   it("returns the same cursor on an empty pull", async () => {
     const thread = "ee0e8400-e29b-41d4-a716-446655440055";
     const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
@@ -576,8 +528,12 @@ describe("inbox relay regressions (isolated db)", () => {
       `${ISOLATED_BASE}/inbox/${bobId}?since=${legacySince}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
     );
     expect(pullRes.status).toBe(200);
-    const body = (await pullRes.json()) as { envelopes: Array<{ id: string }> };
+    const body = (await pullRes.json()) as {
+      envelopes: Array<{ id: string }>;
+      cursor: number;
+    };
     expect(body.envelopes.some((envelope) => envelope.id === envelopeId)).toBe(true);
+    expect(body.cursor).toBeLessThan(1_000_000_000_000);
   });
 
   it("detects seq gaps when pulling incrementally with since cursor", async () => {
@@ -720,6 +676,125 @@ describe("inbox relay regressions (isolated db)", () => {
       }
     ).count;
     expect(after).toBe(before);
+  });
+});
+
+const CURSOR_PORT = 3006;
+const CURSOR_BASE = `http://127.0.0.1:${CURSOR_PORT}`;
+
+describe("inbox rowid cursor (isolated db)", () => {
+  let server: ServerType;
+  let db: ReturnType<typeof createRelayApp>["db"];
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+    db = relay.db;
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: CURSOR_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${CURSOR_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  async function authenticatedInboxPull(since: number) {
+    const challengeRes = await fetch(`${CURSOR_BASE}/inbox/${bobId}?since=${since}`);
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, bob.secretKey);
+    return fetch(
+      `${CURSOR_BASE}/inbox/${bobId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+    );
+  }
+
+  it("does not lose envelopes after a partial pull", async () => {
+    const thread = "dd0e8400-e29b-41d4-a716-446655440066";
+    const ids = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()] as const;
+    const firstId = ids[0];
+
+    const firstPost = await fetch(`${CURSOR_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(
+        createEnvelope({
+          sender: alice,
+          recipientAgentId: bobId,
+          type: "chat.message",
+          thread,
+          seq: 1,
+          ttl: 3600,
+          payload: utf8ToBytes("burst-1"),
+          id: firstId,
+        }),
+      ),
+    });
+    expect(firstPost.status).toBe(204);
+
+    const firstPull = await authenticatedInboxPull(0);
+    expect(firstPull.status).toBe(200);
+    const firstBody = (await firstPull.json()) as {
+      envelopes: Array<{ id: string }>;
+      cursor: number;
+    };
+    expect(firstBody.envelopes).toHaveLength(1);
+    expect(firstBody.envelopes[0]?.id).toBe(firstId);
+
+    const receivedAt = Date.now();
+    for (const [index, id] of ids.slice(1).entries()) {
+      if (id === undefined) {
+        continue;
+      }
+      const envelope = createEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "chat.message",
+        thread,
+        seq: index + 2,
+        ttl: 3600,
+        payload: utf8ToBytes(`burst-${index + 2}`),
+        id,
+      });
+      const postRes = await fetch(`${CURSOR_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(envelope),
+      });
+      expect(postRes.status).toBe(204);
+      db.prepare("UPDATE inbox SET received_at = ? WHERE id = ?").run(receivedAt, id);
+    }
+
+    const secondPull = await authenticatedInboxPull(firstBody.cursor);
+    expect(secondPull.status).toBe(200);
+    const secondBody = (await secondPull.json()) as {
+      envelopes: Array<{ id: string }>;
+    };
+    expect(secondBody.envelopes.map((envelope) => envelope.id).sort()).toEqual(
+      [ids[1], ids[2]].sort(),
+    );
   });
 });
 

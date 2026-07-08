@@ -17,6 +17,8 @@ const GC_INTERVAL_MS = 60_000;
 const DEFAULT_ENVELOPE_TTL_SEC = 3600;
 const LEGACY_CURSOR_THRESHOLD = 1_000_000_000_000;
 
+// Millisecond timestamps from pre-rowid clients exceed this threshold. Reset once
+// to 0 so those cursors re-deliver; MCP clients dedupe by envelope id.
 function normalizeSince(since: number): number {
   if (!Number.isFinite(since) || since < 0) {
     return 0;
@@ -315,7 +317,7 @@ export function createInboxRoutes(
       })),
     );
     const envelopes = rows.map((row) => JSON.parse(row.envelope_json));
-    const cursor = rows.length > 0 ? Math.max(...rows.map((row) => row.rowid)) : since;
+    const cursor = rows.at(-1)?.rowid ?? since;
     return c.json({
       envelopes,
       cursor,
