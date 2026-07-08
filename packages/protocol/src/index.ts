@@ -44,3 +44,28 @@ export {
   type PairingRelayClient,
   type PendingPair,
 } from "./pairing/flow.js";
+export { isEphemeralBond } from "./session/bond.js";
+export type {
+  BudgetExtendPendingInput,
+  BudgetExtendPendingItem,
+  PairJoinPendingItem,
+  RatifyPendingInput,
+  RatifyPendingItem,
+  SessionBondStore,
+  SessionEnvelopeSender,
+  SessionOpenPendingInput,
+  SessionOpenPendingItem,
+  SessionPendingItem,
+  SessionPendingQueue,
+  SessionStateMachineDeps,
+} from "./session/deps.js";
+export {
+  SESSION_OPEN_TTL_MS,
+  type AcceptanceCriterion,
+  type PeerNegotiationMessage,
+  type SessionBudget,
+  type SessionMandate,
+  type SessionRecord,
+  type SessionStatus,
+  type TestReport,
+} from "./session/types.js";
