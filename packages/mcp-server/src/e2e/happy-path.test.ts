@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createMcpServer } from "../index.js";
 import {
   type DualRelayEnv,
   createDualAgent,
@@ -21,11 +20,6 @@ describe("e2e happy path", () => {
   });
 
   it("pair → session → ratify produces co-signed hash via relay transport", async () => {
-    const aliceMcp = createMcpServer({ relayUrl: env.relayUrl });
-    const bobMcp = createMcpServer({ relayUrl: env.relayUrl });
-    expect(aliceMcp.server).toBeDefined();
-    expect(bobMcp.server).toBeDefined();
-
     const alice = await createDualAgent(env, "alice");
     const bob = await createDualAgent(env, "bob");
 

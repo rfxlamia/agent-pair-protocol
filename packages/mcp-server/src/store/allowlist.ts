@@ -1,58 +1,46 @@
-import { readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
 import type { LocalAllowlistStore } from "@agentpair/protocol";
+import { createJsonPersistentStore, resolveDataDir, storePath } from "./persistent-store.js";
 
 interface AllowlistFile {
+  v: 1;
   allowed: string[];
 }
 
-export function resolveAllowlistPath(baseDir?: string): string {
-  const root = baseDir ?? join(homedir(), ".agentpair");
-  return join(root, "allowlist.json");
+const EMPTY_ALLOWLIST_FILE: AllowlistFile = { v: 1, allowed: [] };
+
+function validateAllowlistFile(parsed: unknown): AllowlistFile | undefined {
+  if (typeof parsed !== "object" || parsed === null) {
+    return undefined;
+  }
+  const allowed = (parsed as AllowlistFile).allowed;
+  if (!Array.isArray(allowed)) {
+    return undefined;
+  }
+  return { v: 1, allowed: [...allowed] };
+}
+
+export function resolveAllowlistPath(dataDir?: string): string {
+  return storePath(resolveDataDir(dataDir), "allowlist.json");
 }
 
 export function createFileAllowlistStore(
   options: {
     filePath?: string;
+    dataDir?: string;
     agentId?: string;
   } = {},
 ): LocalAllowlistStore & {
   filePath: string;
   init(forAgentId: string): Promise<void>;
+  flush(): Promise<void>;
 } {
-  const filePath = options.filePath ?? resolveAllowlistPath();
+  const filePath = options.filePath ?? resolveAllowlistPath(options.dataDir);
   let agentId = options.agentId;
-  let cache: string[] | undefined;
-
-  async function persist(allowed: string[]): Promise<void> {
-    await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
-    const payload: AllowlistFile = { allowed: [...allowed].sort() };
-    await writeFile(filePath, JSON.stringify(payload, null, 2), {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-  }
-
-  async function load(): Promise<string[]> {
-    if (cache) {
-      return [...cache];
-    }
-    try {
-      const raw = await readFile(filePath, "utf8");
-      const parsed = JSON.parse(raw) as AllowlistFile;
-      cache = Array.isArray(parsed.allowed) ? [...parsed.allowed] : [];
-      return [...cache];
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code === "ENOENT") {
-        cache = [];
-        return [];
-      }
-      throw error;
-    }
-  }
+  const backing = createJsonPersistentStore({
+    filePath,
+    defaultData: structuredClone(EMPTY_ALLOWLIST_FILE),
+    validate: validateAllowlistFile,
+  });
 
   return {
     filePath,
@@ -60,32 +48,19 @@ export function createFileAllowlistStore(
       if (agentId && agent !== agentId) {
         return [];
       }
-      if (cache === undefined) {
-        try {
-          const raw = readFileSync(filePath, "utf8");
-          const parsed = JSON.parse(raw) as AllowlistFile;
-          cache = Array.isArray(parsed.allowed) ? [...parsed.allowed] : [];
-        } catch (error) {
-          const err = error as NodeJS.ErrnoException;
-          if (err.code !== "ENOENT") {
-            throw error;
-          }
-          cache = [];
-        }
-      }
-      return [...cache];
+      return [...backing.read().allowed];
     },
     set(agent: string, allowed: string[]) {
       if (agentId && agent !== agentId) {
         return;
       }
-      cache = [...allowed];
-      void persist(cache);
+      backing.replace({ v: 1, allowed: [...allowed].sort() });
     },
     async init(forAgentId: string): Promise<void> {
       agentId = forAgentId;
-      cache = await load();
+      backing.read();
     },
+    flush: () => backing.flush(),
   };
 }
 

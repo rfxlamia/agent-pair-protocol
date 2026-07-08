@@ -1,8 +1,10 @@
+import { dirname, join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { HttpRelayClient, resolveRelayUrl } from "./relay/client.js";
 import { createKeyStore } from "./store/keys.js";
 import { createPendingQueue } from "./store/pending.js";
+import { resolveDataDir } from "./store/persistent-store.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
 import { handleInbox, handleSend } from "./tools/inbox.js";
 import { handleListBonds } from "./tools/list-bonds.js";
@@ -25,6 +27,7 @@ export interface CreateMcpServerOptions {
   context?: AgentContext;
   relayUrl?: string;
   keyPath?: string;
+  dataDir?: string;
 }
 
 export function createMcpServer(options: CreateMcpServerOptions = {}): {
@@ -32,12 +35,15 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
   context: AgentContext;
 } {
   const relay = new HttpRelayClient(options.relayUrl ?? resolveRelayUrl());
+  const dataDir =
+    options.dataDir ?? (options.keyPath ? dirname(options.keyPath) : resolveDataDir());
+  const keyPath = options.keyPath ?? join(dataDir, "keys.json");
   const context =
     options.context ??
     createAgentContext({
-      keyStore: createKeyStore({ keyPath: options.keyPath }),
+      keyStore: createKeyStore({ keyPath }),
       relay,
-      pending: createPendingQueue(),
+      dataDir,
     });
 
   const server = new McpServer({
