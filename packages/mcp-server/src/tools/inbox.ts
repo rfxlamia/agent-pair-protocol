@@ -5,8 +5,10 @@ import {
   publicKeyToAgentId,
   verifyEnvelope,
 } from "@agentpair/protocol";
+import type { Envelope } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { AgentContext } from "./pair.js";
+import { ensureAllowlistReady } from "./pair.js";
 import {
   expirePendingSessions,
   peekSessionOpenStatus,
@@ -24,23 +26,88 @@ import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const processedEnvelopeIds = new WeakMap<AgentContext, Set<string>>();
 
-export async function handleInbox(ctx: AgentContext, input: { since?: number }) {
+function resolveAllowedPeers(
+  ctx: AgentContext,
+  agentId: string,
+): {
+  peers: string[];
+  bondsEmpty: boolean;
+} {
+  const allowlist = ctx.allowlist.get(agentId);
+  const bonds = ctx.bonds.get(agentId);
+  if (bonds.length > 0) {
+    const bondPeers = bonds.map((bond) => bond.peer);
+    if (allowlist.length === 0) {
+      return { peers: bondPeers, bondsEmpty: false };
+    }
+    const allowSet = new Set(allowlist);
+    const peers = bondPeers.filter((peer) => allowSet.has(peer));
+    return { peers, bondsEmpty: false };
+  }
+  return { peers: allowlist, bondsEmpty: true };
+}
+
+function filterBondedEnvelopes(
+  envelopes: Envelope[],
+  allowedPeers: string[],
+  includeHistory: boolean,
+): { envelopes: Envelope[]; filteredCount: number } {
+  if (includeHistory) {
+    return { envelopes, filteredCount: 0 };
+  }
+  const allowed = new Set(allowedPeers);
+  const filtered = envelopes.filter((envelope) => allowed.has(envelope.from));
+  return {
+    envelopes: filtered,
+    filteredCount: envelopes.length - filtered.length,
+  };
+}
+
+export async function handleInbox(
+  ctx: AgentContext,
+  input: { since?: number; include_history?: boolean },
+) {
   await expirePendingSessions(ctx);
+  await ensureAllowlistReady(ctx);
 
   const keyPair = await ctx.keyStore.loadOrCreate();
-  const since = input.since ?? 0;
-  const pull = await ctx.relay.pullInbox(keyPair, since);
+  const agentId = publicKeyToAgentId(keyPair.publicKey);
+  await ctx.inboxCursor.init(agentId);
+
+  const includeHistory = input.include_history ?? false;
+  let cursorReset = false;
+  let sinceUsed: number;
+  if (input.since !== undefined) {
+    sinceUsed = input.since;
+  } else {
+    const loaded = ctx.inboxCursor.load();
+    sinceUsed = loaded.cursor;
+    cursorReset = loaded.wasReset;
+  }
+
+  const { peers: bondedPeers, bondsEmpty } = resolveAllowedPeers(ctx, agentId);
+
+  const pull = await ctx.relay.pullInbox(keyPair, sinceUsed, {
+    bonded_only: !includeHistory,
+    senders: !includeHistory && bondedPeers.length > 0 ? bondedPeers : undefined,
+  });
 
   if (!pull.ok) {
     assertNoSecrets(pull);
     return toolTextResult(pull);
   }
 
+  const { envelopes: envelopesToProcess, filteredCount } = filterBondedEnvelopes(
+    pull.envelopes,
+    bondedPeers,
+    includeHistory,
+  );
+
   const seen = processedEnvelopeIds.get(ctx) ?? new Set<string>();
   processedEnvelopeIds.set(ctx, seen);
 
   const envelopes = [];
-  for (const envelope of pull.envelopes) {
+  for (const envelope of envelopesToProcess) {
     recordPeerSeq(ctx, envelope.thread, envelope.seq);
 
     const senderPublicKey = agentIdToPublicKey(envelope.from);
@@ -103,11 +170,25 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
   }
 
   const gapWarnings = detectClientThreadGaps(ctx);
+  const cursor = pull.cursor ?? sinceUsed;
+  ctx.inboxCursor.set(cursor);
+  await ctx.inboxCursor.flush();
+  const relayFilteredCount = pull.filtered_count ?? 0;
+  const totalFilteredCount = relayFilteredCount + filteredCount;
+
   const result = {
     ok: true,
-    since,
-    cursor: pull.cursor ?? since,
+    since: sinceUsed,
+    since_used: sinceUsed,
+    cursor,
+    new_count: envelopes.length,
+    filtered_count: totalFilteredCount,
+    ...(relayFilteredCount > 0 ? { relay_filtered_count: relayFilteredCount } : {}),
+    ...(filteredCount > 0 ? { mcp_filtered_count: filteredCount } : {}),
+    bonded_peers: bondedPeers,
     envelopes,
+    ...(bondsEmpty ? { bonds_empty: true } : {}),
+    ...(cursorReset ? { cursor_reset: true } : {}),
     ...(gapWarnings.length > 0 ? { gap_warnings: gapWarnings } : {}),
     ...(pull.relay_gaps && pull.relay_gaps.length > 0 ? { relay_gaps: pull.relay_gaps } : {}),
   };

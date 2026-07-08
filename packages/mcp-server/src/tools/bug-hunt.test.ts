@@ -31,6 +31,34 @@ import {
 const TEST_PORT = 3011;
 const RELAY_URL = `http://127.0.0.1:${TEST_PORT}`;
 
+class FailAllowlistOnRevokeRelay extends HttpRelayClient {
+  failPutFor: string | null = null;
+  failPurge = false;
+  purgeCalled = false;
+
+  override async putAllowlist(
+    agentId: string,
+    allowed: string[],
+    secretKey: Uint8Array,
+  ): Promise<{ ok: boolean }> {
+    if (this.failPutFor === agentId) {
+      return { ok: false };
+    }
+    return super.putAllowlist(agentId, allowed, secretKey);
+  }
+
+  override async purgeInboxDyad(
+    peerAgentId: string,
+    keyPair: Parameters<HttpRelayClient["purgeInboxDyad"]>[1],
+  ) {
+    this.purgeCalled = true;
+    if (this.failPurge) {
+      return { ok: false as const, error: "inbox_purge_failed_500" };
+    }
+    return super.purgeInboxDyad(peerAgentId, keyPair);
+  }
+}
+
 function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
@@ -249,18 +277,124 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
     const bobId = publicKeyToAgentId(bobKeys.publicKey);
 
+    const sent = structured(
+      await handleSend(bob, {
+        to: aliceId,
+        type: "chat.message",
+        payload: "before revoke",
+      }),
+    );
+    expect(sent.ok).toBe(true);
+
     const revoked = structured(await handleRevoke(alice, { peer: bobId }));
     expect(revoked.ok).toBe(true);
+    if (revoked.ok) {
+      expect(revoked.purged).toBeGreaterThan(0);
+    }
 
     expect(alice.allowlist.get(aliceId)).not.toContain(bobId);
     expect(alice.bonds.find(aliceId, bobId)).toBeUndefined();
 
-    const inboxBefore = await bob.relay.pullInbox(bobKeys, 0);
+    const inboxBefore = await bob.relay.pullInbox(bobKeys, 0, { bonded_only: false });
     expect(inboxBefore.ok).toBe(true);
     if (inboxBefore.ok) {
       const revokeNotice = inboxBefore.envelopes.find((e) => e.type === "revoke.notice");
       expect(revokeNotice).toBeDefined();
+      expect(
+        inboxBefore.envelopes.some(
+          (envelope) => envelope.type === "chat.message" && envelope.from === aliceId,
+        ),
+      ).toBe(false);
     }
+  });
+
+  it("handleRevoke does not purge or mutate bonds when allowlist push fails", async () => {
+    const aliceRelay = new FailAllowlistOnRevokeRelay(RELAY_URL);
+    const alice = await makeAgent("alice-revoke-fail");
+    alice.relay = aliceRelay;
+    const bob = await makeAgent("bob-revoke-fail");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+      }),
+    );
+    if (!initResult.ok) {
+      throw new Error("pair init failed");
+    }
+
+    const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+    if (!joinQueued.ok) {
+      throw new Error("pair join failed");
+    }
+
+    const completeInitPromise = completeInitiatorPairing(alice, initResult.code);
+    await handleHumanApprove(bob, {
+      pending_id: joinQueued.pending_id,
+      decision: "approve",
+      via_human: true,
+    });
+    await completeInitPromise;
+
+    const aliceKeys = await alice.keyStore.loadOrCreate();
+    const bobKeys = await bob.keyStore.loadOrCreate();
+    const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+    const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+    aliceRelay.failPutFor = aliceId;
+    const revoked = structured(await handleRevoke(alice, { peer: bobId }));
+    expect(revoked.ok).toBe(false);
+    expect(aliceRelay.purgeCalled).toBe(false);
+    expect(alice.allowlist.get(aliceId)).toContain(bobId);
+    expect(alice.bonds.find(aliceId, bobId)).toBeDefined();
+  });
+
+  it("handleRevoke reports inbox_purge_incomplete when purge fails after allowlist push", async () => {
+    const aliceRelay = new FailAllowlistOnRevokeRelay(RELAY_URL);
+    aliceRelay.failPurge = true;
+    const alice = await makeAgent("alice-revoke-purge-fail");
+    alice.relay = aliceRelay;
+    const bob = await makeAgent("bob-revoke-purge-fail");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+      }),
+    );
+    if (!initResult.ok) {
+      throw new Error("pair init failed");
+    }
+
+    const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+    if (!joinQueued.ok) {
+      throw new Error("pair join failed");
+    }
+
+    const completeInitPromise = completeInitiatorPairing(alice, initResult.code);
+    await handleHumanApprove(bob, {
+      pending_id: joinQueued.pending_id,
+      decision: "approve",
+      via_human: true,
+    });
+    await completeInitPromise;
+
+    const aliceKeys = await alice.keyStore.loadOrCreate();
+    const bobKeys = await bob.keyStore.loadOrCreate();
+    const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+    const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+    const revoked = structured(await handleRevoke(alice, { peer: bobId }));
+    expect(revoked.ok).toBe(true);
+    if (!revoked.ok) {
+      return;
+    }
+    expect(revoked.inbox_purge_incomplete).toBe(true);
+    expect(revoked.purge_warning).toBe("inbox_purge_failed_500");
+    expect(aliceRelay.purgeCalled).toBe(true);
+    expect(alice.allowlist.get(aliceId)).not.toContain(bobId);
+    expect(alice.bonds.find(aliceId, bobId)).toBeUndefined();
   });
 
   it("createFileAllowlistStore get() reads persisted allowlist synchronously", async () => {

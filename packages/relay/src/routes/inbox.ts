@@ -239,6 +239,43 @@ function verifyChallenge(
   return { ok: true };
 }
 
+function parseSenderFilter(raw: string | undefined): Set<string> | null {
+  if (!raw) {
+    return null;
+  }
+  const senders = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (senders.length === 0) {
+    return null;
+  }
+  return new Set(senders);
+}
+
+function filterVisibleInboxRows(
+  db: RelayDatabase,
+  agentId: string,
+  rows: Array<{
+    rowid: number;
+    envelope_json: string;
+    thread_id: string;
+    seq: number;
+    sender_agent_id: string;
+    received_at: number;
+  }>,
+  options: { bondedOnly: boolean; senderFilter: Set<string> | null },
+) {
+  let visibleRows = rows;
+  if (options.bondedOnly) {
+    visibleRows = visibleRows.filter((row) => isSenderAllowed(db, agentId, row.sender_agent_id));
+  }
+  if (options.senderFilter) {
+    visibleRows = visibleRows.filter((row) => options.senderFilter?.has(row.sender_agent_id));
+  }
+  return visibleRows;
+}
+
 export function createInboxRoutes(
   db: RelayDatabase,
   rateLimit: ReturnType<typeof createRateLimiter>,
@@ -328,6 +365,8 @@ export function createInboxRoutes(
       return c.json({ error: "challenge_invalid" }, auth.status);
     }
 
+    const bondedOnly = c.req.query("bonded_only") !== "0";
+    const senderFilter = parseSenderFilter(c.req.query("senders"));
     const rows = db
       .prepare(
         `SELECT rowid, envelope_json, thread_id, seq, sender_agent_id, received_at
@@ -344,6 +383,10 @@ export function createInboxRoutes(
       received_at: number;
     }>;
 
+    const cursor = rows.at(-1)?.rowid ?? since;
+    const visibleRows = filterVisibleInboxRows(db, agentId, rows, { bondedOnly, senderFilter });
+    const filteredCount = rows.length - visibleRows.length;
+
     const gaps = detectBoundedGaps(
       db,
       agentId,
@@ -354,13 +397,67 @@ export function createInboxRoutes(
         sender_agent_id: row.sender_agent_id,
       })),
     );
-    const envelopes = rows.map((row) => JSON.parse(row.envelope_json));
-    const cursor = rows.at(-1)?.rowid ?? since;
+    const envelopes = visibleRows.map((row) => JSON.parse(row.envelope_json));
     return c.json({
       envelopes,
       cursor,
+      filtered_count: filteredCount,
       ...(gaps.length > 0 ? { gaps } : {}),
     });
+  });
+
+  routes.delete("/inbox/:agentId/purge", rateLimit, (c) => {
+    maybeGarbageCollectInbox(db, inboxGcState);
+    const agentId = c.req.param("agentId");
+    const sender = c.req.query("sender");
+    const challenge = c.req.query("challenge");
+    const sig = c.req.query("sig");
+
+    if (!sender) {
+      return c.json({ error: "sender_required" }, 400);
+    }
+
+    try {
+      agentIdToPublicKey(sender);
+    } catch {
+      return c.json({ error: "invalid_sender" }, 400);
+    }
+
+    if (!challenge || !sig) {
+      const body = issueChallenge(db, agentId);
+      return c.json(body, 401);
+    }
+
+    const auth = verifyChallenge(db, agentId, challenge, sig);
+    if (!auth.ok) {
+      return c.json({ error: "challenge_invalid" }, auth.status);
+    }
+
+    const { deleted, peerPurged } = db.transaction(() => {
+      const selfDeleted = db
+        .prepare(
+          `DELETE FROM inbox
+           WHERE recipient_agent_id = ? AND sender_agent_id = ?`,
+        )
+        .run(agentId, sender);
+
+      let peerDeleted = { changes: 0 };
+      if (!isSenderAllowed(db, sender, agentId)) {
+        peerDeleted = db
+          .prepare(
+            `DELETE FROM inbox
+             WHERE recipient_agent_id = ? AND sender_agent_id = ?`,
+          )
+          .run(sender, agentId);
+      }
+
+      return {
+        deleted: selfDeleted.changes + peerDeleted.changes,
+        peerPurged: peerDeleted.changes > 0,
+      };
+    })();
+
+    return c.json({ deleted, peer_purged: peerPurged });
   });
 
   return routes;

@@ -14,6 +14,11 @@ import type { HttpRelayClient } from "../relay/client.js";
 import { type SessionStore, createSessionStore } from "../session/store.js";
 import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
 import { type BondStore, FileBondStore, MemoryBondStore } from "../store/bonds.js";
+import {
+  type InboxCursorStore,
+  MemoryInboxCursorStore,
+  createFileInboxCursorStore,
+} from "../store/inbox-cursor.js";
 import type { KeyStore } from "../store/keys.js";
 import { type PendingQueue, createFilePendingQueue, createPendingQueue } from "../store/pending.js";
 import { createFileSessionStore } from "../store/session-store.js";
@@ -29,6 +34,7 @@ export interface AgentContext {
   registry: PairingRegistry;
   allowlist: LocalAllowlistStore;
   bonds: BondStore;
+  inboxCursor: InboxCursorStore;
   pending: PendingQueue;
   sessionStore: SessionStore;
 }
@@ -54,6 +60,7 @@ export function createAgentContext(options: {
   registry?: PairingRegistry;
   allowlist?: LocalAllowlistStore;
   bonds?: BondStore;
+  inboxCursor?: InboxCursorStore;
   pending?: PendingQueue;
   sessionStore?: SessionStore;
 }): AgentContext {
@@ -71,6 +78,11 @@ export function createAgentContext(options: {
     bonds:
       options.bonds ??
       (useFileStores ? new FileBondStore({ dataDir: options.dataDir }) : new MemoryBondStore()),
+    inboxCursor:
+      options.inboxCursor ??
+      (useFileStores
+        ? createFileInboxCursorStore({ dataDir: options.dataDir })
+        : new MemoryInboxCursorStore()),
     pending:
       options.pending ??
       (useFileStores ? createFilePendingQueue({ dataDir: options.dataDir }) : createPendingQueue()),
@@ -251,16 +263,18 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
 
   const previous = ctx.allowlist.get(agentId);
   const next = previous.filter((peer) => peer !== input.peer);
-  ctx.allowlist.set(agentId, next);
-  ctx.bonds.remove(agentId, input.peer);
 
   const push = await ctx.relay.putAllowlist(agentId, next, keyPair.secretKey);
   if (!push.ok) {
-    ctx.allowlist.set(agentId, previous);
     const result = { ok: false, error: "allowlist_push_failed" };
     assertNoSecrets(result);
     return toolTextResult(result);
   }
+
+  const purge = await purgeInboxWithRetry(ctx, input.peer, keyPair);
+
+  ctx.allowlist.set(agentId, next);
+  ctx.bonds.remove(agentId, input.peer);
 
   const notice = createEnvelope({
     sender: keyPair,
@@ -273,7 +287,27 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
   });
   await ctx.relay.sendEnvelope(input.peer, notice);
 
-  const result = { ok: true, revoked: input.peer, allowed: next };
+  const result = {
+    ok: true,
+    revoked: input.peer,
+    allowed: next,
+    ...(purge.ok
+      ? { purged: purge.deleted, ...(purge.peer_purged ? { peer_purged: true } : {}) }
+      : { purge_warning: purge.error, inbox_purge_incomplete: true }),
+  };
   assertNoSecrets(result);
   return toolTextResult(result);
+}
+
+async function purgeInboxWithRetry(
+  ctx: AgentContext,
+  peerAgentId: string,
+  keyPair: Awaited<ReturnType<AgentContext["keyStore"]["loadOrCreate"]>>,
+  attempts = 2,
+) {
+  let last = await ctx.relay.purgeInboxDyad(peerAgentId, keyPair);
+  for (let attempt = 1; attempt < attempts && !last.ok; attempt += 1) {
+    last = await ctx.relay.purgeInboxDyad(peerAgentId, keyPair);
+  }
+  return last;
 }

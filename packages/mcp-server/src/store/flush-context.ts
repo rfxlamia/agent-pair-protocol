@@ -3,7 +3,13 @@ import type { AgentContext } from "../tools/pair.js";
 type FlushableStore = { flush?: () => Promise<void> };
 
 export async function flushAgentContext(ctx: AgentContext): Promise<void> {
-  const stores = [ctx.bonds, ctx.pending, ctx.sessionStore, ctx.allowlist] as FlushableStore[];
+  const stores = [
+    ctx.bonds,
+    ctx.pending,
+    ctx.sessionStore,
+    ctx.allowlist,
+    ctx.inboxCursor,
+  ] as FlushableStore[];
   const results = await Promise.allSettled(
     stores.map((store) => store.flush?.() ?? Promise.resolve()),
   );

@@ -144,6 +144,7 @@ export class HttpRelayClient implements PairingRelayClient {
   async pullInbox(
     keyPair: KeyPair,
     since = 0,
+    options: { bonded_only?: boolean; senders?: string[] } = {},
   ): Promise<
     | {
         ok: true;
@@ -154,12 +155,19 @@ export class HttpRelayClient implements PairingRelayClient {
           last_good_seq: number;
           expected_seq?: number;
         }>;
+        filtered_count?: number;
       }
     | { ok: false; error: string }
   > {
     const agentId = publicKeyToAgentId(keyPair.publicKey);
+    const bondedOnly = options.bonded_only !== false;
+    const bondedQuery = bondedOnly ? "" : "&bonded_only=0";
+    const sendersQuery =
+      options.senders && options.senders.length > 0
+        ? `&senders=${encodeURIComponent(options.senders.join(","))}`
+        : "";
     const challengeRes = await fetch(
-      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}`,
+      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}${bondedQuery}${sendersQuery}`,
     );
     if (challengeRes.status !== 401) {
       return { ok: false, error: "unexpected_challenge_status" };
@@ -168,7 +176,7 @@ export class HttpRelayClient implements PairingRelayClient {
     const challengeBody = (await challengeRes.json()) as { challenge: string };
     const sig = signChallenge(challengeBody.challenge, keyPair.secretKey);
     const pullRes = await fetch(
-      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
+      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}${bondedQuery}${sendersQuery}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
     );
 
     if (!pullRes.ok) {
@@ -183,6 +191,7 @@ export class HttpRelayClient implements PairingRelayClient {
         last_good_seq: number;
         expected_seq?: number;
       }>;
+      filtered_count?: number;
     };
     const envelopes = (payload.envelopes ?? []).map((raw) =>
       typeof raw === "string" ? deserializeEnvelope(raw) : raw,
@@ -192,6 +201,36 @@ export class HttpRelayClient implements PairingRelayClient {
       envelopes,
       cursor: payload.cursor,
       relay_gaps: payload.gaps,
+      filtered_count: payload.filtered_count,
     };
+  }
+
+  async purgeInboxDyad(
+    peerAgentId: string,
+    keyPair: KeyPair,
+  ): Promise<{ ok: true; deleted: number; peer_purged?: boolean } | { ok: false; error: string }> {
+    const agentId = publicKeyToAgentId(keyPair.publicKey);
+    const senderQuery = `sender=${encodeURIComponent(peerAgentId)}`;
+    const challengeRes = await fetch(
+      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}/purge?${senderQuery}`,
+      { method: "DELETE" },
+    );
+    if (challengeRes.status !== 401) {
+      return { ok: false, error: "unexpected_challenge_status" };
+    }
+
+    const challengeBody = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challengeBody.challenge, keyPair.secretKey);
+    const purgeRes = await fetch(
+      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}/purge?${senderQuery}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
+      { method: "DELETE" },
+    );
+
+    if (!purgeRes.ok) {
+      return { ok: false, error: `inbox_purge_failed_${purgeRes.status}` };
+    }
+
+    const payload = (await purgeRes.json()) as { deleted?: number; peer_purged?: boolean };
+    return { ok: true, deleted: payload.deleted ?? 0, peer_purged: payload.peer_purged };
   }
 }
