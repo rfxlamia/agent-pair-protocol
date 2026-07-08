@@ -27,8 +27,8 @@ importers:
   packages/mcp-server:
     dependencies:
       '@agentpair/protocol':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:*
+        version: link:../protocol
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.1
         version: 1.29.0(zod@3.25.76)
@@ -105,10 +105,6 @@ importers:
   packages/runner-esp32: {}
 
 packages:
-
-  '@agentpair/protocol@0.1.1':
-    resolution: {integrity: sha512-K0u18/v4SlbsXYQH9TjG+IacDI2Obwio2yE6kzeDvCbofvp/P4ov4ARcqy+UIxR0KIRlTRx/KaAzAo2gSmavcw==}
-    engines: {node: '>=22'}
 
   '@asyncapi/specs@6.11.1':
     resolution: {integrity: sha512-A3WBLqAKGoJ2+6FWFtpjBlCQ1oFCcs4GxF7zsIGvNqp/klGUHjlA3aAcZ9XMMpLGE8zPeYDz2x9FmO6DSuKraQ==}
@@ -2475,12 +2471,6 @@ packages:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
-
-  '@agentpair/protocol@0.1.1':
-    dependencies:
-      '@noble/ciphers': 2.2.0
-      '@noble/curves': 2.2.0
-      '@noble/hashes': 2.2.0
 
   '@asyncapi/specs@6.11.1':
     dependencies:

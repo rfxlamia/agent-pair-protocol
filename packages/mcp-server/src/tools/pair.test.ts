@@ -25,6 +25,21 @@ import { assertNoSecrets } from "./util.js";
 const TEST_PORT = 3010;
 const RELAY_URL = `http://127.0.0.1:${TEST_PORT}`;
 
+class FailAllowlistRelay extends HttpRelayClient {
+  failAllowlistFor: string | null = null;
+
+  override async putAllowlist(
+    agentId: string,
+    allowed: string[],
+    secretKey: Uint8Array,
+  ): Promise<{ ok: boolean }> {
+    if (this.failAllowlistFor === agentId) {
+      return { ok: false };
+    }
+    return super.putAllowlist(agentId, allowed, secretKey);
+  }
+}
+
 describe("mcp pair tools", () => {
   let server: ServerType;
   const tempDirs: string[] = [];
@@ -53,13 +68,13 @@ describe("mcp pair tools", () => {
     await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  async function makeAgent(label: string, hooks: { failAllowlistFor?: string | null } = {}) {
+  async function makeAgent(label: string, relay: HttpRelayClient = new HttpRelayClient(RELAY_URL)) {
     const dir = await mkdtemp(join(tmpdir(), `agentpair-${label}-`));
     tempDirs.push(dir);
     const keyPath = join(dir, "keys.json");
     return createAgentContext({
       keyStore: createKeyStore({ keyPath }),
-      relay: new HttpRelayClient(RELAY_URL, hooks),
+      relay,
       allowlist: new MemoryAllowlistStore(),
       pending: createPendingQueue(),
     });
@@ -271,8 +286,9 @@ describe("mcp pair tools", () => {
   }, 20000);
 
   it("rolls back allowlists when allowlist push fails", async () => {
+    const bobRelay = new FailAllowlistRelay(RELAY_URL);
     const alice = await makeAgent("alice-rollback");
-    const bob = await makeAgent("bob-rollback", { failAllowlistFor: "dynamic" });
+    const bob = await makeAgent("bob-rollback", bobRelay);
 
     const initResult = structured(
       await handlePairInit(alice, {
@@ -292,7 +308,7 @@ describe("mcp pair tools", () => {
     const bobKeys = await bob.keyStore.loadOrCreate();
     const { publicKeyToAgentId } = await import("@agentpair/protocol");
     const bobId = publicKeyToAgentId(bobKeys.publicKey);
-    (bob.relay as HttpRelayClient).testHooks = { failAllowlistFor: bobId };
+    bobRelay.failAllowlistFor = bobId;
 
     const completeInitPromise = handlePairInitComplete(alice, { code: initResult.code });
     const approved = structured(
