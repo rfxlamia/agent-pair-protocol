@@ -31,6 +31,30 @@ import {
 const TEST_PORT = 3011;
 const RELAY_URL = `http://127.0.0.1:${TEST_PORT}`;
 
+class FailAllowlistOnRevokeRelay extends HttpRelayClient {
+  failPutFor: string | null = null;
+  purgeCalled = false;
+
+  override async putAllowlist(
+    agentId: string,
+    allowed: string[],
+    secretKey: Uint8Array,
+  ): Promise<{ ok: boolean }> {
+    if (this.failPutFor === agentId) {
+      return { ok: false };
+    }
+    return super.putAllowlist(agentId, allowed, secretKey);
+  }
+
+  override async purgeInboxDyad(
+    peerAgentId: string,
+    keyPair: Parameters<HttpRelayClient["purgeInboxDyad"]>[1],
+  ) {
+    this.purgeCalled = true;
+    return super.purgeInboxDyad(peerAgentId, keyPair);
+  }
+}
+
 function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
@@ -278,6 +302,48 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
         ),
       ).toBe(false);
     }
+  });
+
+  it("handleRevoke does not purge or mutate bonds when allowlist push fails", async () => {
+    const aliceRelay = new FailAllowlistOnRevokeRelay(RELAY_URL);
+    const alice = await makeAgent("alice-revoke-fail");
+    alice.relay = aliceRelay;
+    const bob = await makeAgent("bob-revoke-fail");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+      }),
+    );
+    if (!initResult.ok) {
+      throw new Error("pair init failed");
+    }
+
+    const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+    if (!joinQueued.ok) {
+      throw new Error("pair join failed");
+    }
+
+    const completeInitPromise = completeInitiatorPairing(alice, initResult.code);
+    await handleHumanApprove(bob, {
+      pending_id: joinQueued.pending_id,
+      decision: "approve",
+      via_human: true,
+    });
+    await completeInitPromise;
+
+    const aliceKeys = await alice.keyStore.loadOrCreate();
+    const bobKeys = await bob.keyStore.loadOrCreate();
+    const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+    const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+    aliceRelay.failPutFor = aliceId;
+    const revoked = structured(await handleRevoke(alice, { peer: bobId }));
+    expect(revoked.ok).toBe(false);
+    expect(aliceRelay.purgeCalled).toBe(false);
+    expect(alice.allowlist.get(aliceId)).toContain(bobId);
+    expect(alice.bonds.find(aliceId, bobId)).toBeDefined();
   });
 
   it("createFileAllowlistStore get() reads persisted allowlist synchronously", async () => {

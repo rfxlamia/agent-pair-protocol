@@ -32,6 +32,24 @@ function validateInboxCursorFile(parsed: unknown): InboxCursorFile | undefined {
   return { v: 1, cursor };
 }
 
+function loadCursorFromDisk(filePath: string): InboxCursorLoadResult {
+  try {
+    const raw = readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    const validated = validateInboxCursorFile(parsed);
+    if (validated !== undefined) {
+      return { cursor: validated.cursor, wasReset: false };
+    }
+    return { cursor: 0, wasReset: true };
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      return { cursor: 0, wasReset: false };
+    }
+    return { cursor: 0, wasReset: true };
+  }
+}
+
 export function resolveInboxCursorPath(dataDir?: string): string {
   return storePath(resolveDataDir(dataDir), "inbox-cursor.json");
 }
@@ -65,6 +83,7 @@ export function createFileInboxCursorStore(
 ): InboxCursorStore & { filePath: string } {
   const filePath = options.filePath ?? resolveInboxCursorPath(options.dataDir);
   let agentId = options.agentId;
+  let loadState: InboxCursorLoadResult = { cursor: 0, wasReset: false };
   const backing = createJsonPersistentStore({
     filePath,
     defaultData: structuredClone(EMPTY_CURSOR_FILE),
@@ -75,27 +94,14 @@ export function createFileInboxCursorStore(
     filePath,
     async init(forAgentId: string): Promise<void> {
       agentId = forAgentId;
-      backing.read();
+      loadState = loadCursorFromDisk(filePath);
+      backing.replace({ v: 1, cursor: loadState.cursor });
     },
     load(): InboxCursorLoadResult {
       if (!agentId) {
         return { cursor: 0, wasReset: false };
       }
-      try {
-        const raw = readFileSync(filePath, "utf8");
-        const parsed = JSON.parse(raw) as unknown;
-        const validated = validateInboxCursorFile(parsed);
-        if (validated !== undefined) {
-          return { cursor: validated.cursor, wasReset: false };
-        }
-        return { cursor: 0, wasReset: true };
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException;
-        if (err.code === "ENOENT") {
-          return { cursor: 0, wasReset: false };
-        }
-        return { cursor: 0, wasReset: true };
-      }
+      return { ...loadState };
     },
     set(cursor: number): void {
       if (!agentId) {
@@ -104,6 +110,7 @@ export function createFileInboxCursorStore(
       if (!Number.isFinite(cursor) || cursor < 0) {
         return;
       }
+      loadState = { cursor, wasReset: false };
       backing.replace({ v: 1, cursor });
     },
     flush: () => backing.flush(),

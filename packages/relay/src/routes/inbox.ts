@@ -349,6 +349,7 @@ export function createInboxRoutes(
     const visibleRows = bondedOnly
       ? rows.filter((row) => isSenderAllowed(db, agentId, row.sender_agent_id))
       : rows;
+    const filteredCount = rows.length - visibleRows.length;
 
     const gaps = detectBoundedGaps(
       db,
@@ -364,11 +365,12 @@ export function createInboxRoutes(
     return c.json({
       envelopes,
       cursor,
+      filtered_count: filteredCount,
       ...(gaps.length > 0 ? { gaps } : {}),
     });
   });
 
-  routes.delete("/inbox/:agentId/purge", (c) => {
+  routes.delete("/inbox/:agentId/purge", rateLimit, (c) => {
     maybeGarbageCollectInbox(db, inboxGcState);
     const agentId = c.req.param("agentId");
     const sender = c.req.query("sender");
