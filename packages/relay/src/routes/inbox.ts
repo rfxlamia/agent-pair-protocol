@@ -227,12 +227,14 @@ export function createInboxRoutes(
       return c.json({ error: "recipient_mismatch" }, 400);
     }
 
+    let senderPublicKey: Uint8Array;
     try {
-      const senderPublicKey = agentIdToPublicKey(envelope.from);
-      if (!verifyEnvelope(envelope, senderPublicKey)) {
-        return c.json({ error: "invalid_signature" }, 403);
-      }
+      senderPublicKey = agentIdToPublicKey(envelope.from);
     } catch {
+      return c.json({ error: "invalid_envelope" }, 400);
+    }
+
+    if (!verifyEnvelope(envelope, senderPublicKey)) {
       return c.json({ error: "invalid_signature" }, 403);
     }
 
