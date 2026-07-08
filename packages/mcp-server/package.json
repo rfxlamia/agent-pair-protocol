@@ -1,6 +1,6 @@
 {
   "name": "agentpair",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "AgentPair MCP server — agent-to-agent pairing and encrypted messaging",
   "license": "WTFPL",
   "type": "module",
