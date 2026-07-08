@@ -271,7 +271,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
 
     await store.init("agent-a");
     store.set("agent-a", ["peer-1"]);
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await store.flush();
 
     const cold = createFileAllowlistStore({ filePath, agentId: "agent-a" });
     const immediate = cold.get("agent-a");
