@@ -7,7 +7,13 @@ import {
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { AgentContext } from "./pair.js";
-import { expirePendingSessions, peekSessionOpenStatus, processSessionInboxEnvelope, resolveSessionOpenPendingId } from "./session.js";
+import {
+  expirePendingSessions,
+  peekSessionOpenStatus,
+  processSessionInboxEnvelope,
+  resolveRatifyPendingId,
+  resolveSessionOpenPendingId,
+} from "./session.js";
 import {
   detectClientThreadGaps,
   nextThreadSeq,
@@ -59,16 +65,17 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
           if (effect.ok === true) {
             seen.add(envelope.id);
           }
-          if (
-            effect.ok === true &&
-            typeof effect.pending_id === "string"
-          ) {
+          if (effect.ok === true && typeof effect.pending_id === "string") {
             pendingId = effect.pending_id;
           }
         }
 
         if (envelope.type === "session.open" && !pendingId) {
           pendingId = await resolveSessionOpenPendingId(ctx, envelope.thread);
+        }
+
+        if (envelope.type === "session.peer_signed" && !pendingId) {
+          pendingId = await resolveRatifyPendingId(ctx, envelope.thread);
         }
 
         if (envelope.type === "session.open") {
@@ -102,9 +109,7 @@ export async function handleInbox(ctx: AgentContext, input: { since?: number }) 
     cursor: pull.cursor ?? since,
     envelopes,
     ...(gapWarnings.length > 0 ? { gap_warnings: gapWarnings } : {}),
-    ...(pull.relay_gaps && pull.relay_gaps.length > 0
-      ? { relay_gaps: pull.relay_gaps }
-      : {}),
+    ...(pull.relay_gaps && pull.relay_gaps.length > 0 ? { relay_gaps: pull.relay_gaps } : {}),
   };
   assertNoSecrets(result);
   return toolTextResult(result);

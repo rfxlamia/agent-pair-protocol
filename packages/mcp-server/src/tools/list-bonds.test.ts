@@ -1,14 +1,14 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, afterEach } from "vitest";
 import { publicKeyToAgentId } from "@agentpair/protocol";
+import { afterEach, describe, expect, it } from "vitest";
+import { createMcpServer } from "../index.js";
+import { HttpRelayClient } from "../relay/client.js";
 import { MemoryBondStore } from "../store/bonds.js";
 import { createKeyStore } from "../store/keys.js";
-import { HttpRelayClient } from "../relay/client.js";
-import { createAgentContext } from "./pair.js";
-import { createMcpServer } from "../index.js";
 import { handleListBonds } from "./list-bonds.js";
+import { createAgentContext } from "./pair.js";
 
 function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;

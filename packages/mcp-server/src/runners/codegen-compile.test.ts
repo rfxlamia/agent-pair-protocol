@@ -3,14 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import {
-  checkDockerAvailable,
-  runCodegenCompile,
-} from "./codegen-compile.js";
-import {
-  extractSchemas,
-  schemaBundleForTopLevel,
-} from "./openapi-schemas.js";
+import { checkDockerAvailable, runCodegenCompile } from "./codegen-compile.js";
+import { extractSchemas, schemaBundleForTopLevel } from "./openapi-schemas.js";
 import { runPayloadSize } from "./payload-size.js";
 
 const execFileAsync = promisify(execFile);
@@ -62,11 +56,9 @@ async function ensureRunnerImage(): Promise<void> {
     // build below
   }
 
-  await execFileAsync(
-    "docker",
-    ["build", "-t", DOCKER_IMAGE, RUNNER_ESP32_DIR],
-    { timeout: 600_000 },
-  );
+  await execFileAsync("docker", ["build", "-t", DOCKER_IMAGE, RUNNER_ESP32_DIR], {
+    timeout: 600_000,
+  });
 }
 
 describe("openapi-schemas", () => {

@@ -1,8 +1,8 @@
-import type { LocalAllowlistStore } from "@agentpair/protocol";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { LocalAllowlistStore } from "@agentpair/protocol";
 
 interface AllowlistFile {
   allowed: string[];
@@ -13,10 +13,12 @@ export function resolveAllowlistPath(baseDir?: string): string {
   return join(root, "allowlist.json");
 }
 
-export function createFileAllowlistStore(options: {
-  filePath?: string;
-  agentId?: string;
-} = {}): LocalAllowlistStore & {
+export function createFileAllowlistStore(
+  options: {
+    filePath?: string;
+    agentId?: string;
+  } = {},
+): LocalAllowlistStore & {
   filePath: string;
   init(forAgentId: string): Promise<void>;
 } {

@@ -1,0 +1,15 @@
+{
+  "license": "wtfpl",
+  "owner": "V",
+  "year": "2026",
+  "url": "https://www.npmjs.com/package/agentpair",
+  "scanResult": {
+    "timestamp": "2026-07-07T16:59:17.010Z",
+    "totalDependencies": 0,
+    "compatible": 0,
+    "incompatible": 0,
+    "unknown": 0,
+    "issues": [],
+    "packages": []
+  }
+}

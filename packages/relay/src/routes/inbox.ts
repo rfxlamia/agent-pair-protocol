@@ -1,13 +1,10 @@
+import { randomBytes } from "node:crypto";
 import { agentIdToPublicKey, verify } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
-import { randomBytes } from "node:crypto";
 import type { RelayDatabase } from "../db/index.js";
-import { createRateLimiter } from "../middleware/rate-limit.js";
-import {
-  isSenderAllowed,
-  parseEnvelopeRoutingFields,
-} from "./allowlist.js";
+import type { createRateLimiter } from "../middleware/rate-limit.js";
+import { isSenderAllowed, parseEnvelopeRoutingFields } from "./allowlist.js";
 
 const CHALLENGE_TTL_MS = 60 * 1000;
 
@@ -33,7 +30,7 @@ function detectGaps(
 
   const gaps: GapInfo[] = [];
   for (const [key, seqs] of byThreadSender) {
-    const thread = key.split("\0")[0]!;
+    const thread = key.split("\0")[0] ?? "";
     const sorted = [...new Set(seqs)].sort((a, b) => a - b);
     if (sorted.length <= 1) {
       continue;
@@ -45,9 +42,16 @@ function detectGaps(
     const allEven = sorted.every((seq) => seq % 2 === 0);
     const step = allOdd || allEven ? 2 : 1;
 
-    let lastGood = sorted[0]!;
+    const firstSeq = sorted[0];
+    if (firstSeq === undefined) {
+      continue;
+    }
+    let lastGood = firstSeq;
     for (let i = 1; i < sorted.length; i += 1) {
-      const current = sorted[i]!;
+      const current = sorted[i];
+      if (current === undefined) {
+        continue;
+      }
       if (current !== lastGood + step) {
         gaps.push({
           thread,
@@ -64,16 +68,12 @@ function detectGaps(
 }
 
 function garbageCollectExpiredChallenges(db: RelayDatabase): void {
-  db.prepare("DELETE FROM challenges WHERE expires_at < ? OR used = 1").run(
-    Date.now(),
-  );
+  db.prepare("DELETE FROM challenges WHERE expires_at < ? OR used = 1").run(Date.now());
 }
 
 function issueChallenge(db: RelayDatabase, agentId: string) {
   garbageCollectExpiredChallenges(db);
-  db.prepare("DELETE FROM challenges WHERE agent_id = ? AND used = 0").run(
-    agentId,
-  );
+  db.prepare("DELETE FROM challenges WHERE agent_id = ? AND used = 0").run(agentId);
   const nonce = Buffer.from(randomBytes(32)).toString("base64url");
   const expiresAt = Date.now() + CHALLENGE_TTL_MS;
 
@@ -92,9 +92,7 @@ function verifyChallenge(
   sig: string,
 ): { ok: true } | { ok: false; status: 403 } {
   const row = db
-    .prepare(
-      "SELECT expires_at, used FROM challenges WHERE nonce = ? AND agent_id = ?",
-    )
+    .prepare("SELECT expires_at, used FROM challenges WHERE nonce = ? AND agent_id = ?")
     .get(nonce, agentId) as { expires_at: number; used: number } | undefined;
 
   if (!row) {
@@ -134,7 +132,7 @@ export function createInboxRoutes(
     const recipientAgentId = c.req.param("agentId");
     const envelopeJson = await c.req.text();
 
-    let routing;
+    let routing: ReturnType<typeof parseEnvelopeRoutingFields>;
     try {
       routing = parseEnvelopeRoutingFields(envelopeJson);
     } catch {
@@ -150,22 +148,24 @@ export function createInboxRoutes(
     }
 
     const now = Date.now();
-    const insert = db.prepare(
-      `INSERT INTO inbox (
+    const insert = db
+      .prepare(
+        `INSERT INTO inbox (
          id, recipient_agent_id, envelope_json, sender_agent_id,
          thread_id, seq, msg_type, received_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO NOTHING`,
-    ).run(
-      routing.id,
-      recipientAgentId,
-      envelopeJson,
-      routing.from,
-      routing.thread,
-      routing.seq,
-      routing.type,
-      now,
-    );
+      )
+      .run(
+        routing.id,
+        recipientAgentId,
+        envelopeJson,
+        routing.from,
+        routing.thread,
+        routing.seq,
+        routing.type,
+        now,
+      );
 
     if (insert.changes === 0) {
       return c.json({ error: "duplicate_envelope_id" }, 409);
@@ -228,10 +228,7 @@ export function createInboxRoutes(
 
     const gaps = detectGaps(gapRows);
     const envelopes = rows.map((row) => JSON.parse(row.envelope_json));
-    const cursor =
-      rows.length > 0
-        ? Math.max(...rows.map((row) => row.received_at))
-        : since;
+    const cursor = rows.length > 0 ? Math.max(...rows.map((row) => row.received_at)) : since;
     return c.json({
       envelopes,
       cursor,

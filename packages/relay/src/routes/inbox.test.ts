@@ -1,24 +1,15 @@
 import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  it,
-} from "vitest";
-import { serve } from "@hono/node-server";
-import type { ServerType } from "@hono/node-server";
-import {
   createEnvelope,
   generateKeyPair,
   publicKeyToAgentId,
   serializeEnvelope,
 } from "@agentpair/protocol";
+import { serve } from "@hono/node-server";
+import type { ServerType } from "@hono/node-server";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRelayApp } from "../server.js";
-import {
-  signChallenge,
-  type AllowlistBody,
-} from "./allowlist.js";
+import { type AllowlistBody, signChallenge } from "./allowlist.js";
 
 const TEST_PORT = 3001;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
@@ -29,10 +20,7 @@ function signedAllowlist(
 ): AllowlistBody {
   const agentId = publicKeyToAgentId(owner.publicKey);
   const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
-  const sig = signChallenge(
-    JSON.stringify(ordered),
-    owner.secretKey,
-  );
+  const sig = signChallenge(JSON.stringify(ordered), owner.secretKey);
   return { agent_id: agentId, allowed, sig };
 }
 
@@ -264,7 +252,7 @@ describe("inbox relay routes", () => {
 
       const limited = responses.filter((res) => res.status === 429);
       expect(limited.length).toBeGreaterThan(0);
-      const body = (await limited[0]!.json()) as { error: string };
+      const body = (await limited[0]?.json()) as { error: string };
       expect(body.error).toBe("rate_limit_exceeded");
     } finally {
       await new Promise<void>((resolve, reject) => {
@@ -324,9 +312,7 @@ describe("inbox relay regressions (isolated db)", () => {
   });
 
   async function authenticatedInboxPull(since: number) {
-    const challengeRes = await fetch(
-      `${ISOLATED_BASE}/inbox/${bobId}?since=${since}`,
-    );
+    const challengeRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}?since=${since}`);
     const { challenge } = (await challengeRes.json()) as { challenge: string };
     const sig = signChallenge(challenge, bob.secretKey);
     return fetch(
@@ -394,9 +380,7 @@ describe("inbox relay regressions (isolated db)", () => {
     expect(firstPull.status).toBe(200);
 
     const maxReceived = db
-      .prepare(
-        "SELECT MAX(received_at) AS received_at FROM inbox WHERE thread_id = ?",
-      )
+      .prepare("SELECT MAX(received_at) AS received_at FROM inbox WHERE thread_id = ?")
       .get(thread) as { received_at: number };
 
     const gapPost = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
@@ -491,9 +475,7 @@ describe("inbox global turn-taking seq (isolated db)", () => {
   });
 
   async function pullBobInbox(since: number) {
-    const challengeRes = await fetch(
-      `${GLOBAL_SEQ_BASE}/inbox/${bobId}?since=${since}`,
-    );
+    const challengeRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}?since=${since}`);
     const { challenge } = (await challengeRes.json()) as { challenge: string };
     const sig = signChallenge(challenge, bob.secretKey);
     return fetch(
@@ -590,9 +572,7 @@ describe("inbox global turn-taking seq (isolated db)", () => {
     const body = (await res.json()) as {
       envelopes: Array<{ seq: number; thread: string }>;
     };
-    const burstEnvelopes = body.envelopes.filter(
-      (envelope) => envelope.thread === thread,
-    );
+    const burstEnvelopes = body.envelopes.filter((envelope) => envelope.thread === thread);
     expect(burstEnvelopes.map((envelope) => envelope.seq).sort()).toEqual([1, 4]);
   });
 

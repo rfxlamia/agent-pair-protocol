@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { createDatabase, type RelayDatabase } from "./db/index.js";
+import { type RelayDatabase, createDatabase } from "./db/index.js";
 import { createRateLimiter } from "./middleware/rate-limit.js";
 import { createAllowlistRoutes } from "./routes/allowlist.js";
 import { createArtifactRoutes } from "./routes/artifact.js";

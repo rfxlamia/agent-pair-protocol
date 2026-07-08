@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import type { RelayDatabase } from "../db/index.js";
-import { createRateLimiter } from "../middleware/rate-limit.js";
+import type { createRateLimiter } from "../middleware/rate-limit.js";
 
 export function createArtifactRoutes(
   db: RelayDatabase,
@@ -30,9 +30,9 @@ export function createArtifactRoutes(
 
   routes.get("/artifact/:hash", (c) => {
     const hash = c.req.param("hash");
-    const row = db
-      .prepare("SELECT blob FROM artifacts WHERE hash = ?")
-      .get(hash) as { blob: Buffer } | undefined;
+    const row = db.prepare("SELECT blob FROM artifacts WHERE hash = ?").get(hash) as
+      | { blob: Buffer }
+      | undefined;
 
     if (!row) {
       return c.json({ error: "artifact_not_found" }, 404);

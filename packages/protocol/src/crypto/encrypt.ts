@@ -13,10 +13,7 @@ function deriveEncryptionKey(
 ): Uint8Array {
   const senderX25519Secret = ed25519.utils.toMontgomerySecret(senderSecretKey);
   const recipientX25519Public = ed25519.utils.toMontgomery(recipientPublicKey);
-  const sharedSecret = x25519.getSharedSecret(
-    senderX25519Secret,
-    recipientX25519Public,
-  );
+  const sharedSecret = x25519.getSharedSecret(senderX25519Secret, recipientX25519Public);
   return hkdf(sha256, sharedSecret, undefined, HKDF_INFO, 32);
 }
 
@@ -40,22 +37,16 @@ export function decryptPayload(
   recipientSecretKey: Uint8Array,
   senderPublicKey: Uint8Array,
 ): Uint8Array {
-  const payload = new Uint8Array(
-    Buffer.from(encryptedPayload, "base64url"),
-  );
+  const payload = new Uint8Array(Buffer.from(encryptedPayload, "base64url"));
   if (payload.length < NONCE_LENGTH + 16) {
     throw new Error("Encrypted payload is too short");
   }
 
   const nonce = payload.subarray(0, NONCE_LENGTH);
   const ciphertext = payload.subarray(NONCE_LENGTH);
-  const recipientX25519Secret =
-    ed25519.utils.toMontgomerySecret(recipientSecretKey);
+  const recipientX25519Secret = ed25519.utils.toMontgomerySecret(recipientSecretKey);
   const senderX25519Public = ed25519.utils.toMontgomery(senderPublicKey);
-  const sharedSecret = x25519.getSharedSecret(
-    recipientX25519Secret,
-    senderX25519Public,
-  );
+  const sharedSecret = x25519.getSharedSecret(recipientX25519Secret, senderX25519Public);
   const key = hkdf(sha256, sharedSecret, undefined, HKDF_INFO, 32);
   const cipher = xchacha20poly1305(key, nonce);
   return cipher.decrypt(ciphertext);

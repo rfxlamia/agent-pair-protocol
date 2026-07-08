@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeAll } from "vitest";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { beforeAll, describe, expect, it } from "vitest";
 import { finish, init, respond, start } from "./pake-adapter.js";
 
 describe("pake-spike", () => {

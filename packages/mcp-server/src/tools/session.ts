@@ -1,12 +1,12 @@
 import { createEnvelope, publicKeyToAgentId } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
-import type { AgentContext } from "./pair.js";
 import {
-  createSessionStateMachine,
-  createSessionStore,
   type SessionStateMachine,
   type SessionStatus,
+  createSessionStateMachine,
+  createSessionStore,
 } from "../session/state-machine.js";
+import type { AgentContext } from "./pair.js";
 import { assertNoSecrets } from "./util.js";
 
 const sessionMachines = new WeakMap<AgentContext, SessionStateMachine>();
@@ -36,6 +36,17 @@ export async function resolveSessionOpenPendingId(
     return undefined;
   }
   return machine.resolveOpenPendingId(thread);
+}
+
+export async function resolveRatifyPendingId(
+  ctx: AgentContext,
+  thread: string,
+): Promise<string | undefined> {
+  const machine = sessionMachines.get(ctx);
+  if (!machine) {
+    return undefined;
+  }
+  return machine.resolveRatifyPendingId(thread);
 }
 
 export function peekSessionOpenStatus(
@@ -88,7 +99,9 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
 
 async function withSessionMachine(
   ctx: AgentContext,
-  fn: (machine: SessionStateMachine) => Promise<ReturnType<typeof import("./util.js").toolTextResult>>,
+  fn: (
+    machine: SessionStateMachine,
+  ) => Promise<ReturnType<typeof import("./util.js").toolTextResult>>,
 ) {
   const machine = await getSessionMachine(ctx);
   return fn(machine);
@@ -142,10 +155,7 @@ export async function handleSessionSign(
   });
 }
 
-export async function handleSessionStatus(
-  ctx: AgentContext,
-  input: { thread: string },
-) {
+export async function handleSessionStatus(ctx: AgentContext, input: { thread: string }) {
   await expirePendingSessions(ctx);
   return withSessionMachine(ctx, async (machine) => {
     const result = await machine.handleStatus(input);

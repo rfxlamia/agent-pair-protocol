@@ -1,20 +1,20 @@
 import {
-  createEnvelope,
-  InMemoryPairingRegistry,
-  pairInit,
-  pairJoin,
-  publicKeyToAgentId,
   type BondMode,
+  InMemoryPairingRegistry,
   type LocalAllowlistStore,
   type PairFlowResult,
   type PairingRegistry,
+  createEnvelope,
+  pairInit,
+  pairJoin,
+  publicKeyToAgentId,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { HttpRelayClient } from "../relay/client.js";
-import type { KeyStore } from "../store/keys.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
-import { MemoryBondStore, type BondStore } from "../store/bonds.js";
-import { createPendingQueue, type PendingQueue } from "../store/pending.js";
+import { type BondStore, MemoryBondStore } from "../store/bonds.js";
+import type { KeyStore } from "../store/keys.js";
+import { type PendingQueue, createPendingQueue } from "../store/pending.js";
 import {
   runInitiatorCompletionOnce,
   scheduleInitiatorPairingCompletion,
@@ -75,10 +75,7 @@ async function ensureJoinerRegistry(
   return { ok: true };
 }
 
-export async function handlePairInit(
-  ctx: AgentContext,
-  input: { scope: string[]; mode: string },
-) {
+export async function handlePairInit(ctx: AgentContext, input: { scope: string[]; mode: string }) {
   const parsedMode = parseBondMode(input.mode);
   if (!parsedMode.ok) {
     const result = { ok: false, error: parsedMode.error };
@@ -124,10 +121,7 @@ export async function handlePairInitComplete(
   return runInitiatorCompletionOnce(ctx, input.code);
 }
 
-export async function handlePairJoin(
-  ctx: AgentContext,
-  input: { code: string },
-) {
+export async function handlePairJoin(ctx: AgentContext, input: { code: string }) {
   const ensured = await ensureJoinerRegistry(ctx, input.code);
   if (!ensured.ok) {
     const result = { ok: false, error: ensured.error };
@@ -176,10 +170,7 @@ export async function executePairJoinApproval(
   });
 }
 
-export async function handlePairInitCompleteTool(
-  ctx: AgentContext,
-  input: { code: string },
-) {
+export async function handlePairInitCompleteTool(ctx: AgentContext, input: { code: string }) {
   try {
     const flow = await runInitiatorCompletionOnce(ctx, input.code);
     return pairFlowToolResult(flow);
@@ -220,10 +211,7 @@ function pairFlowToolResult(flow: PairFlowResult) {
   return toolTextResult(result);
 }
 
-export async function handleRevoke(
-  ctx: AgentContext,
-  input: { peer: string },
-) {
+export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
   const keyPair = await ctx.keyStore.loadOrCreate();
   const agentId = publicKeyToAgentId(keyPair.publicKey);
 
