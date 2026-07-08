@@ -948,5 +948,115 @@ describe("session state machine", () => {
       }
       expect(after.turn_count).toBe(turnBefore);
     });
+
+    it("rejects malformed peer_test_report payloads", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:malformed-test-report";
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "session.peer_test_report",
+          thread,
+          payload: JSON.stringify({
+            artifact_hash: artifactHash,
+            passed: "yes",
+            runner: "payload-size",
+          }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+
+      const status = structured(await aliceMachine.handleStatus({ thread }));
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.tests_legal).toBe(false);
+    });
+
+    it("rejects malformed peer_turn payloads", async () => {
+      const thread = await openAndApprove();
+      const before = structured(await aliceMachine.handleStatus({ thread }));
+      expect(before.ok).toBe(true);
+      if (!before.ok) {
+        return;
+      }
+      const turnBefore = before.turn_count;
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "session.peer_turn",
+          thread,
+          payload: JSON.stringify({
+            turn_count: "abc",
+            msg_type: "propose",
+            body: JSON.stringify({ diff: "bad" }),
+          }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+
+      const after = structured(await aliceMachine.handleStatus({ thread }));
+      expect(after.ok).toBe(true);
+      if (!after.ok) {
+        return;
+      }
+      expect(after.turn_count).toBe(turnBefore);
+    });
+
+    it("rejects malformed session.open payloads missing required fields", async () => {
+      const opened = structured(
+        await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      const rejected = structured(
+        await bobMachine.handleIncomingEnvelope({
+          from: aliceId,
+          type: "session.open",
+          thread: opened.thread,
+          payload: JSON.stringify({ goal: "only goal, no budget" }),
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
+
+    it("rejects non-object JSON envelope payloads", async () => {
+      const thread = await openAndApprove();
+
+      const rejected = structured(
+        await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "session.peer_turn",
+          thread,
+          payload: "null",
+        }),
+      );
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
   });
 });
