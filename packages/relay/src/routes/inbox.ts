@@ -328,6 +328,7 @@ export function createInboxRoutes(
       return c.json({ error: "challenge_invalid" }, auth.status);
     }
 
+    const bondedOnly = c.req.query("bonded_only") !== "0";
     const rows = db
       .prepare(
         `SELECT rowid, envelope_json, thread_id, seq, sender_agent_id, received_at
@@ -344,23 +345,70 @@ export function createInboxRoutes(
       received_at: number;
     }>;
 
+    const cursor = rows.at(-1)?.rowid ?? since;
+    const visibleRows = bondedOnly
+      ? rows.filter((row) => isSenderAllowed(db, agentId, row.sender_agent_id))
+      : rows;
+
     const gaps = detectBoundedGaps(
       db,
       agentId,
       since,
-      rows.map((row) => ({
+      visibleRows.map((row) => ({
         thread_id: row.thread_id,
         seq: row.seq,
         sender_agent_id: row.sender_agent_id,
       })),
     );
-    const envelopes = rows.map((row) => JSON.parse(row.envelope_json));
-    const cursor = rows.at(-1)?.rowid ?? since;
+    const envelopes = visibleRows.map((row) => JSON.parse(row.envelope_json));
     return c.json({
       envelopes,
       cursor,
       ...(gaps.length > 0 ? { gaps } : {}),
     });
+  });
+
+  routes.delete("/inbox/:agentId/purge", (c) => {
+    maybeGarbageCollectInbox(db, inboxGcState);
+    const agentId = c.req.param("agentId");
+    const sender = c.req.query("sender");
+    const challenge = c.req.query("challenge");
+    const sig = c.req.query("sig");
+
+    if (!sender) {
+      return c.json({ error: "sender_required" }, 400);
+    }
+
+    try {
+      agentIdToPublicKey(sender);
+    } catch {
+      return c.json({ error: "invalid_sender" }, 400);
+    }
+
+    if (!challenge || !sig) {
+      const body = issueChallenge(db, agentId);
+      return c.json(body, 401);
+    }
+
+    const auth = verifyChallenge(db, agentId, challenge, sig);
+    if (!auth.ok) {
+      return c.json({ error: "challenge_invalid" }, auth.status);
+    }
+
+    const selfDeleted = db
+      .prepare(
+        `DELETE FROM inbox
+         WHERE recipient_agent_id = ? AND sender_agent_id = ?`,
+      )
+      .run(agentId, sender);
+    const peerDeleted = db
+      .prepare(
+        `DELETE FROM inbox
+         WHERE recipient_agent_id = ? AND sender_agent_id = ?`,
+      )
+      .run(sender, agentId);
+
+    return c.json({ deleted: selfDeleted.changes + peerDeleted.changes });
   });
 
   return routes;

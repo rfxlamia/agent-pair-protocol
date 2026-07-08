@@ -144,6 +144,7 @@ export class HttpRelayClient implements PairingRelayClient {
   async pullInbox(
     keyPair: KeyPair,
     since = 0,
+    options: { bonded_only?: boolean } = {},
   ): Promise<
     | {
         ok: true;
@@ -158,8 +159,10 @@ export class HttpRelayClient implements PairingRelayClient {
     | { ok: false; error: string }
   > {
     const agentId = publicKeyToAgentId(keyPair.publicKey);
+    const bondedOnly = options.bonded_only !== false;
+    const bondedQuery = bondedOnly ? "" : "&bonded_only=0";
     const challengeRes = await fetch(
-      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}`,
+      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}${bondedQuery}`,
     );
     if (challengeRes.status !== 401) {
       return { ok: false, error: "unexpected_challenge_status" };
@@ -168,7 +171,7 @@ export class HttpRelayClient implements PairingRelayClient {
     const challengeBody = (await challengeRes.json()) as { challenge: string };
     const sig = signChallenge(challengeBody.challenge, keyPair.secretKey);
     const pullRes = await fetch(
-      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
+      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}${bondedQuery}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
     );
 
     if (!pullRes.ok) {
@@ -193,5 +196,34 @@ export class HttpRelayClient implements PairingRelayClient {
       cursor: payload.cursor,
       relay_gaps: payload.gaps,
     };
+  }
+
+  async purgeInboxDyad(
+    peerAgentId: string,
+    keyPair: KeyPair,
+  ): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+    const agentId = publicKeyToAgentId(keyPair.publicKey);
+    const senderQuery = `sender=${encodeURIComponent(peerAgentId)}`;
+    const challengeRes = await fetch(
+      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}/purge?${senderQuery}`,
+      { method: "DELETE" },
+    );
+    if (challengeRes.status !== 401) {
+      return { ok: false, error: "unexpected_challenge_status" };
+    }
+
+    const challengeBody = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challengeBody.challenge, keyPair.secretKey);
+    const purgeRes = await fetch(
+      `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}/purge?${senderQuery}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
+      { method: "DELETE" },
+    );
+
+    if (!purgeRes.ok) {
+      return { ok: false, error: `inbox_purge_failed_${purgeRes.status}` };
+    }
+
+    const payload = (await purgeRes.json()) as { deleted?: number };
+    return { ok: true, deleted: payload.deleted ?? 0 };
   }
 }
