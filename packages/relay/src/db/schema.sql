@@ -25,8 +25,12 @@ CREATE TABLE IF NOT EXISTS inbox (
   thread_id TEXT NOT NULL,
   seq INTEGER NOT NULL,
   msg_type TEXT NOT NULL,
-  received_at INTEGER NOT NULL
+  received_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_inbox_expires_at
+  ON inbox (expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_inbox_recipient_time
   ON inbox (recipient_agent_id, received_at);
