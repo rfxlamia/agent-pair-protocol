@@ -9,6 +9,15 @@ import type {
   SessionMandate,
 } from "../store/pending.js";
 import { toolTextResult } from "../tools/util.js";
+import {
+  openEnvelopePayloadSchema,
+  openRejectEnvelopePayloadSchema,
+  parseEnvelopePayload,
+  peerSignedEnvelopePayloadSchema,
+  peerTestReportEnvelopePayloadSchema,
+  peerTurnEnvelopePayloadSchema,
+  signalEnvelopePayloadSchema,
+} from "./envelope-schema.js";
 
 export const SESSION_OPEN_TTL_MS = 60 * 60 * 1000;
 
@@ -519,29 +528,39 @@ export function createSessionStateMachine(
       thread: string;
       payload: string;
     }) {
-      const parsed = parseJsonBody<Record<string, unknown>>(input.payload);
-      if ("error" in parsed) {
-        return result({ ok: false, error: parsed.error });
+      const raw = parseJsonBody<unknown>(input.payload);
+      if (typeof raw === "object" && raw !== null && "error" in raw) {
+        return result({ ok: false, error: (raw as { error: string }).error });
       }
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+        return result({ ok: false, error: "invalid_payload" });
+      }
+      const parsed = raw as Record<string, unknown>;
 
       switch (input.type) {
-        case "session.open":
+        case "session.open": {
+          const openPayload = parseEnvelopePayload(openEnvelopePayloadSchema, parsed);
+          if (!openPayload.ok) {
+            return result(openPayload);
+          }
           return handleIncomingOpen({
             thread: input.thread,
             from: input.from,
-            goal: String(parsed.goal ?? ""),
-            acceptance: (parsed.acceptance as AcceptanceCriterion[]) ?? [],
-            budget: (parsed.budget as SessionBudget) ?? { max_turns: 30 },
-            mandate: (parsed.mandate as SessionMandate) ?? {
-              agent_may: [],
-              human_required: [],
-            },
-            expires_at: Number(parsed.expires_at ?? now() + SESSION_OPEN_TTL_MS),
+            goal: openPayload.data.goal,
+            acceptance: openPayload.data.acceptance,
+            budget: openPayload.data.budget,
+            mandate: openPayload.data.mandate,
+            expires_at: openPayload.data.expires_at ?? now() + SESSION_OPEN_TTL_MS,
           });
+        }
         case "session.open_approved": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return result(found);
+          }
+          const openApprovedPayload = parseEnvelopePayload(signalEnvelopePayloadSchema, parsed);
+          if (!openApprovedPayload.ok) {
+            return result(openApprovedPayload);
           }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
@@ -555,6 +574,10 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
+          const openRejectPayload = parseEnvelopePayload(openRejectEnvelopePayloadSchema, parsed);
+          if (!openRejectPayload.ok) {
+            return result(openRejectPayload);
+          }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return result(participant);
@@ -562,7 +585,7 @@ export function createSessionStateMachine(
           upsert({
             ...found.session,
             status: "open_rejected",
-            rejectReason: String(parsed.reason ?? ""),
+            rejectReason: openRejectPayload.data.reason ?? "",
           });
           return result({
             ok: true,
@@ -574,6 +597,10 @@ export function createSessionStateMachine(
           const found = getOrError(input.thread);
           if (!found.ok) {
             return result(found);
+          }
+          const openExpiredPayload = parseEnvelopePayload(signalEnvelopePayloadSchema, parsed);
+          if (!openExpiredPayload.ok) {
+            return result(openExpiredPayload);
           }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
@@ -591,6 +618,10 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
+          const challengePayload = parseEnvelopePayload(signalEnvelopePayloadSchema, parsed);
+          if (!challengePayload.ok) {
+            return result(challengePayload);
+          }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return result(participant);
@@ -604,11 +635,18 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
+          const testReportPayload = parseEnvelopePayload(
+            peerTestReportEnvelopePayloadSchema,
+            parsed,
+          );
+          if (!testReportPayload.ok) {
+            return result(testReportPayload);
+          }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return result(participant);
           }
-          const artifactHash = String(parsed.artifact_hash ?? "");
+          const { artifact_hash: artifactHash, passed, runner, details } = testReportPayload.data;
           const existing = found.session.testReports[artifactHash] ?? {};
           const testReports = {
             ...found.session.testReports,
@@ -616,9 +654,9 @@ export function createSessionStateMachine(
               ...existing,
               [participant.role]: {
                 artifact_hash: artifactHash,
-                passed: Boolean(parsed.passed),
-                runner: String(parsed.runner ?? ""),
-                details: parsed.details === undefined ? undefined : String(parsed.details),
+                passed,
+                runner,
+                details,
               },
             },
           };
@@ -630,20 +668,25 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
+          const signedPayload = parseEnvelopePayload(peerSignedEnvelopePayloadSchema, parsed);
+          if (!signedPayload.ok) {
+            return result(signedPayload);
+          }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return result(participant);
           }
+          const { artifact_hash: artifactHash } = signedPayload.data;
           const signHashes = { ...found.session.signHashes };
           if (participant.role === "initiator") {
-            signHashes.initiator = String(parsed.artifact_hash ?? "");
+            signHashes.initiator = artifactHash;
           } else {
-            signHashes.recipient = String(parsed.artifact_hash ?? "");
+            signHashes.recipient = artifactHash;
           }
           const updated = upsert({
             ...found.session,
             signHashes,
-            artifactHash: String(parsed.artifact_hash ?? found.session.artifactHash),
+            artifactHash,
             status: bothSigned({ ...found.session, signHashes }) ? "signed" : found.session.status,
           });
           const pendingRatify =
@@ -662,14 +705,18 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
+          const turnPayload = parseEnvelopePayload(peerTurnEnvelopePayloadSchema, parsed);
+          if (!turnPayload.ok) {
+            return result(turnPayload);
+          }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return result(participant);
           }
-          const turnCount = Number(parsed.turn_count ?? found.session.turnCount);
+          const turnCount = turnPayload.data.turn_count ?? found.session.turnCount;
           const nextTurnCount = Math.max(found.session.turnCount, turnCount);
-          const msgType = typeof parsed.msg_type === "string" ? parsed.msg_type : undefined;
-          const msgBody = typeof parsed.body === "string" ? parsed.body : undefined;
+          const msgType = turnPayload.data.msg_type;
+          const msgBody = turnPayload.data.body;
           let lockedSections = found.session.lockedSections;
           let peerMessages = found.session.peerMessages;
 
@@ -698,6 +745,10 @@ export function createSessionStateMachine(
           const found = getOrError(input.thread);
           if (!found.ok) {
             return result(found);
+          }
+          const ratifiedPayload = parseEnvelopePayload(signalEnvelopePayloadSchema, parsed);
+          if (!ratifiedPayload.ok) {
+            return result(ratifiedPayload);
           }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
