@@ -14,6 +14,11 @@ import type { HttpRelayClient } from "../relay/client.js";
 import { type SessionStore, createSessionStore } from "../session/store.js";
 import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
 import { type BondStore, FileBondStore, MemoryBondStore } from "../store/bonds.js";
+import {
+  type InboxCursorStore,
+  MemoryInboxCursorStore,
+  createFileInboxCursorStore,
+} from "../store/inbox-cursor.js";
 import type { KeyStore } from "../store/keys.js";
 import { type PendingQueue, createFilePendingQueue, createPendingQueue } from "../store/pending.js";
 import { createFileSessionStore } from "../store/session-store.js";
@@ -29,6 +34,7 @@ export interface AgentContext {
   registry: PairingRegistry;
   allowlist: LocalAllowlistStore;
   bonds: BondStore;
+  inboxCursor: InboxCursorStore;
   pending: PendingQueue;
   sessionStore: SessionStore;
 }
@@ -54,6 +60,7 @@ export function createAgentContext(options: {
   registry?: PairingRegistry;
   allowlist?: LocalAllowlistStore;
   bonds?: BondStore;
+  inboxCursor?: InboxCursorStore;
   pending?: PendingQueue;
   sessionStore?: SessionStore;
 }): AgentContext {
@@ -71,6 +78,11 @@ export function createAgentContext(options: {
     bonds:
       options.bonds ??
       (useFileStores ? new FileBondStore({ dataDir: options.dataDir }) : new MemoryBondStore()),
+    inboxCursor:
+      options.inboxCursor ??
+      (useFileStores
+        ? createFileInboxCursorStore({ dataDir: options.dataDir })
+        : new MemoryInboxCursorStore()),
     pending:
       options.pending ??
       (useFileStores ? createFilePendingQueue({ dataDir: options.dataDir }) : createPendingQueue()),

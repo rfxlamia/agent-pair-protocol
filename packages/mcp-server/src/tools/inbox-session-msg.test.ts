@@ -136,6 +136,10 @@ describe("inbox session negotiation fixes", () => {
     const restartedBob = createAgentContext({
       keyStore: bob.ctx.keyStore,
       relay: bob.ctx.relay,
+      bonds: bob.ctx.bonds,
+      allowlist: bob.ctx.allowlist,
+      sessionStore: bob.ctx.sessionStore,
+      inboxCursor: bob.ctx.inboxCursor,
     });
 
     structured(await handleInbox(restartedBob, { since: cursorAfterLive }));
