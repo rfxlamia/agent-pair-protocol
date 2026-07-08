@@ -18,6 +18,9 @@ import {
   peerTurnEnvelopePayloadSchema,
   signalEnvelopePayloadSchema,
 } from "./envelope-schema.js";
+import { type SessionStore, createSessionStore } from "./store.js";
+
+export { createSessionStore, type SessionStore } from "./store.js";
 
 export const SESSION_OPEN_TTL_MS = 60 * 60 * 1000;
 
@@ -89,27 +92,6 @@ export interface SessionStateMachineDeps {
   bonds: BondStore;
   relay: SessionEnvelopeSender;
   now?: () => number;
-}
-
-export interface SessionStore {
-  get(thread: string): SessionRecord | undefined;
-  upsert(session: SessionRecord): void;
-  list(): SessionRecord[];
-}
-
-export function createSessionStore(): SessionStore {
-  const sessions = new Map<string, SessionRecord>();
-  return {
-    get(thread) {
-      return sessions.get(thread);
-    },
-    upsert(session) {
-      sessions.set(session.thread, session);
-    },
-    list() {
-      return [...sessions.values()];
-    },
-  };
 }
 
 function result(data: Record<string, unknown>) {
