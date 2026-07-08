@@ -225,7 +225,7 @@ Anda (Initiator)                    Partner (Joiner)
 **Langkah praktis di chat AI:**
 
 1. Minta agent: *"Pair dengan partner untuk session.negotiate, mode ephemeral_until_session_closes"*
-2. Agent memanggil `pair_init` → Anda dapat kode (contoh: `4-kancil-senja`)
+2. Agent memanggil `pair_init` → Anda dapat kode (contoh: `42-kancil-senja-awan`)
 3. Bagikan kode ke partner lewat channel lain (WhatsApp, telepon, tatap muka)
 4. Partner minta agent-nya `pair_join` dengan kode tersebut
 5. Partner **harus menyetujui** di chat, lalu agent memanggil:
@@ -293,7 +293,7 @@ Semua tool mengembalikan JSON dengan field `ok: true/false`. Berikut pola sukses
 ```json
 {
   "ok": true,
-  "code": "4-kancil-senja",
+  "code": "42-kancil-senja-awan",
   "session_id": "uuid-...",
   "proposal": {
     "scope": ["session.negotiate"],
