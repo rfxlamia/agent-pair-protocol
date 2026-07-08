@@ -1,5 +1,4 @@
-import type { SessionRecord } from "../session/state-machine.js";
-import type { SessionStore } from "../session/store.js";
+import type { SessionRecord, SessionStore } from "@agentpair/protocol";
 import { parseSessionRecords } from "./persistence-validate.js";
 import { createJsonPersistentStore, resolveDataDir, storePath } from "./persistent-store.js";
 

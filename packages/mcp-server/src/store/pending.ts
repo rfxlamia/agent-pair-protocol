@@ -1,4 +1,9 @@
-import type { PairProposal } from "@agentpair/protocol";
+import type {
+  AcceptanceCriterion,
+  PairProposal,
+  SessionBudget,
+  SessionMandate,
+} from "@agentpair/protocol";
 import { parsePendingItemRecords } from "./persistence-validate.js";
 import { createJsonPersistentStore, resolveDataDir, storePath } from "./persistent-store.js";
 
@@ -65,24 +70,6 @@ export type PendingItem =
   | SessionOpenPending
   | RatifyPending
   | BudgetExtendPending;
-
-export interface AcceptanceCriterion {
-  id: string;
-  test: "executable" | "judgment";
-  desc: string;
-  runner?: string;
-}
-
-export interface SessionBudget {
-  max_turns: number;
-  deadline?: string;
-}
-
-export interface SessionMandate {
-  agent_may: string[];
-  human_required: string[];
-  escalate_on?: string[];
-}
 
 export interface PendingQueue {
   add(item: Omit<PairJoinPending, "id" | "createdAt" | "kind">): PairJoinPending;

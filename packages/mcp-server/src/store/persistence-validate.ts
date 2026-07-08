@@ -1,5 +1,4 @@
-import type { Bond } from "@agentpair/protocol";
-import type { SessionRecord, SessionStatus } from "../session/state-machine.js";
+import type { Bond, SessionRecord, SessionStatus } from "@agentpair/protocol";
 
 const BOND_MODES = new Set(["ephemeral_until_session_closes", "bonded_contact"]);
 const SESSION_STATUSES = new Set<SessionStatus>([

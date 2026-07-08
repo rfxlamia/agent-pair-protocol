@@ -154,7 +154,7 @@ describe("file-backed stores restart simulation", () => {
     const { MemoryAllowlistStore } = await import("./allowlist.js");
     const { MemoryBondStore } = await import("./bonds.js");
     const { createPendingQueue } = await import("./pending.js");
-    const { createSessionStore } = await import("../session/store.js");
+    const { createSessionStore } = await import("@agentpair/protocol");
     const { HttpRelayClient } = await import("../relay/client.js");
     const { createKeyStore } = await import("./keys.js");
 

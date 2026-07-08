@@ -54,10 +54,6 @@ export class MemoryBondStore implements BondStore {
   }
 }
 
-export function isEphemeralBond(bond: Bond | undefined): boolean {
-  return bond?.mode === "ephemeral_until_session_closes";
-}
-
 export function resolveBondsPath(dataDir?: string): string {
   return storePath(resolveDataDir(dataDir), "bonds.json");
 }

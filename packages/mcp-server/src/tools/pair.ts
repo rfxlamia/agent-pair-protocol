@@ -4,14 +4,15 @@ import {
   type LocalAllowlistStore,
   type PairFlowResult,
   type PairingRegistry,
+  type SessionStore,
   createEnvelope,
+  createSessionStore,
   pairInit,
   pairJoin,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { HttpRelayClient } from "../relay/client.js";
-import { type SessionStore, createSessionStore } from "../session/store.js";
 import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
 import { type BondStore, FileBondStore, MemoryBondStore } from "../store/bonds.js";
 import {

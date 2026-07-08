@@ -1,12 +1,13 @@
-import { createEnvelope, publicKeyToAgentId } from "@agentpair/protocol";
-import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import {
   type SessionStateMachine,
   type SessionStatus,
+  createEnvelope,
   createSessionStateMachine,
-} from "../session/state-machine.js";
+  publicKeyToAgentId,
+} from "@agentpair/protocol";
+import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { type AgentContext, ensureAllowlistReady } from "./pair.js";
-import { assertNoSecrets } from "./util.js";
+import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const sessionMachines = new WeakMap<AgentContext, SessionStateMachine>();
 const sessionThreadSeq = new WeakMap<AgentContext, Map<string, number>>();
@@ -97,14 +98,14 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
   return machine;
 }
 
-async function withSessionMachine(
+async function withSessionMachine<T extends Record<string, unknown>>(
   ctx: AgentContext,
-  fn: (
-    machine: SessionStateMachine,
-  ) => Promise<ReturnType<typeof import("./util.js").toolTextResult>>,
+  fn: (machine: SessionStateMachine) => Promise<T>,
 ) {
   const machine = await getSessionMachine(ctx);
-  return fn(machine);
+  const result = await fn(machine);
+  assertNoSecrets(result);
+  return toolTextResult(result);
 }
 
 export async function handleSessionOpen(
@@ -126,64 +127,40 @@ export async function handleSessionOpen(
     };
   },
 ) {
-  return withSessionMachine(ctx, async (machine) => {
-    const result = await machine.handleOpen(input);
-    assertNoSecrets(result.structuredContent);
-    return result;
-  });
+  return withSessionMachine(ctx, (machine) => machine.handleOpen(input));
 }
 
 export async function handleSessionMsg(
   ctx: AgentContext,
   input: { thread: string; type: string; body: string },
 ) {
-  return withSessionMachine(ctx, async (machine) => {
-    const result = await machine.handleMsg(input);
-    assertNoSecrets(result.structuredContent);
-    return result;
-  });
+  return withSessionMachine(ctx, (machine) => machine.handleMsg(input));
 }
 
 export async function handleSessionSign(
   ctx: AgentContext,
   input: { thread: string; artifact_hash: string },
 ) {
-  return withSessionMachine(ctx, async (machine) => {
-    const result = await machine.handleSign(input);
-    assertNoSecrets(result.structuredContent);
-    return result;
-  });
+  return withSessionMachine(ctx, (machine) => machine.handleSign(input));
 }
 
 export async function handleSessionStatus(ctx: AgentContext, input: { thread: string }) {
   await expirePendingSessions(ctx);
-  return withSessionMachine(ctx, async (machine) => {
-    const result = await machine.handleStatus(input);
-    assertNoSecrets(result.structuredContent);
-    return result;
-  });
+  return withSessionMachine(ctx, (machine) => machine.handleStatus(input));
 }
 
 export async function handleSessionApproveOpen(
   ctx: AgentContext,
   input: { pending_id: string; via_human?: boolean },
 ) {
-  return withSessionMachine(ctx, async (machine) => {
-    const result = await machine.handleApproveOpen(input);
-    assertNoSecrets(result.structuredContent);
-    return result;
-  });
+  return withSessionMachine(ctx, (machine) => machine.handleApproveOpen(input));
 }
 
 export async function handleSessionRejectOpen(
   ctx: AgentContext,
   input: { pending_id: string; reason: string; via_human?: boolean },
 ) {
-  return withSessionMachine(ctx, async (machine) => {
-    const result = await machine.handleRejectOpen(input);
-    assertNoSecrets(result.structuredContent);
-    return result;
-  });
+  return withSessionMachine(ctx, (machine) => machine.handleRejectOpen(input));
 }
 
 export async function handleSessionRatify(
@@ -195,20 +172,12 @@ export async function handleSessionRatify(
     via_human?: boolean;
   },
 ) {
-  return withSessionMachine(ctx, async (machine) => {
-    const result = await machine.handleRatify(input);
-    assertNoSecrets(result.structuredContent);
-    return result;
-  });
+  return withSessionMachine(ctx, (machine) => machine.handleRatify(input));
 }
 
 export async function processSessionInboxEnvelope(
   ctx: AgentContext,
   input: { from: string; type: string; thread: string; payload: string },
 ) {
-  return withSessionMachine(ctx, async (machine) => {
-    const result = await machine.handleIncomingEnvelope(input);
-    assertNoSecrets(result.structuredContent);
-    return result;
-  });
+  return withSessionMachine(ctx, (machine) => machine.handleIncomingEnvelope(input));
 }
