@@ -115,6 +115,19 @@ function roleFor(session: SessionRecord, agentId: string): "initiator" | "recipi
   return session.initiator === agentId ? "initiator" : "recipient";
 }
 
+function assertParticipant(
+  session: SessionRecord,
+  from: string,
+): { ok: true; role: "initiator" | "recipient" } | { ok: false; error: "not_a_participant" } {
+  if (from === session.initiator) {
+    return { ok: true, role: "initiator" };
+  }
+  if (from === session.recipient) {
+    return { ok: true, role: "recipient" };
+  }
+  return { ok: false, error: "not_a_participant" };
+}
+
 function parseJsonBody<T>(body: string): T | { error: string } {
   try {
     return JSON.parse(body) as T;
@@ -530,6 +543,10 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
+          const participant = assertParticipant(found.session, input.from);
+          if (!participant.ok) {
+            return result(participant);
+          }
           upsert({ ...found.session, status: "live" });
           return result({ ok: true, thread: input.thread, status: "live" });
         }
@@ -537,6 +554,10 @@ export function createSessionStateMachine(
           const found = getOrError(input.thread);
           if (!found.ok) {
             return result(found);
+          }
+          const participant = assertParticipant(found.session, input.from);
+          if (!participant.ok) {
+            return result(participant);
           }
           upsert({
             ...found.session,
@@ -554,6 +575,10 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
+          const participant = assertParticipant(found.session, input.from);
+          if (!participant.ok) {
+            return result(participant);
+          }
           upsert({ ...found.session, status: "open_expired" });
           return result({
             ok: true,
@@ -566,8 +591,11 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
-          const role = roleFor(found.session, input.from);
-          const challenges = { ...found.session.challenges, [role]: true };
+          const participant = assertParticipant(found.session, input.from);
+          if (!participant.ok) {
+            return result(participant);
+          }
+          const challenges = { ...found.session.challenges, [participant.role]: true };
           upsert({ ...found.session, challenges });
           return result({ ok: true, thread: input.thread, type: "challenge" });
         }
@@ -576,14 +604,17 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
-          const role = roleFor(found.session, input.from);
+          const participant = assertParticipant(found.session, input.from);
+          if (!participant.ok) {
+            return result(participant);
+          }
           const artifactHash = String(parsed.artifact_hash ?? "");
           const existing = found.session.testReports[artifactHash] ?? {};
           const testReports = {
             ...found.session.testReports,
             [artifactHash]: {
               ...existing,
-              [role]: {
+              [participant.role]: {
                 artifact_hash: artifactHash,
                 passed: Boolean(parsed.passed),
                 runner: String(parsed.runner ?? ""),
@@ -599,9 +630,12 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
-          const role = roleFor(found.session, input.from);
+          const participant = assertParticipant(found.session, input.from);
+          if (!participant.ok) {
+            return result(participant);
+          }
           const signHashes = { ...found.session.signHashes };
-          if (role === "initiator") {
+          if (participant.role === "initiator") {
             signHashes.initiator = String(parsed.artifact_hash ?? "");
           } else {
             signHashes.recipient = String(parsed.artifact_hash ?? "");
@@ -628,6 +662,10 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
+          const participant = assertParticipant(found.session, input.from);
+          if (!participant.ok) {
+            return result(participant);
+          }
           const turnCount = Number(parsed.turn_count ?? found.session.turnCount);
           const nextTurnCount = Math.max(found.session.turnCount, turnCount);
           const msgType = typeof parsed.msg_type === "string" ? parsed.msg_type : undefined;
@@ -636,10 +674,9 @@ export function createSessionStateMachine(
           let peerMessages = found.session.peerMessages;
 
           if (msgType && msgBody) {
-            const role = roleFor(found.session, input.from);
             peerMessages = [
               ...peerMessages,
-              { from: role, type: msgType, body: msgBody, turn: nextTurnCount },
+              { from: participant.role, type: msgType, body: msgBody, turn: nextTurnCount },
             ];
             if (msgType === "accept") {
               const acceptBody = parseJsonBody<{ section_id?: string }>(msgBody);
@@ -662,9 +699,12 @@ export function createSessionStateMachine(
           if (!found.ok) {
             return result(found);
           }
-          const role = roleFor(found.session, input.from);
+          const participant = assertParticipant(found.session, input.from);
+          if (!participant.ok) {
+            return result(participant);
+          }
           const ratifyApproved = { ...found.session.ratifyApproved };
-          if (role === "initiator") {
+          if (participant.role === "initiator") {
             ratifyApproved.initiator = true;
           } else {
             ratifyApproved.recipient = true;
