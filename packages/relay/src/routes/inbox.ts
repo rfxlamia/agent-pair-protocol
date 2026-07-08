@@ -13,6 +13,8 @@ import type { createRateLimiter } from "../middleware/rate-limit.js";
 import { isSenderAllowed } from "./allowlist.js";
 
 const CHALLENGE_TTL_MS = 60 * 1000;
+const GC_INTERVAL_MS = 60_000;
+const DEFAULT_ENVELOPE_TTL_SEC = 3600;
 const LEGACY_CURSOR_THRESHOLD = 1_000_000_000_000;
 
 function normalizeSince(since: number): number {
@@ -117,6 +119,39 @@ function garbageCollectExpiredChallenges(db: RelayDatabase): void {
   db.prepare("DELETE FROM challenges WHERE expires_at < ? OR used = 1").run(Date.now());
 }
 
+function ensureInboxSchema(db: RelayDatabase): void {
+  const columns = db.prepare("PRAGMA table_info(inbox)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "expires_at")) {
+    db.exec("ALTER TABLE inbox ADD COLUMN expires_at INTEGER");
+    const rows = db
+      .prepare("SELECT id, envelope_json, received_at FROM inbox WHERE expires_at IS NULL")
+      .all() as Array<{ id: string; envelope_json: string; received_at: number }>;
+    const update = db.prepare("UPDATE inbox SET expires_at = ? WHERE id = ?");
+    for (const row of rows) {
+      let ttlSec = DEFAULT_ENVELOPE_TTL_SEC;
+      try {
+        const parsed = JSON.parse(row.envelope_json) as { ttl?: number };
+        if (typeof parsed.ttl === "number" && parsed.ttl > 0) {
+          ttlSec = parsed.ttl;
+        }
+      } catch {
+        // keep default ttl
+      }
+      update.run(row.received_at + ttlSec * 1000, row.id);
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_inbox_expires_at ON inbox (expires_at)");
+  }
+}
+
+function maybeGarbageCollectInbox(db: RelayDatabase, state: { lastGcAt: number }): void {
+  const now = Date.now();
+  if (now - state.lastGcAt < GC_INTERVAL_MS) {
+    return;
+  }
+  state.lastGcAt = now;
+  db.prepare("DELETE FROM inbox WHERE expires_at < ?").run(now);
+}
+
 function issueChallenge(db: RelayDatabase, agentId: string) {
   garbageCollectExpiredChallenges(db);
   db.prepare("DELETE FROM challenges WHERE agent_id = ? AND used = 0").run(agentId);
@@ -172,9 +207,12 @@ export function createInboxRoutes(
   db: RelayDatabase,
   rateLimit: ReturnType<typeof createRateLimiter>,
 ) {
+  ensureInboxSchema(db);
+  const inboxGcState = { lastGcAt: 0 };
   const routes = new Hono();
 
   routes.post("/inbox/:agentId", rateLimit, async (c) => {
+    maybeGarbageCollectInbox(db, inboxGcState);
     const recipientAgentId = c.req.param("agentId");
     const envelopeJson = await c.req.text();
 
@@ -203,12 +241,13 @@ export function createInboxRoutes(
     }
 
     const now = Date.now();
+    const expiresAt = now + envelope.ttl * 1000;
     const insert = db
       .prepare(
         `INSERT INTO inbox (
          id, recipient_agent_id, envelope_json, sender_agent_id,
-         thread_id, seq, msg_type, received_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         thread_id, seq, msg_type, received_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO NOTHING`,
       )
       .run(
@@ -220,6 +259,7 @@ export function createInboxRoutes(
         envelope.seq,
         envelope.type,
         now,
+        expiresAt,
       );
 
     if (insert.changes === 0) {
@@ -230,6 +270,7 @@ export function createInboxRoutes(
   });
 
   routes.get("/inbox/:agentId", (c) => {
+    maybeGarbageCollectInbox(db, inboxGcState);
     const agentId = c.req.param("agentId");
     const since = normalizeSince(Number(c.req.query("since") ?? "0"));
     const challenge = c.req.query("challenge");

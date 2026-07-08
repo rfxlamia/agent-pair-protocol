@@ -448,8 +448,8 @@ describe("inbox relay regressions (isolated db)", () => {
         .prepare(
           `INSERT INTO inbox (
            id, recipient_agent_id, envelope_json, sender_agent_id,
-           thread_id, seq, msg_type, received_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           thread_id, seq, msg_type, received_at, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -460,6 +460,7 @@ describe("inbox relay regressions (isolated db)", () => {
           index + 1,
           "chat.message",
           receivedAt,
+          receivedAt + 3_600_000,
         );
       rowids.push(Number(result.lastInsertRowid));
     }
@@ -611,11 +612,12 @@ describe("inbox relay regressions (isolated db)", () => {
         payload: utf8ToBytes(`hist-${seq}`),
         id: crypto.randomUUID(),
       });
+      const receivedAt = Date.now();
       db.prepare(
         `INSERT INTO inbox (
            id, recipient_agent_id, envelope_json, sender_agent_id,
-           thread_id, seq, msg_type, received_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           thread_id, seq, msg_type, received_at, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         crypto.randomUUID(),
         bobId,
@@ -624,7 +626,8 @@ describe("inbox relay regressions (isolated db)", () => {
         thread,
         seq,
         "chat.message",
-        Date.now(),
+        receivedAt,
+        receivedAt + 3_600_000,
       );
     }
 
@@ -679,6 +682,140 @@ describe("inbox relay regressions (isolated db)", () => {
       }
     ).count;
     expect(after).toBe(before);
+  });
+});
+
+const INBOX_GC_PORT = 3005;
+const INBOX_GC_BASE = `http://127.0.0.1:${INBOX_GC_PORT}`;
+
+describe("inbox ttl garbage collection (isolated db)", () => {
+  let server: ServerType;
+  let db: ReturnType<typeof createRelayApp>["db"];
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+    db = relay.db;
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: INBOX_GC_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${INBOX_GC_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  it("garbage-collects expired inbox rows on POST", async () => {
+    const expiredId = crypto.randomUUID();
+    const expiredEnvelope = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread: "aa1e8400-e29b-41d4-a716-446655440001",
+      seq: 1,
+      ttl: 3600,
+      payload: utf8ToBytes("expired"),
+      id: expiredId,
+    });
+    const freshId = crypto.randomUUID();
+    const freshEnvelope = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread: "aa1e8400-e29b-41d4-a716-446655440002",
+      seq: 1,
+      ttl: 3600,
+      payload: utf8ToBytes("fresh"),
+      id: freshId,
+    });
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO inbox (
+         id, recipient_agent_id, envelope_json, sender_agent_id,
+         thread_id, seq, msg_type, received_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      expiredId,
+      bobId,
+      serializeEnvelope(expiredEnvelope),
+      aliceId,
+      expiredEnvelope.thread,
+      1,
+      "chat.message",
+      now - 7200_000,
+      now - 3600_000,
+    );
+    db.prepare(
+      `INSERT INTO inbox (
+         id, recipient_agent_id, envelope_json, sender_agent_id,
+         thread_id, seq, msg_type, received_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      freshId,
+      bobId,
+      serializeEnvelope(freshEnvelope),
+      aliceId,
+      freshEnvelope.thread,
+      1,
+      "chat.message",
+      now,
+      now + 3600_000,
+    );
+
+    const postRes = await fetch(`${INBOX_GC_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(
+        createEnvelope({
+          sender: alice,
+          recipientAgentId: bobId,
+          type: "chat.message",
+          thread: "aa1e8400-e29b-41d4-a716-446655440003",
+          seq: 1,
+          ttl: 3600,
+          payload: utf8ToBytes("trigger-gc"),
+          id: crypto.randomUUID(),
+        }),
+      ),
+    });
+    expect(postRes.status).toBe(204);
+
+    const expiredCount = (
+      db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(expiredId) as {
+        count: number;
+      }
+    ).count;
+    const freshCount = (
+      db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(freshId) as {
+        count: number;
+      }
+    ).count;
+    expect(expiredCount).toBe(0);
+    expect(freshCount).toBe(1);
   });
 });
 
