@@ -7,9 +7,12 @@ import {
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createRateLimiter } from "../middleware/rate-limit.js";
 import { createRelayApp } from "../server.js";
 import { type AllowlistBody, signChallenge } from "./allowlist.js";
+import { createInboxRoutes } from "./inbox.js";
 
 const TEST_PORT = 3001;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
@@ -134,6 +137,30 @@ describe("inbox relay routes", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{broken",
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_envelope");
+  });
+
+  it("returns 400 for non-positive ttl on POST", async () => {
+    const envelope = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread: "550e8400-e29b-41d4-a716-446655440000",
+      seq: 1,
+      ttl: 3600,
+      payload: utf8ToBytes("bad-ttl"),
+      id: crypto.randomUUID(),
+    });
+    const tampered = JSON.parse(serializeEnvelope(envelope)) as Record<string, unknown>;
+    tampered.ttl = 0;
+
+    const res = await fetch(`${BASE_URL}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tampered),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -1090,6 +1117,331 @@ describe("inbox ttl garbage collection (isolated db)", () => {
     ).count;
     expect(expiredCount).toBe(0);
     expect(freshCount).toBe(1);
+  });
+});
+
+const INBOX_GC_GET_PORT = 3008;
+const INBOX_GC_GET_BASE = `http://127.0.0.1:${INBOX_GC_GET_PORT}`;
+
+describe("inbox ttl gc via GET (isolated db)", () => {
+  let server: ServerType;
+  let db: ReturnType<typeof createRelayApp>["db"];
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+    db = relay.db;
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: INBOX_GC_GET_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${INBOX_GC_GET_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  async function authenticatedInboxPull(since: number) {
+    const challengeRes = await fetch(`${INBOX_GC_GET_BASE}/inbox/${bobId}?since=${since}`);
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, bob.secretKey);
+    return fetch(
+      `${INBOX_GC_GET_BASE}/inbox/${bobId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+    );
+  }
+
+  it("garbage-collects expired inbox rows on GET and hides them from pulls", async () => {
+    const expiredId = crypto.randomUUID();
+    const freshId = crypto.randomUUID();
+    const now = Date.now();
+
+    const expiredEnvelope = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread: "bb1e8400-e29b-41d4-a716-446655440001",
+      seq: 1,
+      ttl: 3600,
+      payload: utf8ToBytes("expired-pull"),
+      id: expiredId,
+    });
+    const freshEnvelope = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread: "bb1e8400-e29b-41d4-a716-446655440002",
+      seq: 1,
+      ttl: 3600,
+      payload: utf8ToBytes("fresh-pull"),
+      id: freshId,
+    });
+
+    db.prepare(
+      `INSERT INTO inbox (
+         id, recipient_agent_id, envelope_json, sender_agent_id,
+         thread_id, seq, msg_type, received_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      expiredId,
+      bobId,
+      serializeEnvelope(expiredEnvelope),
+      aliceId,
+      expiredEnvelope.thread,
+      1,
+      "chat.message",
+      now - 7200_000,
+      now - 3600_000,
+    );
+    db.prepare(
+      `INSERT INTO inbox (
+         id, recipient_agent_id, envelope_json, sender_agent_id,
+         thread_id, seq, msg_type, received_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      freshId,
+      bobId,
+      serializeEnvelope(freshEnvelope),
+      aliceId,
+      freshEnvelope.thread,
+      1,
+      "chat.message",
+      now,
+      now + 3600_000,
+    );
+
+    const challengeRes = await fetch(`${INBOX_GC_GET_BASE}/inbox/${bobId}?since=0`);
+    expect(challengeRes.status).toBe(401);
+
+    const pullRes = await authenticatedInboxPull(0);
+    expect(pullRes.status).toBe(200);
+    const body = (await pullRes.json()) as { envelopes: Array<{ id: string }> };
+    expect(body.envelopes.some((envelope) => envelope.id === expiredId)).toBe(false);
+    expect(body.envelopes.some((envelope) => envelope.id === freshId)).toBe(true);
+  });
+});
+
+const INBOX_GC_THROTTLE_PORT = 3009;
+const INBOX_GC_THROTTLE_BASE = `http://127.0.0.1:${INBOX_GC_THROTTLE_PORT}`;
+
+describe("inbox ttl gc throttle (isolated db)", () => {
+  let server: ServerType;
+  let db: ReturnType<typeof createRelayApp>["db"];
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+    db = relay.db;
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: INBOX_GC_THROTTLE_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${INBOX_GC_THROTTLE_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  it("throttles inbox garbage collection within the gc interval", async () => {
+    const expiredId = crypto.randomUUID();
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO inbox (
+         id, recipient_agent_id, envelope_json, sender_agent_id,
+         thread_id, seq, msg_type, received_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      expiredId,
+      bobId,
+      serializeEnvelope(
+        createEnvelope({
+          sender: alice,
+          recipientAgentId: bobId,
+          type: "chat.message",
+          thread: "cc1e8400-e29b-41d4-a716-446655440001",
+          seq: 1,
+          ttl: 3600,
+          payload: utf8ToBytes("throttle"),
+          id: expiredId,
+        }),
+      ),
+      aliceId,
+      "cc1e8400-e29b-41d4-a716-446655440001",
+      1,
+      "chat.message",
+      now - 7200_000,
+      now - 3600_000,
+    );
+
+    const triggerGc = () =>
+      fetch(`${INBOX_GC_THROTTLE_BASE}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: serializeEnvelope(
+          createEnvelope({
+            sender: alice,
+            recipientAgentId: bobId,
+            type: "chat.message",
+            thread: "cc1e8400-e29b-41d4-a716-446655440099",
+            seq: 1,
+            ttl: 3600,
+            payload: utf8ToBytes("gc-trigger"),
+            id: crypto.randomUUID(),
+          }),
+        ),
+      });
+
+    await triggerGc();
+    expect(
+      (
+        db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(expiredId) as {
+          count: number;
+        }
+      ).count,
+    ).toBe(0);
+
+    const secondExpiredId = crypto.randomUUID();
+    db.prepare(
+      `INSERT INTO inbox (
+         id, recipient_agent_id, envelope_json, sender_agent_id,
+         thread_id, seq, msg_type, received_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      secondExpiredId,
+      bobId,
+      serializeEnvelope(
+        createEnvelope({
+          sender: alice,
+          recipientAgentId: bobId,
+          type: "chat.message",
+          thread: "cc1e8400-e29b-41d4-a716-446655440002",
+          seq: 1,
+          ttl: 3600,
+          payload: utf8ToBytes("throttle-2"),
+          id: secondExpiredId,
+        }),
+      ),
+      aliceId,
+      "cc1e8400-e29b-41d4-a716-446655440002",
+      1,
+      "chat.message",
+      now - 7200_000,
+      now - 3600_000,
+    );
+
+    await triggerGc();
+    expect(
+      (
+        db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(secondExpiredId) as {
+          count: number;
+        }
+      ).count,
+    ).toBe(1);
+  });
+});
+
+describe("inbox ttl schema migration", () => {
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  it("backfills expires_at when migrating brownfield inbox schema", () => {
+    const legacyDb = new Database(":memory:");
+    legacyDb.exec(`
+      CREATE TABLE inbox (
+        id TEXT PRIMARY KEY,
+        recipient_agent_id TEXT NOT NULL,
+        envelope_json TEXT NOT NULL,
+        sender_agent_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        msg_type TEXT NOT NULL,
+        received_at INTEGER NOT NULL
+      );
+    `);
+
+    const rowId = crypto.randomUUID();
+    const receivedAt = Date.now() - 1800_000;
+    const envelope = createEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread: "dd1e8400-e29b-41d4-a716-446655440001",
+      seq: 1,
+      ttl: 1800,
+      payload: utf8ToBytes("legacy"),
+      id: rowId,
+    });
+    legacyDb
+      .prepare(
+        `INSERT INTO inbox (
+           id, recipient_agent_id, envelope_json, sender_agent_id,
+           thread_id, seq, msg_type, received_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        rowId,
+        bobId,
+        serializeEnvelope(envelope),
+        aliceId,
+        envelope.thread,
+        1,
+        "chat.message",
+        receivedAt,
+      );
+
+    const rateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 100 });
+    createInboxRoutes(legacyDb, rateLimit);
+
+    const row = legacyDb.prepare("SELECT expires_at FROM inbox WHERE id = ?").get(rowId) as {
+      expires_at: number;
+    };
+    expect(row.expires_at).toBe(receivedAt + 1800 * 1000);
+    legacyDb.close();
   });
 });
 
