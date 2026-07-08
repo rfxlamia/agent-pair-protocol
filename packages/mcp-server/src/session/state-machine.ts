@@ -119,6 +119,20 @@ function assertParticipant(
   return { ok: false, error: "not_a_participant" };
 }
 
+function assertRecipientSender(
+  session: SessionRecord,
+  from: string,
+): { ok: true; role: "recipient" } | { ok: false; error: "not_a_participant" | "wrong_role" } {
+  const participant = assertParticipant(session, from);
+  if (!participant.ok) {
+    return participant;
+  }
+  if (participant.role !== "recipient") {
+    return { ok: false, error: "wrong_role" };
+  }
+  return { ok: true, role: "recipient" };
+}
+
 function parseJsonBody<T>(body: string): T | { error: string } {
   try {
     return JSON.parse(body) as T;
@@ -290,6 +304,10 @@ export function createSessionStateMachine(
         thread: input.thread,
         status: existing.status,
       });
+    }
+
+    if (existing && existing.initiator !== input.from) {
+      return result({ ok: false, error: "initiator_mismatch" });
     }
 
     const preserveProgress = existing?.status === "pending";
@@ -544,9 +562,9 @@ export function createSessionStateMachine(
           if (!openApprovedPayload.ok) {
             return result(openApprovedPayload);
           }
-          const participant = assertParticipant(found.session, input.from);
-          if (!participant.ok) {
-            return result(participant);
+          const recipient = assertRecipientSender(found.session, input.from);
+          if (!recipient.ok) {
+            return result(recipient);
           }
           upsert({ ...found.session, status: "live" });
           return result({ ok: true, thread: input.thread, status: "live" });
@@ -560,9 +578,9 @@ export function createSessionStateMachine(
           if (!openRejectPayload.ok) {
             return result(openRejectPayload);
           }
-          const participant = assertParticipant(found.session, input.from);
-          if (!participant.ok) {
-            return result(participant);
+          const recipient = assertRecipientSender(found.session, input.from);
+          if (!recipient.ok) {
+            return result(recipient);
           }
           upsert({
             ...found.session,
@@ -584,9 +602,9 @@ export function createSessionStateMachine(
           if (!openExpiredPayload.ok) {
             return result(openExpiredPayload);
           }
-          const participant = assertParticipant(found.session, input.from);
-          if (!participant.ok) {
-            return result(participant);
+          const recipient = assertRecipientSender(found.session, input.from);
+          if (!recipient.ok) {
+            return result(recipient);
           }
           upsert({ ...found.session, status: "open_expired" });
           return result({
