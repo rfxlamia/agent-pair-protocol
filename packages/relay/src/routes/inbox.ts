@@ -35,10 +35,30 @@ interface GapInfo {
   expected_seq: number;
 }
 
-function seqStep(seqs: number[]): number {
-  const allOdd = seqs.every((seq) => seq % 2 === 1);
-  const allEven = seqs.every((seq) => seq % 2 === 0);
-  return allOdd || allEven ? 2 : 1;
+function streamStep(seqs: number[]): number {
+  const sorted = [...new Set(seqs)].sort((a, b) => a - b);
+  if (sorted.length < 2) {
+    return 1;
+  }
+
+  const first = sorted[0];
+  const second = sorted[1];
+  if (first === undefined || second === undefined) {
+    return 1;
+  }
+
+  const delta = second - first;
+  if (delta === 1 || delta === 2) {
+    return delta;
+  }
+
+  const allOdd = sorted.every((seq) => seq % 2 === 1);
+  const allEven = sorted.every((seq) => seq % 2 === 0);
+  if (allOdd || allEven) {
+    return 2;
+  }
+
+  return 1;
 }
 
 function findGapInSeqs(thread: string, seqs: number[]): GapInfo | null {
@@ -47,7 +67,7 @@ function findGapInSeqs(thread: string, seqs: number[]): GapInfo | null {
     return null;
   }
 
-  const step = seqStep(sorted);
+  const step = streamStep(sorted);
   const firstSeq = sorted[0];
   if (firstSeq === undefined) {
     return null;
@@ -100,17 +120,31 @@ function detectBoundedGaps(
       | { min_seq: number | null; max_seq: number | null }
       | undefined;
 
-    const evalSeqs = [...pageSeqs];
-    if (anchor?.min_seq != null) {
-      evalSeqs.push(anchor.min_seq);
-    }
-    if (anchor?.max_seq != null && anchor.max_seq !== anchor.min_seq) {
-      evalSeqs.push(anchor.max_seq);
+    if (pageSeqs.length >= 2) {
+      const pageGap = findGapInSeqs(thread, pageSeqs);
+      if (pageGap) {
+        gaps.push(pageGap);
+        continue;
+      }
     }
 
-    const gap = findGapInSeqs(thread, evalSeqs);
-    if (gap) {
-      gaps.push(gap);
+    const maxSeq = anchor?.max_seq;
+    if (maxSeq == null || pageSeqs.length === 0) {
+      continue;
+    }
+
+    const historyStep =
+      anchor?.min_seq != null
+        ? streamStep([anchor.min_seq, maxSeq])
+        : streamStep([maxSeq, Math.min(...pageSeqs)]);
+
+    const minPage = Math.min(...pageSeqs);
+    if (minPage !== maxSeq + historyStep) {
+      gaps.push({
+        thread,
+        last_good_seq: maxSeq,
+        expected_seq: maxSeq + historyStep,
+      });
     }
   }
 
