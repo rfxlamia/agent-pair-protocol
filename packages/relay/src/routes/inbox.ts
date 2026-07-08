@@ -185,7 +185,7 @@ function maybeGarbageCollectInbox(db: RelayDatabase, state: { lastGcAt: number }
     return;
   }
   state.lastGcAt = now;
-  db.prepare("DELETE FROM inbox WHERE expires_at < ?").run(now);
+  db.prepare("DELETE FROM inbox WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
 }
 
 function issueChallenge(db: RelayDatabase, agentId: string) {
@@ -261,6 +261,10 @@ export function createInboxRoutes(
 
     if (envelope.to !== recipientAgentId) {
       return c.json({ error: "recipient_mismatch" }, 400);
+    }
+
+    if (!Number.isFinite(envelope.ttl) || envelope.ttl <= 0) {
+      return c.json({ error: "invalid_envelope" }, 400);
     }
 
     let senderPublicKey: Uint8Array;
