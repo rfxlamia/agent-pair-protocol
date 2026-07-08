@@ -374,7 +374,9 @@ Tables: allowlists, envelopes, pair_sessions, challenges, artifacts.
 
 **Client identity (default, direct deploy):** TCP peer address dari koneksi socket. Header `x-forwarded-for` / `x-real-ip` **diabaikan**.
 
-**Di belakang reverse proxy:** set `AGENTPAIR_TRUST_PROXY=1` (atau `true`) di environment relay. Header proxy hanya dipercaya jika peer TCP langsung berasal dari loopback atau RFC1918 (mis. nginx di Docker network / `127.0.0.1` via Cloudflare Tunnel). Urutan: `x-real-ip`, lalu hop pertama `x-forwarded-for`, lalu alamat socket proxy.
+**Di belakang Cloudflare Tunnel (production (behind reverse proxy)):** `docker-compose.yml` sets `AGENTPAIR_TRUST_PROXY=1`. cloudflared connects from loopback/Docker bridge and forwards `X-Forwarded-For` / `CF-Connecting-IP` with the real client address.
+
+**Di belakang reverse proxy lain:** set `AGENTPAIR_TRUST_PROXY=1` (atau `true`) di environment relay. Header proxy hanya dipercaya jika peer TCP langsung berasal dari loopback atau RFC1918 (mis. nginx di Docker network). Urutan: `x-real-ip`, lalu hop pertama `x-forwarded-for`, lalu alamat socket proxy.
 
 **Penting:** Jika `AGENTPAIR_TRUST_PROXY` aktif tetapi client masih connect langsung (peer publik), header tetap diabaikan — mencegah spoofing saat misconfig.
 
