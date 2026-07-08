@@ -1,3 +1,4 @@
+import { scheduleAgentContextFlush } from "../store/flush-context.js";
 import { parseHumanDecision } from "../store/pending.js";
 import type { AgentContext } from "./pair.js";
 import { executePairJoinApproval, handlePairInitComplete } from "./pair.js";
@@ -45,6 +46,7 @@ export async function handleHumanApprove(
       const { publicKeyToAgentId } = await import("@agentpair/protocol");
       const agentId = publicKeyToAgentId(keyPair.publicKey);
       ctx.bonds.add(agentId, flow.bond);
+      scheduleAgentContextFlush(ctx);
       const result = { ok: true, status: flow.status, bond: flow.bond };
       assertNoSecrets(result);
       return toolTextResult(result);
@@ -57,21 +59,26 @@ export async function handleHumanApprove(
 
   if (pending.kind === "session_open") {
     if ("reject" in parsed) {
-      return handleSessionRejectOpen(ctx, {
+      const result = await handleSessionRejectOpen(ctx, {
         pending_id: pending.id,
         reason: parsed.reject,
         via_human: true,
       });
+      scheduleAgentContextFlush(ctx);
+      return result;
     }
-    return handleSessionApproveOpen(ctx, {
+    const result = await handleSessionApproveOpen(ctx, {
       pending_id: pending.id,
       via_human: true,
     });
+    scheduleAgentContextFlush(ctx);
+    return result;
   }
 
   if (pending.kind === "ratify") {
     if ("reject" in parsed) {
       ctx.pending.remove(pending.id);
+      scheduleAgentContextFlush(ctx);
       const result = {
         ok: true,
         status: "ratify_rejected",
@@ -80,10 +87,12 @@ export async function handleHumanApprove(
       assertNoSecrets(result);
       return toolTextResult(result);
     }
-    return handleSessionRatify(ctx, {
+    const result = await handleSessionRatify(ctx, {
       pending_id: pending.id,
       via_human: true,
     });
+    scheduleAgentContextFlush(ctx);
+    return result;
   }
 
   const result = { ok: false, error: "unsupported_pending_kind" };

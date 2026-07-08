@@ -1,4 +1,5 @@
 import type { PairProposal } from "@agentpair/protocol";
+import { parsePendingItemRecords } from "./persistence-validate.js";
 import { createJsonPersistentStore, resolveDataDir, storePath } from "./persistent-store.js";
 
 interface PendingFile {
@@ -12,11 +13,11 @@ function validatePendingFile(parsed: unknown): PendingFile | undefined {
   if (typeof parsed !== "object" || parsed === null) {
     return undefined;
   }
-  const items = (parsed as PendingFile).items;
-  if (typeof items !== "object" || items === null) {
+  const items = parsePendingItemRecords((parsed as PendingFile).items);
+  if (!items) {
     return undefined;
   }
-  return { v: 1, items };
+  return { v: 1, items: items as unknown as Record<string, PendingItem> };
 }
 
 export type PendingKind = "pair_join" | "session_open" | "ratify" | "budget_extend";

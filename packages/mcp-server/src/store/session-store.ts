@@ -1,5 +1,6 @@
 import type { SessionRecord } from "../session/state-machine.js";
 import type { SessionStore } from "../session/store.js";
+import { parseSessionRecords } from "./persistence-validate.js";
 import { createJsonPersistentStore, resolveDataDir, storePath } from "./persistent-store.js";
 
 interface SessionsFile {
@@ -13,8 +14,8 @@ function validateSessionsFile(parsed: unknown): SessionsFile | undefined {
   if (typeof parsed !== "object" || parsed === null) {
     return undefined;
   }
-  const sessions = (parsed as SessionsFile).sessions;
-  if (typeof sessions !== "object" || sessions === null) {
+  const sessions = parseSessionRecords((parsed as SessionsFile).sessions);
+  if (!sessions) {
     return undefined;
   }
   return { v: 1, sessions };
@@ -36,15 +37,16 @@ export function createFileSessionStore(
 
   return {
     get(thread) {
-      return backing.read().sessions[thread];
+      const session = backing.read().sessions[thread];
+      return session ? structuredClone(session) : undefined;
     },
     upsert(session) {
       backing.mutate((data) => {
-        data.sessions[session.thread] = session;
+        data.sessions[session.thread] = structuredClone(session);
       });
     },
     list() {
-      return Object.values(backing.read().sessions);
+      return Object.values(backing.read().sessions).map((session) => structuredClone(session));
     },
     flush: () => backing.flush(),
   };

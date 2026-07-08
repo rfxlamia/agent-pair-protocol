@@ -90,6 +90,56 @@ describe("file-backed stores restart simulation", () => {
     expect(store.get("alice")).toEqual([]);
   });
 
+  it("bond store rejects agents with non-array bond lists", async () => {
+    const dataDir = await tempDataDir();
+    await writeFile(
+      join(dataDir, "bonds.json"),
+      JSON.stringify({ v: 1, agents: { alice: "not-an-array" } }),
+      "utf8",
+    );
+
+    const store = new FileBondStore({ dataDir });
+    expect(store.get("alice")).toEqual([]);
+  });
+
+  it("session store drops invalid session entries on load", async () => {
+    const dataDir = await tempDataDir();
+    await writeFile(
+      join(dataDir, "sessions.json"),
+      JSON.stringify({
+        v: 1,
+        sessions: {
+          good: {
+            thread: "good",
+            initiator: "alice",
+            recipient: "bob",
+            role: "initiator",
+            status: "live",
+            goal: "test",
+            acceptance: [],
+            budget: { max_turns: 1 },
+            mandate: { agent_may: [], human_required: [] },
+            createdAt: 1,
+            expiresAt: 2,
+            turnCount: 0,
+            peerMessages: [],
+            lockedSections: [],
+            testReports: {},
+            challenges: {},
+            signHashes: {},
+            ratifyApproved: {},
+          },
+          bad: { thread: "bad" },
+        },
+      }),
+      "utf8",
+    );
+
+    const store = createFileSessionStore({ dataDir });
+    expect(store.get("good")?.status).toBe("live");
+    expect(store.get("bad")).toBeUndefined();
+  });
+
   it("allowlist store returns empty for invalid on-disk shape without throwing", async () => {
     const dataDir = await tempDataDir();
     await writeFile(join(dataDir, "allowlist.json"), JSON.stringify({}), "utf8");

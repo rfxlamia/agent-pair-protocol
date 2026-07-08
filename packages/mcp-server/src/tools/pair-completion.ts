@@ -1,5 +1,6 @@
 import { type PairFlowResult, publicKeyToAgentId } from "@agentpair/protocol";
 import { pairInitComplete } from "@agentpair/protocol";
+import { scheduleAgentContextFlush } from "../store/flush-context.js";
 import { type AgentContext, ensureAllowlistReady } from "./pair.js";
 
 const inFlight = new Map<string, Promise<PairFlowResult>>();
@@ -22,6 +23,7 @@ async function runInitiatorCompletion(ctx: AgentContext, code: string): Promise<
   if (flow.status === "bonded") {
     const agentId = publicKeyToAgentId(keyPair.publicKey);
     ctx.bonds.add(agentId, flow.bond);
+    scheduleAgentContextFlush(ctx);
     completed.set(code, flow);
     logCompletionEvent(code, { status: "bonded", peer: flow.bond.peer });
   } else {

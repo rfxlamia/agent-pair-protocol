@@ -1,4 +1,5 @@
 import type { Bond } from "@agentpair/protocol";
+import { parseBondAgents } from "./persistence-validate.js";
 import {
   type JsonPersistentStore,
   createJsonPersistentStore,
@@ -17,8 +18,8 @@ function validateBondsFile(parsed: unknown): BondsFile | undefined {
   if (typeof parsed !== "object" || parsed === null) {
     return undefined;
   }
-  const agents = (parsed as BondsFile).agents;
-  if (typeof agents !== "object" || agents === null) {
+  const agents = parseBondAgents((parsed as BondsFile).agents);
+  if (!agents) {
     return undefined;
   }
   return { v: 1, agents };
