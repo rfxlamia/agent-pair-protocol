@@ -1,10 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import {
-  publicKeyToAgentId,
-  type KeyPair,
-} from "../crypto/keys.js";
-import { finish, init, respond, start, type PakeSessionHandle } from "./pake-adapter.js";
+import { type KeyPair, publicKeyToAgentId } from "../crypto/keys.js";
+import { type PakeSessionHandle, finish, init, respond, start } from "./pake-adapter.js";
 
 export const PAIR_TTL_MS = 5 * 60 * 1000;
 
@@ -35,15 +32,8 @@ export interface PendingPair {
 
 export interface PairingRelayClient {
   postPakeMessage(sessionId: string, body: string): Promise<void>;
-  pollPakeMessage(
-    sessionId: string,
-    timeoutMs?: number,
-  ): Promise<string | null>;
-  putAllowlist(
-    agentId: string,
-    allowed: string[],
-    secretKey: Uint8Array,
-  ): Promise<{ ok: boolean }>;
+  pollPakeMessage(sessionId: string, timeoutMs?: number): Promise<string | null>;
+  putAllowlist(agentId: string, allowed: string[], secretKey: Uint8Array): Promise<{ ok: boolean }>;
 }
 
 export interface PairingRegistry {
@@ -102,10 +92,18 @@ export interface PairInitOutput {
 const CODE_WORDS_A = ["kancil", "senja", "biru", "hijau", "merah", "putih"];
 const CODE_WORDS_B = ["awan", "laut", "padi", "bintang", "kapal", "hujan"];
 
+function pickRandomWord(words: readonly string[]): string {
+  const word = words[Math.floor(Math.random() * words.length)];
+  if (!word) {
+    throw new Error("word list must not be empty");
+  }
+  return word;
+}
+
 function generatePairingCode(): string {
   const num = 1 + Math.floor(Math.random() * 9);
-  const a = CODE_WORDS_A[Math.floor(Math.random() * CODE_WORDS_A.length)]!;
-  const b = CODE_WORDS_B[Math.floor(Math.random() * CODE_WORDS_B.length)]!;
+  const a = pickRandomWord(CODE_WORDS_A);
+  const b = pickRandomWord(CODE_WORDS_B);
   return `${num}-${a}-${b}`;
 }
 
@@ -150,10 +148,7 @@ async function pollWireMessage(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const remaining = deadline - Date.now();
-    const raw = await relay.pollPakeMessage(
-      sessionId,
-      Math.min(remaining, 500),
-    );
+    const raw = await relay.pollPakeMessage(sessionId, Math.min(remaining, 500));
     if (raw) {
       const message = decodeWireMessage(raw);
       if (predicate(message)) {
@@ -165,10 +160,7 @@ async function pollWireMessage(
   return null;
 }
 
-function lookupPending(
-  registry: PairingRegistry,
-  code: string,
-): PendingPair | PairFlowResult {
+function lookupPending(registry: PairingRegistry, code: string): PendingPair | PairFlowResult {
   const pending = registry.lookup(code);
   if (!pending) {
     return { status: "not_found" };
@@ -341,18 +333,14 @@ export async function pairJoin(input: {
   const peerConfirm = await pollWireMessage(
     input.relay,
     pending.sessionId,
-    (message) =>
-      message.phase === "confirm" && message.agentId !== joinerAgentId,
+    (message) => message.phase === "confirm" && message.agentId !== joinerAgentId,
     BOND_COORDINATION_TIMEOUT_MS,
   );
   if (!peerConfirm || peerConfirm.phase !== "confirm") {
     return { status: "pake_failed" };
   }
   if (peerConfirm.fingerprint !== fingerprint) {
-    await input.relay.postPakeMessage(
-      pending.sessionId,
-      encodeWireMessage({ phase: "bond_fail" }),
-    );
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
     return { status: "pake_failed" };
   }
 
@@ -398,10 +386,7 @@ export async function pairJoin(input: {
       previousAllowed,
       input.keyPair.secretKey,
     );
-    await input.relay.postPakeMessage(
-      pending.sessionId,
-      encodeWireMessage({ phase: "bond_fail" }),
-    );
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
     input.registry.update(input.code, { rolledBack: true });
     return { status: "rolled_back" };
   }
@@ -469,8 +454,7 @@ export async function pairInitComplete(input: {
   const joinerConfirm = await pollWireMessage(
     input.relay,
     pending.sessionId,
-    (message) =>
-      message.phase === "confirm" && message.agentId !== initiatorAgentId,
+    (message) => message.phase === "confirm" && message.agentId !== initiatorAgentId,
   );
   if (!joinerConfirm || joinerConfirm.phase !== "confirm") {
     // Narrow PairWireMessage union after .find() — runtime guard is redundant.
@@ -508,18 +492,12 @@ export async function pairInitComplete(input: {
       previousAllowed,
       input.keyPair.secretKey,
     );
-    await input.relay.postPakeMessage(
-      pending.sessionId,
-      encodeWireMessage({ phase: "bond_fail" }),
-    );
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
     input.registry.update(input.code, { rolledBack: true });
     return { status: "rolled_back" };
   }
 
-  await input.relay.postPakeMessage(
-    pending.sessionId,
-    encodeWireMessage({ phase: "bond_ok" }),
-  );
+  await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_ok" }));
 
   const bondFail = await pollWireMessage(
     input.relay,

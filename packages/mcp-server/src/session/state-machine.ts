@@ -1,8 +1,4 @@
-import {
-  sign,
-  type KeyPair,
-  type LocalAllowlistStore,
-} from "@agentpair/protocol";
+import { type KeyPair, type LocalAllowlistStore, sign } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { BondStore } from "../store/bonds.js";
 import { isEphemeralBond } from "../store/bonds.js";
@@ -25,12 +21,7 @@ export type SessionStatus =
   | "closed";
 
 /** Recipient sessions past open must not be reset by a redelivered session.open. */
-const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = [
-  "live",
-  "signed",
-  "closed",
-  "open_rejected",
-];
+const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = ["live", "signed", "closed", "open_rejected"];
 
 export interface TestReport {
   artifact_hash: string;
@@ -62,10 +53,7 @@ export interface SessionRecord {
   turnCount: number;
   peerMessages: PeerNegotiationMessage[];
   lockedSections: string[];
-  testReports: Record<
-    string,
-    { initiator?: TestReport; recipient?: TestReport }
-  >;
+  testReports: Record<string, { initiator?: TestReport; recipient?: TestReport }>;
   challenges: { initiator?: boolean; recipient?: boolean };
   signHashes: { initiator?: string; recipient?: string };
   ratifyApproved: { initiator?: boolean; recipient?: boolean };
@@ -135,10 +123,7 @@ function parseJsonBody<T>(body: string): T | { error: string } {
   }
 }
 
-function bothTestReportsPass(
-  session: SessionRecord,
-  artifactHash: string,
-): boolean {
+function bothTestReportsPass(session: SessionRecord, artifactHash: string): boolean {
   const reports = session.testReports[artifactHash];
   return Boolean(reports?.initiator?.passed && reports?.recipient?.passed);
 }
@@ -206,9 +191,7 @@ export function createSessionStateMachine(
   }
 
   function findRatifyPending(thread: string) {
-    return deps.pending
-      .list()
-      .find((item) => item.kind === "ratify" && item.thread === thread);
+    return deps.pending.list().find((item) => item.kind === "ratify" && item.thread === thread);
   }
 
   function removeRatifyPendingForThread(thread: string) {
@@ -269,9 +252,7 @@ export function createSessionStateMachine(
   async function finalizeSession(session: SessionRecord, artifactHash: string) {
     const peer = peerFor(session, deps.agentId);
     const message = utf8ToBytes(artifactHash);
-    const signature = Buffer.from(sign(message, deps.keyPair.secretKey)).toString(
-      "base64url",
-    );
+    const signature = Buffer.from(sign(message, deps.keyPair.secretKey)).toString("base64url");
     const signatures = {
       ...(session.signatures ?? {}),
       [deps.agentId]: signature,
@@ -299,10 +280,7 @@ export function createSessionStateMachine(
     expires_at: number;
   }) {
     const existing = store.get(input.thread);
-    if (
-      existing &&
-      NON_REOPENABLE_OPEN_STATUSES.includes(existing.status)
-    ) {
+    if (existing && NON_REOPENABLE_OPEN_STATUSES.includes(existing.status)) {
       return result({
         ok: true,
         thread: input.thread,
@@ -609,10 +587,7 @@ export function createSessionStateMachine(
                 artifact_hash: artifactHash,
                 passed: Boolean(parsed.passed),
                 runner: String(parsed.runner ?? ""),
-                details:
-                  parsed.details === undefined
-                    ? undefined
-                    : String(parsed.details),
+                details: parsed.details === undefined ? undefined : String(parsed.details),
               },
             },
           };
@@ -635,14 +610,10 @@ export function createSessionStateMachine(
             ...found.session,
             signHashes,
             artifactHash: String(parsed.artifact_hash ?? found.session.artifactHash),
-            status: bothSigned({ ...found.session, signHashes })
-              ? "signed"
-              : found.session.status,
+            status: bothSigned({ ...found.session, signHashes }) ? "signed" : found.session.status,
           });
           const pendingRatify =
-            updated.status === "signed"
-              ? ensureRatifyPending(updated)
-              : undefined;
+            updated.status === "signed" ? ensureRatifyPending(updated) : undefined;
           return result({
             ok: true,
             thread: input.thread,
@@ -659,8 +630,7 @@ export function createSessionStateMachine(
           }
           const turnCount = Number(parsed.turn_count ?? found.session.turnCount);
           const nextTurnCount = Math.max(found.session.turnCount, turnCount);
-          const msgType =
-            typeof parsed.msg_type === "string" ? parsed.msg_type : undefined;
+          const msgType = typeof parsed.msg_type === "string" ? parsed.msg_type : undefined;
           const msgBody = typeof parsed.body === "string" ? parsed.body : undefined;
           let lockedSections = found.session.lockedSections;
           let peerMessages = found.session.peerMessages;
@@ -674,9 +644,7 @@ export function createSessionStateMachine(
             if (msgType === "accept") {
               const acceptBody = parseJsonBody<{ section_id?: string }>(msgBody);
               if (!("error" in acceptBody) && acceptBody.section_id) {
-                lockedSections = [
-                  ...new Set([...lockedSections, acceptBody.section_id]),
-                ];
+                lockedSections = [...new Set([...lockedSections, acceptBody.section_id])];
               }
             }
           }
@@ -702,11 +670,7 @@ export function createSessionStateMachine(
             ratifyApproved.recipient = true;
           }
           const updated = upsert({ ...found.session, ratifyApproved });
-          if (
-            bothRatified(updated) &&
-            updated.artifactHash &&
-            updated.status !== "closed"
-          ) {
+          if (bothRatified(updated) && updated.artifactHash && updated.status !== "closed") {
             const closed = await finalizeSession(updated, updated.artifactHash);
             return result({
               ok: true,
@@ -775,9 +739,7 @@ export function createSessionStateMachine(
         const peer = peerFor(session, deps.agentId);
         const existing = deps.pending
           .list()
-          .find(
-            (item) => item.kind === "budget_extend" && item.thread === session.thread,
-          );
+          .find((item) => item.kind === "budget_extend" && item.thread === session.thread);
         if (!existing) {
           deps.pending.addBudgetExtend({
             thread: session.thread,
@@ -853,17 +815,14 @@ export function createSessionStateMachine(
         artifact_hash: input.artifact_hash,
       });
 
-      const pendingRatify =
-        updated.status === "signed" ? ensureRatifyPending(updated) : undefined;
+      const pendingRatify = updated.status === "signed" ? ensureRatifyPending(updated) : undefined;
 
       return result({
         ok: true,
         thread: input.thread,
         status: updated.status,
         artifact_hash: input.artifact_hash,
-        ...(pendingRatify
-          ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const }
-          : {}),
+        ...(pendingRatify ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const } : {}),
       });
     },
 
@@ -990,9 +949,7 @@ export function createSessionStateMachine(
         ...(pendingOpen
           ? { pending_id: pendingOpen.id, pending_kind: "session_open" as const }
           : {}),
-        ...(pendingRatify
-          ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const }
-          : {}),
+        ...(pendingRatify ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const } : {}),
       });
     },
   };

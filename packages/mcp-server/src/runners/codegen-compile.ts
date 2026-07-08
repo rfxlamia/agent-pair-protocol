@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
+  type OpenApiDocument,
   extractSchemas,
   pickTopLevelSchema,
   schemaBundleForTopLevel,
-  type OpenApiDocument,
 } from "./openapi-schemas.js";
 import { resolvePackageBin } from "./resolve-package-bin.js";
 
@@ -112,14 +112,7 @@ export async function runCodegenCompile(
 
     await execFileAsync(
       "docker",
-      [
-        "run",
-        "--rm",
-        "-v",
-        `${workDir}:/work`,
-        dockerImage,
-        `/work/${topLevel}`,
-      ],
+      ["run", "--rm", "-v", `${workDir}:/work`, dockerImage, `/work/${topLevel}`],
       { timeout: 120_000 },
     );
 

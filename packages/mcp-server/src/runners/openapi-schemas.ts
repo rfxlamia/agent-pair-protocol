@@ -1,8 +1,6 @@
 export type OpenApiDocument = Record<string, unknown>;
 
-export function extractSchemas(
-  openApiDoc: OpenApiDocument,
-): Record<string, unknown> {
+export function extractSchemas(openApiDoc: OpenApiDocument): Record<string, unknown> {
   const components = openApiDoc.components;
   if (!components || typeof components !== "object") {
     return {};
@@ -32,10 +30,7 @@ export function schemaBundleForTopLevel(
   };
 }
 
-export function pickTopLevelSchema(
-  schemas: Record<string, unknown>,
-  preferred?: string,
-): string {
+export function pickTopLevelSchema(schemas: Record<string, unknown>, preferred?: string): string {
   if (preferred) {
     if (!(preferred in schemas)) {
       throw new Error(`Schema not found for top-level type: ${preferred}`);
@@ -48,5 +43,9 @@ export function pickTopLevelSchema(
     throw new Error("No schemas available for codegen");
   }
 
-  return names[0]!;
+  const first = names[0];
+  if (!first) {
+    throw new Error("No schemas available for codegen");
+  }
+  return first;
 }

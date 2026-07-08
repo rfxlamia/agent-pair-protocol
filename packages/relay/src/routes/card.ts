@@ -6,9 +6,9 @@ export function createCardRoutes(db: RelayDatabase) {
 
   routes.get("/card/:agentId", (c) => {
     const agentId = c.req.param("agentId");
-    const row = db
-      .prepare("SELECT card_json FROM cards WHERE agent_id = ?")
-      .get(agentId) as { card_json: string } | undefined;
+    const row = db.prepare("SELECT card_json FROM cards WHERE agent_id = ?").get(agentId) as
+      | { card_json: string }
+      | undefined;
 
     if (!row) {
       return c.json({ error: "card_not_found" }, 404);

@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { OpenApiDocument } from "./openapi-schemas.js";
 import { resolvePackageBin } from "./resolve-package-bin.js";
 
@@ -37,8 +37,7 @@ export async function runSpectral(
     } catch {
       return {
         ok: false,
-        error:
-          "spectral runner unavailable: install @stoplight/spectral-cli (dev dependency)",
+        error: "spectral runner unavailable: install @stoplight/spectral-cli (dev dependency)",
       };
     }
   }

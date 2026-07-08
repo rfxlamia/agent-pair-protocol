@@ -1,11 +1,11 @@
 import {
+  type Envelope,
+  type KeyPair,
+  type PairingRelayClient,
   deserializeEnvelope,
   publicKeyToAgentId,
   serializeEnvelope,
   sign,
-  type Envelope,
-  type KeyPair,
-  type PairingRelayClient,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 
@@ -82,15 +82,10 @@ export class HttpRelayClient implements PairingRelayClient {
     }
   }
 
-  async pollPakeMessage(
-    sessionId: string,
-    timeoutMs = 1500,
-  ): Promise<string | null> {
+  async pollPakeMessage(sessionId: string, timeoutMs = 1500): Promise<string | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const res = await fetch(
-        `${this.baseUrl}/pair/${encodeURIComponent(sessionId)}`,
-      );
+      const res = await fetch(`${this.baseUrl}/pair/${encodeURIComponent(sessionId)}`);
       if (res.status === 200) {
         return await res.text();
       }
@@ -121,10 +116,7 @@ export class HttpRelayClient implements PairingRelayClient {
   }
 
   async publishPairManifest(manifest: PairManifest): Promise<void> {
-    await this.postPakeMessage(
-      manifestSessionId(manifest.code),
-      JSON.stringify(manifest),
-    );
+    await this.postPakeMessage(manifestSessionId(manifest.code), JSON.stringify(manifest));
   }
 
   async fetchPairManifest(code: string): Promise<PairManifest | null> {
@@ -136,14 +128,11 @@ export class HttpRelayClient implements PairingRelayClient {
   }
 
   async sendEnvelope(recipientAgentId: string, envelope: Envelope): Promise<void> {
-    const res = await fetch(
-      `${this.baseUrl}/inbox/${encodeURIComponent(recipientAgentId)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(envelope),
-      },
-    );
+    const res = await fetch(`${this.baseUrl}/inbox/${encodeURIComponent(recipientAgentId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(envelope),
+    });
     if (res.status === 409) {
       let error = "";
       try {
