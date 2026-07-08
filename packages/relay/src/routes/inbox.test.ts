@@ -307,6 +307,140 @@ describe("inbox relay routes", () => {
     expect(body.gaps[0]?.expected_seq).toBe(3);
   });
 
+  async function pullBobInbox(since: number, bondedOnly = true) {
+    const bondedQuery = bondedOnly ? "" : "&bonded_only=0";
+    const challengeRes = await fetch(`${BASE_URL}/inbox/${bobId}?since=${since}${bondedQuery}`);
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, bob.secretKey);
+    return fetch(
+      `${BASE_URL}/inbox/${bobId}?since=${since}${bondedQuery}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+    );
+  }
+
+  async function purgeBobInbox(senderId: string) {
+    const senderQuery = `sender=${encodeURIComponent(senderId)}`;
+    const challengeRes = await fetch(`${BASE_URL}/inbox/${bobId}/purge?${senderQuery}`, {
+      method: "DELETE",
+    });
+    const { challenge } = (await challengeRes.json()) as { challenge: string };
+    const sig = signChallenge(challenge, bob.secretKey);
+    return fetch(
+      `${BASE_URL}/inbox/${bobId}/purge?${senderQuery}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  it("filters GET inbox to current allowlist senders by default", async () => {
+    const strangerAllowlist = signedAllowlist(bob, [aliceId, strangerId]);
+    let res = await fetch(`${BASE_URL}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(strangerAllowlist),
+    });
+    expect(res.status).toBe(204);
+
+    const strangerPost = await postEnvelope(bobId, stranger, 1);
+    expect(strangerPost.status).toBe(204);
+    const alicePost = await postEnvelope(bobId, alice, 2);
+    expect(alicePost.status).toBe(204);
+
+    const bobOnlyAlice = signedAllowlist(bob, [aliceId]);
+    res = await fetch(`${BASE_URL}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobOnlyAlice),
+    });
+    expect(res.status).toBe(204);
+
+    const filtered = await pullBobInbox(0, true);
+    expect(filtered.status).toBe(200);
+    const filteredBody = (await filtered.json()) as {
+      envelopes: Array<{ from: string }>;
+      cursor: number;
+    };
+    expect(filteredBody.envelopes.every((envelope) => envelope.from === aliceId)).toBe(true);
+    expect(filteredBody.envelopes.some((envelope) => envelope.from === strangerId)).toBe(false);
+    expect(filteredBody.cursor).toBeGreaterThan(0);
+
+    const full = await pullBobInbox(0, false);
+    expect(full.status).toBe(200);
+    const fullBody = (await full.json()) as { envelopes: Array<{ from: string }> };
+    expect(fullBody.envelopes.some((envelope) => envelope.from === strangerId)).toBe(true);
+  });
+
+  it("purges dyadic inbox rows with challenge-response auth", async () => {
+    const aliceAllowlist = signedAllowlist(alice, [bobId]);
+    const allowRes = await fetch(`${BASE_URL}/allowlist/${aliceId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(aliceAllowlist),
+    });
+    expect(allowRes.status).toBe(204);
+
+    const aliceToBob = await postEnvelope(bobId, alice, 11);
+    expect(aliceToBob.status).toBe(204);
+
+    const bobToAlice = await fetch(`${BASE_URL}/inbox/${aliceId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeEnvelope(
+        createEnvelope({
+          sender: bob,
+          recipientAgentId: aliceId,
+          type: "chat.message",
+          thread: "purge-thread",
+          seq: 1,
+          ttl: 3600,
+          payload: utf8ToBytes("reply"),
+          id: crypto.randomUUID(),
+        }),
+      ),
+    });
+    expect(bobToAlice.status).toBe(204);
+
+    const bobRows = db
+      .prepare("SELECT COUNT(*) AS count FROM inbox WHERE recipient_agent_id = ?")
+      .get(bobId) as { count: number };
+    const aliceRows = db
+      .prepare("SELECT COUNT(*) AS count FROM inbox WHERE recipient_agent_id = ?")
+      .get(aliceId) as { count: number };
+    expect(bobRows.count).toBeGreaterThan(0);
+    expect(aliceRows.count).toBeGreaterThan(0);
+
+    const purgeRes = await purgeBobInbox(aliceId);
+    expect(purgeRes.status).toBe(200);
+    const purgeBody = (await purgeRes.json()) as { deleted: number };
+    expect(purgeBody.deleted).toBeGreaterThan(0);
+
+    const bobAfter = db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM inbox WHERE recipient_agent_id = ? AND sender_agent_id = ?",
+      )
+      .get(bobId, aliceId) as { count: number };
+    const aliceAfter = db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM inbox WHERE recipient_agent_id = ? AND sender_agent_id = ?",
+      )
+      .get(aliceId, bobId) as { count: number };
+    expect(bobAfter.count).toBe(0);
+    expect(aliceAfter.count).toBe(0);
+  });
+
+  it("returns 401 for purge without challenge-response auth", async () => {
+    const res = await fetch(
+      `${BASE_URL}/inbox/${bobId}/purge?sender=${encodeURIComponent(aliceId)}`,
+      { method: "DELETE" },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 400 for purge without sender query param", async () => {
+    const challengeRes = await fetch(`${BASE_URL}/inbox/${bobId}/purge`, { method: "DELETE" });
+    expect(challengeRes.status).toBe(400);
+    const body = (await challengeRes.json()) as { error: string };
+    expect(body.error).toBe("sender_required");
+  });
+
   it("allows bidirectional alternating seq on the same thread", async () => {
     const thread = "770e8400-e29b-41d4-a716-446655440088";
     const aliceAllowlist = signedAllowlist(alice, [bobId]);
@@ -316,6 +450,15 @@ describe("inbox relay routes", () => {
       body: JSON.stringify(aliceAllowlist),
     });
     expect(allowRes.status).toBe(204);
+
+    const challengeBefore = await fetch(`${BASE_URL}/inbox/${aliceId}?since=0`);
+    const { challenge: beforeChallenge } = (await challengeBefore.json()) as { challenge: string };
+    const beforeSig = signChallenge(beforeChallenge, alice.secretKey);
+    const beforePull = await fetch(
+      `${BASE_URL}/inbox/${aliceId}?since=0&challenge=${encodeURIComponent(beforeChallenge)}&sig=${encodeURIComponent(beforeSig)}`,
+    );
+    const beforeBody = (await beforePull.json()) as { cursor: number };
+    const since = beforeBody.cursor ?? 0;
 
     const toBob = createEnvelope({
       sender: alice,
@@ -350,12 +493,12 @@ describe("inbox relay routes", () => {
       expect(postRes.status).toBe(204);
     }
 
-    const challengeRes = await fetch(`${BASE_URL}/inbox/${aliceId}?since=0`);
+    const challengeRes = await fetch(`${BASE_URL}/inbox/${aliceId}?since=${since}`);
     const { challenge } = (await challengeRes.json()) as { challenge: string };
     const sig = signChallenge(challenge, alice.secretKey);
 
     const res = await fetch(
-      `${BASE_URL}/inbox/${aliceId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+      `${BASE_URL}/inbox/${aliceId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { envelopes: Array<{ seq: number }> };

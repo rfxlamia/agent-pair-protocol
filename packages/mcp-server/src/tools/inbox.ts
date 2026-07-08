@@ -78,7 +78,9 @@ export async function handleInbox(
     cursorReset = loaded.wasReset;
   }
 
-  const pull = await ctx.relay.pullInbox(keyPair, sinceUsed);
+  const pull = await ctx.relay.pullInbox(keyPair, sinceUsed, {
+    bonded_only: !includeHistory,
+  });
 
   if (!pull.ok) {
     assertNoSecrets(pull);
