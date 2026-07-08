@@ -66,3 +66,7 @@ packages/runner-esp32/.build/
 
 # --- MCP / Cursor (session-local, not project config) ---
 .cursor/projects/
+
+# keep local until launch
+ROADMAP.md
+CLAUDE.md
