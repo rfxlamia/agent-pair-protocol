@@ -10,6 +10,7 @@
     "src/routes/allowlist.ts",
     "src/routes/card.ts",
     "src/routes/health.ts",
-    "src/routes/inbox.ts"
+    "src/routes/inbox.ts",
+    "src/routes/artifact.ts"
   ]
 }
