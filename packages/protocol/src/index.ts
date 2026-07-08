@@ -78,3 +78,7 @@ export {
   parsePeerTurnEnvelopePayload,
   parseSignalEnvelopePayload,
 } from "./session/validate.js";
+export {
+  createSessionStateMachine,
+  type SessionStateMachine,
+} from "./session/state-machine.js";

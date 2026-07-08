@@ -1,102 +1,28 @@
-import { type KeyPair, type LocalAllowlistStore, sign } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
-import type { BondStore } from "../store/bonds.js";
-import { isEphemeralBond } from "../store/bonds.js";
+import { sign } from "../crypto/sign.js";
+import { isEphemeralBond } from "./bond.js";
+import type { SessionStateMachineDeps } from "./deps.js";
+import { type SessionStore, createSessionStore } from "./store.js";
 import type {
   AcceptanceCriterion,
-  PendingQueue,
   SessionBudget,
   SessionMandate,
-} from "../store/pending.js";
-import { toolTextResult } from "../tools/util.js";
+  SessionRecord,
+  SessionStatus,
+  TestReport,
+} from "./types.js";
+import { SESSION_OPEN_TTL_MS } from "./types.js";
 import {
-  openEnvelopePayloadSchema,
-  openRejectEnvelopePayloadSchema,
-  parseEnvelopePayload,
-  peerSignedEnvelopePayloadSchema,
-  peerTestReportEnvelopePayloadSchema,
-  peerTurnEnvelopePayloadSchema,
-  signalEnvelopePayloadSchema,
-} from "./envelope-schema.js";
-import { type SessionStore, createSessionStore } from "./store.js";
-
-export { createSessionStore, type SessionStore } from "./store.js";
-
-export const SESSION_OPEN_TTL_MS = 60 * 60 * 1000;
-
-export type SessionStatus =
-  | "pending"
-  | "live"
-  | "open_rejected"
-  | "open_expired"
-  | "signed"
-  | "closed";
+  parseOpenEnvelopePayload,
+  parseOpenRejectEnvelopePayload,
+  parsePeerSignedEnvelopePayload,
+  parsePeerTestReportEnvelopePayload,
+  parsePeerTurnEnvelopePayload,
+  parseSignalEnvelopePayload,
+} from "./validate.js";
 
 /** Recipient sessions past open must not be reset by a redelivered session.open. */
 const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = ["live", "signed", "closed", "open_rejected"];
-
-export interface TestReport {
-  artifact_hash: string;
-  passed: boolean;
-  runner: string;
-  details?: string;
-}
-
-export interface PeerNegotiationMessage {
-  from: "initiator" | "recipient";
-  type: string;
-  body: string;
-  turn: number;
-}
-
-export interface SessionRecord {
-  thread: string;
-  initiator: string;
-  recipient: string;
-  role: "initiator" | "recipient";
-  status: SessionStatus;
-  goal: string;
-  acceptance: AcceptanceCriterion[];
-  budget: SessionBudget;
-  mandate: SessionMandate;
-  createdAt: number;
-  expiresAt: number;
-  rejectReason?: string;
-  turnCount: number;
-  peerMessages: PeerNegotiationMessage[];
-  lockedSections: string[];
-  testReports: Record<string, { initiator?: TestReport; recipient?: TestReport }>;
-  challenges: { initiator?: boolean; recipient?: boolean };
-  signHashes: { initiator?: string; recipient?: string };
-  ratifyApproved: { initiator?: boolean; recipient?: boolean };
-  artifactHash?: string;
-  coSignedHash?: string;
-  signatures?: Record<string, string>;
-}
-
-export interface SessionEnvelopeSender {
-  send(input: {
-    to: string;
-    type: string;
-    payload: string;
-    thread: string;
-    seq?: number;
-  }): Promise<{ ok: boolean }>;
-}
-
-export interface SessionStateMachineDeps {
-  agentId: string;
-  keyPair: KeyPair;
-  pending: PendingQueue;
-  allowlist: LocalAllowlistStore;
-  bonds: BondStore;
-  relay: SessionEnvelopeSender;
-  now?: () => number;
-}
-
-function result(data: Record<string, unknown>) {
-  return toolTextResult(data);
-}
 
 function peerFor(session: SessionRecord, agentId: string): string {
   return session.initiator === agentId ? session.recipient : session.initiator;
@@ -299,15 +225,15 @@ export function createSessionStateMachine(
   }) {
     const existing = store.get(input.thread);
     if (existing && NON_REOPENABLE_OPEN_STATUSES.includes(existing.status)) {
-      return result({
+      return {
         ok: true,
         thread: input.thread,
         status: existing.status,
-      });
+      };
     }
 
     if (existing && existing.initiator !== input.from) {
-      return result({ ok: false, error: "initiator_mismatch" });
+      return { ok: false, error: "initiator_mismatch" };
     }
 
     const preserveProgress = existing?.status === "pending";
@@ -337,19 +263,19 @@ export function createSessionStateMachine(
     const pending = ensureRecipientOpenPending(session);
     if (!pending) {
       const current = store.get(input.thread);
-      return result({
+      return {
         ok: true,
         thread: input.thread,
         status: current?.status ?? "open_expired",
-      });
+      };
     }
 
-    return result({
+    return {
       ok: true,
       thread: input.thread,
       pending_id: pending.id,
       status: "pending",
-    });
+    };
   }
 
   return {
@@ -363,7 +289,7 @@ export function createSessionStateMachine(
     }) {
       const allowed = deps.allowlist.get(deps.agentId);
       if (!allowed.includes(input.to)) {
-        return result({ ok: false, error: "recipient_not_allowed" });
+        return { ok: false, error: "recipient_not_allowed" };
       }
 
       const thread = crypto.randomUUID();
@@ -404,33 +330,33 @@ export function createSessionStateMachine(
         thread,
       });
 
-      return result({
+      return {
         ok: true,
         thread,
         status: "pending",
         expires_at: session.expiresAt,
-      });
+      };
     },
 
     handleIncomingOpen,
 
     async handleApproveOpen(input: { pending_id: string; via_human?: boolean }) {
       if (!input.via_human) {
-        return result({ ok: false, error: "human_required" });
+        return { ok: false, error: "human_required" };
       }
 
       const pending = deps.pending.get(input.pending_id);
       if (!pending || pending.kind !== "session_open") {
-        return result({ ok: false, error: "pending_not_found" });
+        return { ok: false, error: "pending_not_found" };
       }
 
       if (now() > pending.expiresAt) {
-        return result({ ok: false, error: "session_open_expired" });
+        return { ok: false, error: "session_open_expired" };
       }
 
       const session = store.get(pending.thread);
       if (!session) {
-        return result({ ok: false, error: "session_not_found" });
+        return { ok: false, error: "session_not_found" };
       }
 
       const live = upsert({ ...session, status: "live" });
@@ -441,7 +367,7 @@ export function createSessionStateMachine(
         approved_by: deps.agentId,
       });
 
-      return result({ ok: true, thread: live.thread, status: "live" });
+      return { ok: true, thread: live.thread, status: "live" };
     },
 
     async handleRejectOpen(input: {
@@ -450,17 +376,17 @@ export function createSessionStateMachine(
       via_human?: boolean;
     }) {
       if (!input.via_human) {
-        return result({ ok: false, error: "human_required" });
+        return { ok: false, error: "human_required" };
       }
 
       const pending = deps.pending.get(input.pending_id);
       if (!pending || pending.kind !== "session_open") {
-        return result({ ok: false, error: "pending_not_found" });
+        return { ok: false, error: "pending_not_found" };
       }
 
       const session = store.get(pending.thread);
       if (!session) {
-        return result({ ok: false, error: "session_not_found" });
+        return { ok: false, error: "session_not_found" };
       }
 
       const rejected = upsert({
@@ -475,11 +401,11 @@ export function createSessionStateMachine(
         reason: input.reason,
       });
 
-      return result({
+      return {
         ok: true,
         thread: rejected.thread,
         status: "open_rejected",
-      });
+      };
     },
 
     async handleExpirePendingOpens() {
@@ -519,7 +445,7 @@ export function createSessionStateMachine(
         }
       }
 
-      return result({ ok: true, expired: [...new Set(expiredThreads)] });
+      return { ok: true, expired: [...new Set(expiredThreads)] };
     },
 
     async handleIncomingEnvelope(input: {
@@ -530,18 +456,18 @@ export function createSessionStateMachine(
     }) {
       const raw = parseJsonBody<unknown>(input.payload);
       if (typeof raw === "object" && raw !== null && "error" in raw) {
-        return result({ ok: false, error: (raw as { error: string }).error });
+        return { ok: false, error: (raw as { error: string }).error };
       }
       if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-        return result({ ok: false, error: "invalid_payload" });
+        return { ok: false, error: "invalid_payload" };
       }
       const parsed = raw as Record<string, unknown>;
 
       switch (input.type) {
         case "session.open": {
-          const openPayload = parseEnvelopePayload(openEnvelopePayloadSchema, parsed);
+          const openPayload = parseOpenEnvelopePayload(parsed);
           if (!openPayload.ok) {
-            return result(openPayload);
+            return openPayload;
           }
           return handleIncomingOpen({
             thread: input.thread,
@@ -556,95 +482,92 @@ export function createSessionStateMachine(
         case "session.open_approved": {
           const found = getOrError(input.thread);
           if (!found.ok) {
-            return result(found);
+            return found;
           }
-          const openApprovedPayload = parseEnvelopePayload(signalEnvelopePayloadSchema, parsed);
+          const openApprovedPayload = parseSignalEnvelopePayload(parsed);
           if (!openApprovedPayload.ok) {
-            return result(openApprovedPayload);
+            return openApprovedPayload;
           }
           const recipient = assertRecipientSender(found.session, input.from);
           if (!recipient.ok) {
-            return result(recipient);
+            return recipient;
           }
           upsert({ ...found.session, status: "live" });
-          return result({ ok: true, thread: input.thread, status: "live" });
+          return { ok: true, thread: input.thread, status: "live" };
         }
         case "session.open_reject": {
           const found = getOrError(input.thread);
           if (!found.ok) {
-            return result(found);
+            return found;
           }
-          const openRejectPayload = parseEnvelopePayload(openRejectEnvelopePayloadSchema, parsed);
+          const openRejectPayload = parseOpenRejectEnvelopePayload(parsed);
           if (!openRejectPayload.ok) {
-            return result(openRejectPayload);
+            return openRejectPayload;
           }
           const recipient = assertRecipientSender(found.session, input.from);
           if (!recipient.ok) {
-            return result(recipient);
+            return recipient;
           }
           upsert({
             ...found.session,
             status: "open_rejected",
             rejectReason: openRejectPayload.data.reason ?? "",
           });
-          return result({
+          return {
             ok: true,
             thread: input.thread,
             status: "open_rejected",
-          });
+          };
         }
         case "session.open_expired": {
           const found = getOrError(input.thread);
           if (!found.ok) {
-            return result(found);
+            return found;
           }
-          const openExpiredPayload = parseEnvelopePayload(signalEnvelopePayloadSchema, parsed);
+          const openExpiredPayload = parseSignalEnvelopePayload(parsed);
           if (!openExpiredPayload.ok) {
-            return result(openExpiredPayload);
+            return openExpiredPayload;
           }
           const recipient = assertRecipientSender(found.session, input.from);
           if (!recipient.ok) {
-            return result(recipient);
+            return recipient;
           }
           upsert({ ...found.session, status: "open_expired" });
-          return result({
+          return {
             ok: true,
             thread: input.thread,
             status: "open_expired",
-          });
+          };
         }
         case "session.peer_challenge": {
           const found = getOrError(input.thread);
           if (!found.ok) {
-            return result(found);
+            return found;
           }
-          const challengePayload = parseEnvelopePayload(signalEnvelopePayloadSchema, parsed);
+          const challengePayload = parseSignalEnvelopePayload(parsed);
           if (!challengePayload.ok) {
-            return result(challengePayload);
+            return challengePayload;
           }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
-            return result(participant);
+            return participant;
           }
           const challenges = { ...found.session.challenges, [participant.role]: true };
           upsert({ ...found.session, challenges });
-          return result({ ok: true, thread: input.thread, type: "challenge" });
+          return { ok: true, thread: input.thread, type: "challenge" };
         }
         case "session.peer_test_report": {
           const found = getOrError(input.thread);
           if (!found.ok) {
-            return result(found);
+            return found;
           }
-          const testReportPayload = parseEnvelopePayload(
-            peerTestReportEnvelopePayloadSchema,
-            parsed,
-          );
+          const testReportPayload = parsePeerTestReportEnvelopePayload(parsed);
           if (!testReportPayload.ok) {
-            return result(testReportPayload);
+            return testReportPayload;
           }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
-            return result(participant);
+            return participant;
           }
           const { artifact_hash: artifactHash, passed, runner, details } = testReportPayload.data;
           const existing = found.session.testReports[artifactHash] ?? {};
@@ -661,20 +584,20 @@ export function createSessionStateMachine(
             },
           };
           upsert({ ...found.session, testReports });
-          return result({ ok: true, thread: input.thread, type: "test_report" });
+          return { ok: true, thread: input.thread, type: "test_report" };
         }
         case "session.peer_signed": {
           const found = getOrError(input.thread);
           if (!found.ok) {
-            return result(found);
+            return found;
           }
-          const signedPayload = parseEnvelopePayload(peerSignedEnvelopePayloadSchema, parsed);
+          const signedPayload = parsePeerSignedEnvelopePayload(parsed);
           if (!signedPayload.ok) {
-            return result(signedPayload);
+            return signedPayload;
           }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
-            return result(participant);
+            return participant;
           }
           const { artifact_hash: artifactHash } = signedPayload.data;
           const signHashes = { ...found.session.signHashes };
@@ -691,27 +614,27 @@ export function createSessionStateMachine(
           });
           const pendingRatify =
             updated.status === "signed" ? ensureRatifyPending(updated) : undefined;
-          return result({
+          return {
             ok: true,
             thread: input.thread,
             status: updated.status,
             ...(pendingRatify
               ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const }
               : {}),
-          });
+          };
         }
         case "session.peer_turn": {
           const found = getOrError(input.thread);
           if (!found.ok) {
-            return result(found);
+            return found;
           }
-          const turnPayload = parseEnvelopePayload(peerTurnEnvelopePayloadSchema, parsed);
+          const turnPayload = parsePeerTurnEnvelopePayload(parsed);
           if (!turnPayload.ok) {
-            return result(turnPayload);
+            return turnPayload;
           }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
-            return result(participant);
+            return participant;
           }
           const turnCount = turnPayload.data.turn_count ?? found.session.turnCount;
           const nextTurnCount = Math.max(found.session.turnCount, turnCount);
@@ -739,20 +662,20 @@ export function createSessionStateMachine(
             peerMessages,
             lockedSections,
           });
-          return result({ ok: true, thread: input.thread, type: "turn" });
+          return { ok: true, thread: input.thread, type: "turn" };
         }
         case "session.peer_ratified": {
           const found = getOrError(input.thread);
           if (!found.ok) {
-            return result(found);
+            return found;
           }
-          const ratifiedPayload = parseEnvelopePayload(signalEnvelopePayloadSchema, parsed);
+          const ratifiedPayload = parseSignalEnvelopePayload(parsed);
           if (!ratifiedPayload.ok) {
-            return result(ratifiedPayload);
+            return ratifiedPayload;
           }
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
-            return result(participant);
+            return participant;
           }
           const ratifyApproved = { ...found.session.ratifyApproved };
           if (participant.role === "initiator") {
@@ -763,34 +686,34 @@ export function createSessionStateMachine(
           const updated = upsert({ ...found.session, ratifyApproved });
           if (bothRatified(updated) && updated.artifactHash && updated.status !== "closed") {
             const closed = await finalizeSession(updated, updated.artifactHash);
-            return result({
+            return {
               ok: true,
               thread: input.thread,
               status: closed.status,
               co_signed_hash: closed.coSignedHash,
-            });
+            };
           }
-          return result({ ok: true, thread: input.thread, status: updated.status });
+          return { ok: true, thread: input.thread, status: updated.status };
         }
         default:
-          return result({ ok: false, error: "unsupported_envelope_type" });
+          return { ok: false, error: "unsupported_envelope_type" };
       }
     },
 
     async handleMsg(input: { thread: string; type: string; body: string }) {
       const found = getOrError(input.thread);
       if (!found.ok) {
-        return result(found);
+        return found;
       }
       const session = found.session;
       if (session.status !== "live" && session.status !== "signed") {
-        return result({ ok: false, error: "session_not_live" });
+        return { ok: false, error: "session_not_live" };
       }
 
       if (input.type === "test_report") {
         const report = parseJsonBody<TestReport>(input.body);
         if ("error" in report) {
-          return result({ ok: false, error: report.error });
+          return { ok: false, error: report.error };
         }
         const role = roleFor(session, deps.agentId);
         const existing = session.testReports[report.artifact_hash] ?? {};
@@ -809,7 +732,7 @@ export function createSessionStateMachine(
           runner: report.runner,
           details: report.details,
         });
-        return result({ ok: true, thread: input.thread, type: "test_report" });
+        return { ok: true, thread: input.thread, type: "test_report" };
       }
 
       if (input.type === "challenge") {
@@ -819,11 +742,11 @@ export function createSessionStateMachine(
         await notifyPeer(updated, "session.peer_challenge", {
           thread: updated.thread,
         });
-        return result({ ok: true, thread: input.thread, type: "challenge" });
+        return { ok: true, thread: input.thread, type: "challenge" };
       }
 
       if (!["propose", "counter", "accept"].includes(input.type)) {
-        return result({ ok: false, error: "invalid_msg_type" });
+        return { ok: false, error: "invalid_msg_type" };
       }
 
       if (session.turnCount >= session.budget.max_turns) {
@@ -837,13 +760,13 @@ export function createSessionStateMachine(
             peer,
           });
         }
-        return result({ ok: false, error: "budget_exhausted" });
+        return { ok: false, error: "budget_exhausted" };
       }
 
       if (input.type === "accept") {
         const body = parseJsonBody<{ section_id?: string }>(input.body);
         if ("error" in body || !body.section_id) {
-          return result({ ok: false, error: "invalid_accept_body" });
+          return { ok: false, error: "invalid_accept_body" };
         }
         const lockedSections = [...new Set([...session.lockedSections, body.section_id])];
         const updated = upsert({
@@ -857,12 +780,12 @@ export function createSessionStateMachine(
           msg_type: input.type,
           body: input.body,
         });
-        return result({
+        return {
           ok: true,
           thread: input.thread,
           type: input.type,
           locked_sections: lockedSections,
-        });
+        };
       }
 
       const updated = upsert({ ...session, turnCount: session.turnCount + 1 });
@@ -872,24 +795,24 @@ export function createSessionStateMachine(
         msg_type: input.type,
         body: input.body,
       });
-      return result({ ok: true, thread: input.thread, type: input.type });
+      return { ok: true, thread: input.thread, type: input.type };
     },
 
     async handleSign(input: { thread: string; artifact_hash: string }) {
       const found = getOrError(input.thread);
       if (!found.ok) {
-        return result(found);
+        return found;
       }
       const session = found.session;
       if (session.status !== "live" && session.status !== "signed") {
-        return result({ ok: false, error: "session_not_live" });
+        return { ok: false, error: "session_not_live" };
       }
 
       if (!bothChallengesFiled(session)) {
-        return result({ ok: false, error: "challenges_incomplete" });
+        return { ok: false, error: "challenges_incomplete" };
       }
       if (!bothTestReportsPass(session, input.artifact_hash)) {
-        return result({ ok: false, error: "tests_not_green" });
+        return { ok: false, error: "tests_not_green" };
       }
 
       const role = roleFor(session, deps.agentId);
@@ -908,13 +831,13 @@ export function createSessionStateMachine(
 
       const pendingRatify = updated.status === "signed" ? ensureRatifyPending(updated) : undefined;
 
-      return result({
+      return {
         ok: true,
         thread: input.thread,
         status: updated.status,
         artifact_hash: input.artifact_hash,
         ...(pendingRatify ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const } : {}),
-      });
+      };
     },
 
     async handleRatify(input: {
@@ -924,7 +847,7 @@ export function createSessionStateMachine(
       via_human?: boolean;
     }) {
       if (!input.via_human) {
-        return result({ ok: false, error: "human_required" });
+        return { ok: false, error: "human_required" };
       }
 
       let thread = input.thread;
@@ -933,28 +856,28 @@ export function createSessionStateMachine(
       if (input.pending_id) {
         const pending = deps.pending.get(input.pending_id);
         if (!pending || pending.kind !== "ratify") {
-          return result({ ok: false, error: "pending_not_found" });
+          return { ok: false, error: "pending_not_found" };
         }
         thread = pending.thread;
         artifactHash = pending.artifactHash;
       }
 
       if (!thread) {
-        return result({ ok: false, error: "thread_required" });
+        return { ok: false, error: "thread_required" };
       }
 
       const found = getOrError(thread);
       if (!found.ok) {
-        return result(found);
+        return found;
       }
       const session = found.session;
       if (session.status !== "signed" && session.status !== "closed") {
-        return result({ ok: false, error: "session_not_signed" });
+        return { ok: false, error: "session_not_signed" };
       }
 
       const hash = artifactHash ?? session.artifactHash;
       if (!hash) {
-        return result({ ok: false, error: "artifact_hash_required" });
+        return { ok: false, error: "artifact_hash_required" };
       }
 
       const role = roleFor(session, deps.agentId);
@@ -969,20 +892,20 @@ export function createSessionStateMachine(
 
       if (bothRatified(updated)) {
         const closed = await finalizeSession(updated, hash);
-        return result({
+        return {
           ok: true,
           thread: closed.thread,
           status: closed.status,
           co_signed_hash: closed.coSignedHash,
           signatures: closed.signatures,
-        });
+        };
       }
 
-      return result({
+      return {
         ok: true,
         thread: updated.thread,
         status: "awaiting_peer_ratify",
-      });
+      };
     },
 
     resolveOpenPendingId(thread: string) {
@@ -1008,7 +931,7 @@ export function createSessionStateMachine(
     async handleStatus(input: { thread: string }) {
       const found = getOrError(input.thread);
       if (!found.ok) {
-        return result(found);
+        return found;
       }
       const session = store.get(found.session.thread) ?? found.session;
       const pendingOpen =
@@ -1020,7 +943,7 @@ export function createSessionStateMachine(
           ? ensureRatifyPending(session)
           : undefined;
       const current = store.get(session.thread) ?? session;
-      return result({
+      return {
         ok: true,
         thread: current.thread,
         status: current.status,
@@ -1041,7 +964,7 @@ export function createSessionStateMachine(
           ? { pending_id: pendingOpen.id, pending_kind: "session_open" as const }
           : {}),
         ...(pendingRatify ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const } : {}),
-      });
+      };
     },
   };
 }
