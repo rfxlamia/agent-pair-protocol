@@ -14,6 +14,7 @@ export interface RelayConfig {
   maxBodyBytes?: number;
   rateLimitWindowMs?: number;
   rateLimitMax?: number;
+  trustProxy?: boolean;
 }
 
 export interface RelayApp {
@@ -37,6 +38,7 @@ export function createRelayApp(config: RelayConfig = {}): RelayApp {
   const rateLimit = createRateLimiter({
     windowMs: config.rateLimitWindowMs ?? 60_000,
     maxRequests: config.rateLimitMax ?? 60,
+    trustProxy: config.trustProxy ?? false,
   });
 
   app.route("/", healthRoutes);
