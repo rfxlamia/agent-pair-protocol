@@ -13,8 +13,7 @@ agent-pair/
 │   ├── relay/             # HTTP relay server (Hono + SQLite)
 │   ├── mcp-server/        # MCP server — entry point pengguna
 │   └── runner-esp32/      # Docker image untuk acceptance test codegen-compile
-├── docker-compose.yml     # Relay lokal
-├── deploy/                # Skrip deploy produksi
+├── docker-compose.yml     # Relay lokal / produksi
 ├── docs/                  # Dokumentasi
 └── vitest.config.ts       # Test runner root
 ```
@@ -253,7 +252,7 @@ cd packages/protocol/wasm/spake2-pake
 wasm-pack build --target nodejs --out-dir ../pkg --out-name spake2_pake
 ```
 
-**Keputusan PAKE:** RustCrypto `spake2` via WASM — bukan npm `spake2@1.0.2` (unmaintained). Lihat `SPEC.md`.
+**Keputusan PAKE:** RustCrypto `spake2` via WASM — bukan npm `spake2@1.0.2` (unmaintained). Lihat `SPEC.md` §6.
 
 ### Pairing flow
 
@@ -374,7 +373,7 @@ Tables: allowlists, envelopes, pair_sessions, challenges, artifacts.
 
 **Client identity (default, direct deploy):** TCP peer address dari koneksi socket. Header `x-forwarded-for` / `x-real-ip` **diabaikan**.
 
-**Di belakang Cloudflare Tunnel (production (behind reverse proxy)):** `docker-compose.yml` sets `AGENTPAIR_TRUST_PROXY=1`. cloudflared connects from loopback/Docker bridge and forwards `X-Forwarded-For` / `CF-Connecting-IP` with the real client address.
+**Di belakang Cloudflare Tunnel atau reverse proxy:** `docker-compose.yml` sets `AGENTPAIR_TRUST_PROXY=1`. Proxy connects from loopback/Docker bridge and forwards `X-Forwarded-For` / `CF-Connecting-IP` with the real client address.
 
 **Di belakang reverse proxy lain:** set `AGENTPAIR_TRUST_PROXY=1` (atau `true`) di environment relay. Header proxy hanya dipercaya jika peer TCP langsung berasal dari loopback atau RFC1918 (mis. nginx di Docker network). Urutan: `x-real-ip`, lalu hop pertama `x-forwarded-for`, lalu alamat socket proxy.
 
@@ -397,22 +396,17 @@ Default production (`start.ts`): 120 request / 60 detik. Bucket kadaluarsa diber
 
 ## Deployment relay produksi
 
-Relay referensi di-deploy ke VPS Anda di `/opt/agentpair/` (terpisah dari other stacks).
+Gunakan `docker-compose.yml` di root repo:
 
 ```bash
-./scripts/deploy-relay.sh
-# atau manual:
-DEPLOY_HOST=your-host AGENTPAIR_REMOTE=/opt/agentpair ./scripts/deploy-relay.sh
+docker compose build relay
+docker compose up -d relay
+curl http://127.0.0.1:3001/health
 ```
 
-Skrip:
-1. `rsync` source ke VPS
-2. `docker compose build && up -d relay`
-3. Health check lokal + `https://relay.yourdomain.com/health`
+Relay bind ke `127.0.0.1:3001` — tidak expose langsung ke internet. Untuk akses publik, letakkan reverse proxy atau Cloudflare Tunnel di depan port tersebut. `AGENTPAIR_TRUST_PROXY=1` sudah diset di compose file.
 
-Cloudflare Tunnel sudah mengarahkan `relay.yourdomain.com` → `localhost:3001`.
-
-**Constraint deploy:** Jangan sentuh `/opt/other services/` atau domain example.*.
+Set `AGENTPAIR_RELAY_URL` di MCP client ke URL HTTPS publik relay Anda (mis. `https://relay.yourdomain.com`).
 
 ---
 
@@ -422,9 +416,8 @@ Cloudflare Tunnel sudah mengarahkan `relay.yourdomain.com` → `localhost:3001`.
 |----------|-------|---------|-----------|
 | `AGENTPAIR_RELAY_URL` | mcp-server | `http://127.0.0.1:3001` | URL relay |
 | `PORT` | relay | `3001` | Port HTTP relay |
-
-
-
+| `AGENTPAIR_TRUST_PROXY` | relay | `0` (aktif di compose) | Percayai header proxy dari peer loopback/RFC1918 |
+| `AGENTPAIR_RELAY_DB` | relay | `/data/relay.db` | Path SQLite (Docker volume) |
 ---
 
 ## Konvensi kode
@@ -511,7 +504,7 @@ cd ../mcp-server && npm pack --dry-run       # harus ada dist/cli.js
 
 ## Known limitations (v0)
 
-Dari closeout review — non-blocking tapi perlu diketahui developer:
+Ringkasan keterbatasan v0 — non-blocking tapi perlu diketahui developer:
 
 | Area | Issue |
 |------|-------|
@@ -541,8 +534,5 @@ Area yang masuk akal untuk kontribusi:
 
 | Dokumen | Path |
 |---------|------|
-| RFC protokol | `SPEC.md` |
-| Spec implementasi v0 | `SPEC.md` |
-| Keputusan PAKE | `SPEC.md` |
-| Closeout plan | `SPEC.md` |
+| Spesifikasi protokol | `SPEC.md` |
 | Panduan pengguna | `docs/user-guide.md` |

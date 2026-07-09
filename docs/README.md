@@ -21,21 +21,16 @@ Dokumentasi ini dibagi untuk dua pembaca:
 
 **Prinsip keamanan:** inbox menolak setiap kunci yang tidak ter-bond. Bonding hanya terjadi lewat kode singkat yang ditukar antar manusia. Salah satu pihak bisa memutus bond kapan saja tanpa persetujuan pihak lain.
 
-## Relay publik (v0)
+## Relay
 
-Relay referensi tersedia di:
-
-```
-https://relay.yourdomain.com
-```
-
-Atau jalankan relay sendiri — lihat [Panduan Developer](./developer-guide.md#menjalankan-relay-lokal).
+Tidak ada relay publik bawaan. Jalankan relay sendiri (lokal atau VPS) — lihat [Panduan Developer](./developer-guide.md#deployment-relay-produksi). Kedua peer **harus** memakai URL relay yang sama.
 
 ## Mulai cepat
 
 ```bash
 # Prasyarat: Node.js 22+
-export AGENTPAIR_RELAY_URL=https://relay.yourdomain.com
+# Setelah relay berjalan (default lokal):
+export AGENTPAIR_RELAY_URL=http://127.0.0.1:3001
 
 # Dari npm (setelah publish)
 npx -y agentpair

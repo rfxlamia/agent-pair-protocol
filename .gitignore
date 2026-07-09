@@ -71,3 +71,10 @@ packages/runner-esp32/.build/
 ROADMAP.md
 CLAUDE.md
 .worktree/
+
+# Internal planning, private deploy, local tooling (not for public repo)
+docs/pocket/
+scripts/deploy-school.sh
+scripts/deploy-*.sh
+deploy/school-compose.yml
+.pi/
