@@ -16,6 +16,11 @@ import type { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
 import { type BondStore, FileBondStore, MemoryBondStore } from "../store/bonds.js";
 import {
+  type EnvelopeSeqStore,
+  MemoryEnvelopeSeqStore,
+  createFileEnvelopeSeqStore,
+} from "../store/envelope-seq.js";
+import {
   type InboxCursorStore,
   MemoryInboxCursorStore,
   createFileInboxCursorStore,
@@ -36,6 +41,7 @@ export interface AgentContext {
   allowlist: LocalAllowlistStore;
   bonds: BondStore;
   inboxCursor: InboxCursorStore;
+  envelopeSeq: EnvelopeSeqStore;
   pending: PendingQueue;
   sessionStore: SessionStore;
 }
@@ -62,6 +68,7 @@ export function createAgentContext(options: {
   allowlist?: LocalAllowlistStore;
   bonds?: BondStore;
   inboxCursor?: InboxCursorStore;
+  envelopeSeq?: EnvelopeSeqStore;
   pending?: PendingQueue;
   sessionStore?: SessionStore;
 }): AgentContext {
@@ -84,6 +91,11 @@ export function createAgentContext(options: {
       (useFileStores
         ? createFileInboxCursorStore({ dataDir: options.dataDir })
         : new MemoryInboxCursorStore()),
+    envelopeSeq:
+      options.envelopeSeq ??
+      (useFileStores
+        ? createFileEnvelopeSeqStore({ dataDir: options.dataDir })
+        : new MemoryEnvelopeSeqStore()),
     pending:
       options.pending ??
       (useFileStores ? createFilePendingQueue({ dataDir: options.dataDir }) : createPendingQueue()),
