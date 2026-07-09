@@ -1,14 +1,9 @@
 import {
-  type EnvelopeBody,
-  type OuterEnvelope,
-  agentIdToPublicKey,
   createOuterEnvelope,
-  decryptEnvelopePayload,
   defaultEnvelopeTtl,
-  deserializeOuterEnvelope,
   parseEnvelopeBody,
   publicKeyToAgentId,
-  verifyOuterEnvelope,
+  receiveEnvelope,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { AgentContext } from "./pair.js";
@@ -20,15 +15,14 @@ import {
   resolveRatifyPendingId,
   resolveSessionOpenPendingId,
 } from "./session.js";
-import {
-  detectClientThreadGaps,
-  nextThreadSeq,
-  recordPeerSeq,
-  recordSentSeq,
-} from "./thread-seq.js";
+import { detectClientThreadGaps, nextThreadSeq, recordSentSeq } from "./thread-seq.js";
 import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const processedEnvelopeIds = new WeakMap<AgentContext, Set<string>>();
+
+function isSupportedEnvelopeType(type: string): boolean {
+  return type === "chat.message" || type.startsWith("session.");
+}
 
 function resolveAllowedPeers(
   ctx: AgentContext,
@@ -51,27 +45,34 @@ function resolveAllowedPeers(
   return { peers: allowlist, bondsEmpty: true };
 }
 
-function filterBondedEnvelopes(
-  envelopes: OuterEnvelope[],
-  allowedPeers: string[],
+export function filterBondedWires(
+  wires: string[],
+  rowids: number[],
+  bondedPeers: Set<string>,
   includeHistory: boolean,
-): { envelopes: OuterEnvelope[]; filteredCount: number } {
+): { wires: string[]; rowids: number[]; filteredCount: number } {
   if (includeHistory) {
-    return { envelopes, filteredCount: 0 };
+    return { wires, rowids, filteredCount: 0 };
   }
-  const allowed = new Set(allowedPeers);
-  const filtered = envelopes.filter((envelope) => allowed.has(envelope.from));
+  const filteredWires: string[] = [];
+  const filteredRowids: number[] = [];
+  for (let i = 0; i < wires.length; i += 1) {
+    const wire = wires[i];
+    const rowid = rowids[i];
+    if (wire === undefined || rowid === undefined) {
+      continue;
+    }
+    const parsed = JSON.parse(wire) as { from?: string };
+    if (parsed.from !== undefined && bondedPeers.has(parsed.from)) {
+      filteredWires.push(wire);
+      filteredRowids.push(rowid);
+    }
+  }
   return {
-    envelopes: filtered,
-    filteredCount: envelopes.length - filtered.length,
+    wires: filteredWires,
+    rowids: filteredRowids,
+    filteredCount: wires.length - filteredWires.length,
   };
-}
-
-function parseOuterEnvelope(raw: OuterEnvelope | string): OuterEnvelope {
-  if (typeof raw === "string") {
-    return deserializeOuterEnvelope(raw);
-  }
-  return raw;
 }
 
 export async function handleInbox(
@@ -98,6 +99,7 @@ export async function handleInbox(
   }
 
   const { peers: bondedPeers, bondsEmpty } = resolveAllowedPeers(ctx, agentId);
+  const bondedPeerSet = new Set(bondedPeers);
 
   const pull = await ctx.relay.pullInbox(keyPair, sinceUsed, {
     bonded_only: !includeHistory,
@@ -109,71 +111,80 @@ export async function handleInbox(
     return toolTextResult(pull);
   }
 
-  const { envelopes: envelopesToProcess, filteredCount } = filterBondedEnvelopes(
-    pull.envelopes,
-    bondedPeers,
-    includeHistory,
-  );
+  const pullWires = pull.wires;
+  const pullRowids = pull.rowids;
+  const {
+    wires: wiresToProcess,
+    rowids: rowidsToProcess,
+    filteredCount,
+  } = filterBondedWires(pullWires, pullRowids, bondedPeerSet, includeHistory);
 
   const seen = processedEnvelopeIds.get(ctx) ?? new Set<string>();
   processedEnvelopeIds.set(ctx, seen);
 
   const envelopes = [];
-  let skippedUnsupported = 0;
-  for (const raw of envelopesToProcess) {
-    let outer: OuterEnvelope;
-    let body: EnvelopeBody;
-    try {
-      outer = parseOuterEnvelope(raw);
-      body = parseEnvelopeBody(outer);
-    } catch {
-      skippedUnsupported += 1;
+  const rejected: Array<{ id?: string; error: string; cursor?: number }> = [];
+
+  for (let i = 0; i < wiresToProcess.length; i += 1) {
+    const wire = wiresToProcess[i];
+    const rowid = rowidsToProcess[i];
+    if (wire === undefined || rowid === undefined) {
       continue;
     }
 
-    recordPeerSeq(ctx, body.thread, body.seq);
+    const received = await receiveEnvelope(wire, agentId, {
+      isBonded: (from) => bondedPeerSet.has(from),
+      selfKeyPair: keyPair,
+      seqStore: ctx.envelopeSeq,
+      dispatch: async (type) => {
+        if (!isSupportedEnvelopeType(type)) {
+          return { ok: false as const, error: "unsupported_envelope_type" };
+        }
+        return { ok: true as const };
+      },
+    });
 
-    const senderPublicKey = agentIdToPublicKey(body.from);
-    const verified = verifyOuterEnvelope(outer, senderPublicKey);
+    if (!received.ok) {
+      rejected.push({
+        ...(received.body ? { id: received.body.id } : {}),
+        error: received.error,
+        cursor: rowid,
+      });
+      continue;
+    }
 
-    let payload = body.payload;
+    const { body, outer, plaintext } = received;
+    const payload = new TextDecoder().decode(plaintext);
+
     let pendingId: string | undefined;
     let sessionStatus: string | undefined;
-    if (verified) {
-      try {
-        const plaintext = decryptEnvelopePayload(body, keyPair, senderPublicKey);
-        payload = new TextDecoder().decode(plaintext);
 
-        if (body.type.startsWith("session.") && !seen.has(body.id)) {
-          const processed = await processSessionInboxEnvelope(ctx, {
-            from: body.from,
-            type: body.type,
-            thread: body.thread,
-            payload,
-          });
-          const effect = processed.structuredContent;
-          if (effect.ok === true) {
-            seen.add(body.id);
-          }
-          if (effect.ok === true && typeof effect.pending_id === "string") {
-            pendingId = effect.pending_id;
-          }
-        }
-
-        if (body.type === "session.open" && !pendingId) {
-          pendingId = await resolveSessionOpenPendingId(ctx, body.thread);
-        }
-
-        if (body.type === "session.peer_signed" && !pendingId) {
-          pendingId = await resolveRatifyPendingId(ctx, body.thread);
-        }
-
-        if (body.type === "session.open") {
-          sessionStatus = peekSessionOpenStatus(ctx, body.thread);
-        }
-      } catch {
-        // Keep wire ciphertext if decryption fails.
+    if (body.type.startsWith("session.") && !seen.has(body.id)) {
+      const processed = await processSessionInboxEnvelope(ctx, {
+        from: body.from,
+        type: body.type,
+        thread: body.thread,
+        payload,
+      });
+      const effect = processed.structuredContent;
+      if (effect.ok === true) {
+        seen.add(body.id);
       }
+      if (effect.ok === true && typeof effect.pending_id === "string") {
+        pendingId = effect.pending_id;
+      }
+    }
+
+    if (body.type === "session.open" && !pendingId) {
+      pendingId = await resolveSessionOpenPendingId(ctx, body.thread);
+    }
+
+    if (body.type === "session.peer_signed" && !pendingId) {
+      pendingId = await resolveRatifyPendingId(ctx, body.thread);
+    }
+
+    if (body.type === "session.open") {
+      sessionStatus = peekSessionOpenStatus(ctx, body.thread);
     }
 
     envelopes.push({
@@ -186,7 +197,7 @@ export async function handleInbox(
       ttl: body.ttl,
       payload,
       sig: outer.sig,
-      verified,
+      verified: true,
       ...(pendingId ? { pending_id: pendingId } : {}),
       ...(sessionStatus ? { session_status: sessionStatus } : {}),
     });
@@ -196,6 +207,7 @@ export async function handleInbox(
   const cursor = pull.cursor ?? sinceUsed;
   ctx.inboxCursor.set(cursor);
   await ctx.inboxCursor.flush();
+  await ctx.envelopeSeq.flush();
   const relayFilteredCount = pull.filtered_count ?? 0;
   const totalFilteredCount = relayFilteredCount + filteredCount;
 
@@ -210,11 +222,11 @@ export async function handleInbox(
     ...(filteredCount > 0 ? { mcp_filtered_count: filteredCount } : {}),
     bonded_peers: bondedPeers,
     envelopes,
+    ...(rejected.length > 0 ? { rejected } : {}),
     ...(bondsEmpty ? { bonds_empty: true } : {}),
     ...(cursorReset ? { cursor_reset: true } : {}),
     ...(gapWarnings.length > 0 ? { gap_warnings: gapWarnings } : {}),
     ...(pull.relay_gaps && pull.relay_gaps.length > 0 ? { relay_gaps: pull.relay_gaps } : {}),
-    ...(skippedUnsupported > 0 ? { skipped_unsupported: skippedUnsupported } : {}),
   };
   assertNoSecrets(result);
   return toolTextResult(result);
@@ -251,6 +263,7 @@ export async function handleSend(
     ttl: defaultEnvelopeTtl(input.ttl),
     payload: utf8ToBytes(input.payload),
   });
+
   const body = parseEnvelopeBody(outer);
 
   await ctx.relay.sendEnvelope(input.to, outer);

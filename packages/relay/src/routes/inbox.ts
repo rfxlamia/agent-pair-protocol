@@ -411,8 +411,10 @@ export function createInboxRoutes(
       })),
     );
     const envelopes = visibleRows.map((row) => JSON.parse(row.envelope_json));
+    const rowids = visibleRows.map((row) => row.rowid);
     return c.json({
       envelopes,
+      rowids,
       cursor,
       filtered_count: filteredCount,
       ...(gaps.length > 0 ? { gaps } : {}),

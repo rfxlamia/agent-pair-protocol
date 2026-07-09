@@ -5,7 +5,6 @@ import {
   type KeyPair,
   type OuterEnvelope,
   createOuterEnvelope,
-  defaultEnvelopeTtl,
   generateKeyPair,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
@@ -17,25 +16,35 @@ import { MemoryBondStore } from "../store/bonds.js";
 import { MemoryInboxCursorStore } from "../store/inbox-cursor.js";
 import { createKeyStore } from "../store/keys.js";
 import { createPendingQueue } from "../store/pending.js";
-import { handleInbox, handleSend } from "./inbox.js";
+import { filterBondedWires, handleInbox, handleSend } from "./inbox.js";
 import { createAgentContext } from "./pair.js";
+import { detectClientThreadGaps } from "./thread-seq.js";
 
 function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
 
-class StubInboxRelay {
+type PullRow = { rowid: number; wire: string };
+
+type StubResponse = {
+  rows?: PullRow[];
+  envelopes?: OuterEnvelope[];
+  cursor?: number;
+};
+
+class StubInboxRelayWithRowids {
   pulls: number[] = [];
   pullBondedOnly: boolean[] = [];
   pullSenders: Array<string[] | undefined> = [];
   private pullIndex = 0;
-  responses: Array<{
-    envelopes: OuterEnvelope[];
-    cursor?: number;
-  }>;
+  responses: Array<{ rows: PullRow[]; cursor: number; envelopes?: OuterEnvelope[] }>;
 
-  constructor(responses: Array<{ envelopes: OuterEnvelope[]; cursor?: number }>) {
-    this.responses = responses;
+  constructor(responses: StubResponse[] = []) {
+    this.responses = responses.map((response, index) => ({
+      rows:
+        response.rows ?? envelopesToRows(response.envelopes ?? [], response.cursor ?? index + 1),
+      cursor: response.cursor ?? 0,
+    }));
   }
 
   async pullInbox(
@@ -46,19 +55,42 @@ class StubInboxRelay {
     this.pulls.push(since);
     this.pullBondedOnly.push(options.bonded_only !== false);
     this.pullSenders.push(options.senders);
-    const next = this.responses[this.pullIndex] ?? { envelopes: [], cursor: since };
+    const raw = this.responses[this.pullIndex] ?? { rows: [], cursor: since };
     this.pullIndex += 1;
-    let envelopes = next.envelopes;
-    if (options.senders && options.senders.length > 0) {
+    const next = {
+      rows: raw.rows ?? envelopesToRows((raw as StubResponse).envelopes ?? [], raw.cursor ?? since),
+      cursor: raw.cursor ?? since,
+    };
+    let rows = next.rows;
+    if (options.senders?.length) {
       const allowed = new Set(options.senders);
-      envelopes = envelopes.filter((envelope) => allowed.has(envelope.from));
+      rows = rows.filter((row) => {
+        const parsed = JSON.parse(row.wire) as { from?: string };
+        return parsed.from !== undefined && allowed.has(parsed.from);
+      });
     }
     return {
       ok: true as const,
-      envelopes,
+      wires: rows.map((row) => row.wire),
+      rowids: rows.map((row) => row.rowid),
       cursor: next.cursor,
     };
   }
+}
+
+function envelopesToRows(envelopes: OuterEnvelope[], cursor: number): PullRow[] {
+  return envelopes.map((envelope, index) => ({
+    rowid: index + 1,
+    wire: wireFromEnvelope(envelope),
+  }));
+}
+
+function wireFromEnvelope(outer: OuterEnvelope): string {
+  return JSON.stringify(outer);
+}
+
+function futureTtl(seconds = 3600): number {
+  return Math.floor(Date.now() / 1000) + seconds;
 }
 
 function makeOuterEnvelope(
@@ -73,16 +105,47 @@ function makeOuterEnvelope(
     type: "chat.message",
     thread: `thread-${seq}`,
     seq,
-    ttl: defaultEnvelopeTtl(),
+    ttl: futureTtl(),
     payload: new TextEncoder().encode(body),
   });
 }
+
+function wireOver65536Bytes(sender: KeyPair, recipientId: string): string {
+  const base = wireFromEnvelope(
+    createOuterEnvelope({
+      sender,
+      recipientAgentId: recipientId,
+      type: "chat.message",
+      thread: "thread-big",
+      seq: 1,
+      ttl: futureTtl(),
+      payload: new TextEncoder().encode("x"),
+    }),
+  );
+  const obj = JSON.parse(base) as Record<string, unknown>;
+  obj._pad = "p".repeat(70_000);
+  return JSON.stringify(obj);
+}
+
+it("filterBondedWires parses outer from only (no full receiveEnvelope)", () => {
+  const bonded = new Set([`ed25519:${"a".repeat(43)}`]);
+  const bondedWire = JSON.stringify({ v: 1, from: `ed25519:${"a".repeat(43)}`, blob: "x" });
+  const strangerWire = JSON.stringify({ v: 1, from: `ed25519:${"b".repeat(43)}`, blob: "y" });
+  const { wires, filteredCount } = filterBondedWires(
+    [bondedWire, strangerWire],
+    [1, 2],
+    bonded,
+    false,
+  );
+  expect(wires).toEqual([bondedWire]);
+  expect(filteredCount).toBe(1);
+});
 
 describe("inbox hygiene — cursor persistence and bonded filter", () => {
   it("persists cursor across new AgentContext with same dataDir", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agentpair-inbox-cursor-"));
     try {
-      const relay = new StubInboxRelay([{ envelopes: [], cursor: 42 }]);
+      const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 42 }]);
       const ctx1 = createAgentContext({
         keyStore: createKeyStore({ keyPath: join(dir, "keys.json") }),
         relay: relay as unknown as HttpRelayClient,
@@ -123,7 +186,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const peer = generateKeyPair();
     const peerId = publicKeyToAgentId(peer.publicKey);
 
-    const relay = new StubInboxRelay([
+    const relay = new StubInboxRelayWithRowids([
       { envelopes: [], cursor: 10 },
       { envelopes: [], cursor: 11 },
     ]);
@@ -140,11 +203,15 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
     relay.responses[0] = {
-      envelopes: [makeOuterEnvelope(peer, recipientId, "first", 1)],
+      rows: [
+        { rowid: 10, wire: wireFromEnvelope(makeOuterEnvelope(peer, recipientId, "first", 1)) },
+      ],
       cursor: 10,
     };
     relay.responses[1] = {
-      envelopes: [makeOuterEnvelope(peer, recipientId, "second", 2)],
+      rows: [
+        { rowid: 11, wire: wireFromEnvelope(makeOuterEnvelope(peer, recipientId, "second", 2)) },
+      ],
       cursor: 11,
     };
 
@@ -179,7 +246,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const currentPeerId = publicKeyToAgentId(currentPeer.publicKey);
     const stalePeerId = publicKeyToAgentId(stalePeer.publicKey);
 
-    const relay = new StubInboxRelay([{ envelopes: [], cursor: 20 }]);
+    const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 20 }]);
     const bonds = new MemoryBondStore();
     const ctx = createAgentContext({
       keyStore: createKeyStore(),
@@ -199,7 +266,10 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       makeOuterEnvelope(currentPeer, recipientId, "current-1", 1),
       makeOuterEnvelope(currentPeer, recipientId, "current-2", 2),
     ];
-    relay.responses[0] = { envelopes: [...staleEnvelopes, ...currentEnvelopes], cursor: 20 };
+    relay.responses[0] = {
+      rows: envelopesToRows([...staleEnvelopes, ...currentEnvelopes], 20),
+      cursor: 20,
+    };
 
     bonds.add(recipientId, {
       peer: currentPeerId,
@@ -225,7 +295,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const stalePeer = generateKeyPair();
     const currentPeerId = publicKeyToAgentId(currentPeer.publicKey);
 
-    const relay = new StubInboxRelay([{ envelopes: [], cursor: 20 }]);
+    const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 20 }]);
     const bonds = new MemoryBondStore();
     const ctx = createAgentContext({
       keyStore: createKeyStore(),
@@ -245,7 +315,10 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       makeOuterEnvelope(currentPeer, recipientId, "current-1", 1),
       makeOuterEnvelope(currentPeer, recipientId, "current-2", 2),
     ];
-    relay.responses[0] = { envelopes: [...staleEnvelopes, ...currentEnvelopes], cursor: 20 };
+    relay.responses[0] = {
+      rows: envelopesToRows([...staleEnvelopes, ...currentEnvelopes], 20),
+      cursor: 20,
+    };
 
     bonds.add(recipientId, {
       peer: currentPeerId,
@@ -259,15 +332,16 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     if (!result.ok) {
       return;
     }
-    expect(result.envelopes).toHaveLength(20);
+    expect(result.envelopes).toHaveLength(2);
+    expect(result.rejected).toHaveLength(18);
     expect(result.filtered_count).toBe(0);
-    expect(result.new_count).toBe(20);
+    expect(result.new_count).toBe(2);
   });
 
   it("passes bonded_only=false to relay when include_history is true", async () => {
     const peer = generateKeyPair();
     const peerId = publicKeyToAgentId(peer.publicKey);
-    const relay = new StubInboxRelay([{ envelopes: [], cursor: 0 }]);
+    const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 0 }]);
     const bonds = new MemoryBondStore();
     const ctx = createAgentContext({
       keyStore: createKeyStore(),
@@ -280,7 +354,9 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
     relay.responses[0] = {
-      envelopes: [makeOuterEnvelope(peer, recipientId, "history", 1)],
+      rows: [
+        { rowid: 1, wire: wireFromEnvelope(makeOuterEnvelope(peer, recipientId, "history", 1)) },
+      ],
       cursor: 1,
     };
     bonds.add(recipientId, {
@@ -300,7 +376,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const bondedPeerId = publicKeyToAgentId(bondedPeer.publicKey);
     const extraPeerId = publicKeyToAgentId(extraPeer.publicKey);
 
-    const relay = new StubInboxRelay([{ envelopes: [], cursor: 1 }]);
+    const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 1 }]);
     const allowlist = new MemoryAllowlistStore();
     const bonds = new MemoryBondStore();
     const ctx = createAgentContext({
@@ -314,10 +390,13 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
     relay.responses[0] = {
-      envelopes: [
-        makeOuterEnvelope(bondedPeer, recipientId, "bonded", 1),
-        makeOuterEnvelope(extraPeer, recipientId, "extra", 2),
-      ],
+      rows: envelopesToRows(
+        [
+          makeOuterEnvelope(bondedPeer, recipientId, "bonded", 1),
+          makeOuterEnvelope(extraPeer, recipientId, "extra", 2),
+        ],
+        2,
+      ),
       cursor: 2,
     };
 
@@ -346,7 +425,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const stranger = generateKeyPair();
     const peerId = publicKeyToAgentId(peer.publicKey);
 
-    const relay = new StubInboxRelay([{ envelopes: [], cursor: 2 }]);
+    const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 2 }]);
     const allowlist = new MemoryAllowlistStore();
     const ctx = createAgentContext({
       keyStore: createKeyStore(),
@@ -359,10 +438,13 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
     relay.responses[0] = {
-      envelopes: [
-        makeOuterEnvelope(peer, recipientId, "allowed", 1),
-        makeOuterEnvelope(stranger, recipientId, "blocked", 2),
-      ],
+      rows: envelopesToRows(
+        [
+          makeOuterEnvelope(peer, recipientId, "allowed", 1),
+          makeOuterEnvelope(stranger, recipientId, "blocked", 2),
+        ],
+        2,
+      ),
       cursor: 2,
     };
 
@@ -384,7 +466,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       const cursorPath = join(dir, "inbox-cursor.json");
       await writeFile(cursorPath, "{not-json", "utf8");
 
-      const relay = new StubInboxRelay([{ envelopes: [], cursor: 3 }]);
+      const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 3 }]);
       const ctx = createAgentContext({
         keyStore: createKeyStore({ keyPath: join(dir, "keys.json") }),
         relay: relay as unknown as HttpRelayClient,
@@ -408,7 +490,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
   it("honors explicit since: 0 over persisted cursor", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agentpair-inbox-cursor-explicit-"));
     try {
-      const relay = new StubInboxRelay([{ envelopes: [], cursor: 7 }]);
+      const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 7 }]);
       const ctx1 = createAgentContext({
         keyStore: createKeyStore({ keyPath: join(dir, "keys.json") }),
         relay: relay as unknown as HttpRelayClient,
@@ -441,7 +523,7 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
   it("unwraps v1 outer envelopes to flat response with sig from outer", async () => {
     const peer = generateKeyPair();
     const peerId = publicKeyToAgentId(peer.publicKey);
-    const relay = new StubInboxRelay([{ envelopes: [], cursor: 1 }]);
+    const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 1 }]);
     const bonds = new MemoryBondStore();
     const ctx = createAgentContext({
       keyStore: createKeyStore(),
@@ -454,7 +536,7 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
     const outer = makeOuterEnvelope(peer, recipientId, "hello-v1", 1);
-    relay.responses[0] = { envelopes: [outer], cursor: 1 };
+    relay.responses[0] = { rows: [{ rowid: 1, wire: wireFromEnvelope(outer) }], cursor: 1 };
 
     bonds.add(recipientId, {
       peer: peerId,
@@ -476,10 +558,10 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     expect(item?.from).toBe(peerId);
   });
 
-  it("skips v0 flat wire with skipped_unsupported and no side effects", async () => {
+  it("rejects v0 flat wire in rejected[] (not skipped_unsupported)", async () => {
     const peer = generateKeyPair();
     const peerId = publicKeyToAgentId(peer.publicKey);
-    const relay = new StubInboxRelay([{ envelopes: [], cursor: 1 }]);
+    const relay = new StubInboxRelayWithRowids();
     const bonds = new MemoryBondStore();
     const ctx = createAgentContext({
       keyStore: createKeyStore(),
@@ -491,18 +573,18 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     });
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
-    const v0Flat = {
+    const v0Wire = JSON.stringify({
       id: crypto.randomUUID(),
       from: peerId,
       to: recipientId,
       type: "chat.message",
       thread: "v0-stale-thread",
       seq: 99,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: "x",
       sig: "fake",
-    } as unknown as OuterEnvelope;
-    relay.responses[0] = { envelopes: [v0Flat], cursor: 1 };
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire: v0Wire }], cursor: 1 }];
 
     bonds.add(recipientId, {
       peer: peerId,
@@ -517,15 +599,22 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
       return;
     }
     expect(result.envelopes).toHaveLength(0);
-    expect(result.skipped_unsupported).toBe(1);
-    expect(result.gap_warnings).toBeUndefined();
+    expect(result.rejected).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          error: expect.stringMatching(/unsupported_version|invalid_json/),
+          cursor: 1,
+        }),
+      ]),
+    );
+    expect(result).not.toHaveProperty("skipped_unsupported");
     expect(result.new_count).toBe(0);
   });
 
-  it("returns v1 envelopes when mixed with skipped v0 rows", async () => {
+  it("accepts v1 when mixed with rejected v0 row", async () => {
     const peer = generateKeyPair();
     const peerId = publicKeyToAgentId(peer.publicKey);
-    const relay = new StubInboxRelay([{ envelopes: [], cursor: 2 }]);
+    const relay = new StubInboxRelayWithRowids([{ envelopes: [], cursor: 2 }]);
     const bonds = new MemoryBondStore();
     const ctx = createAgentContext({
       keyStore: createKeyStore(),
@@ -537,19 +626,25 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     });
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
-    const v0Flat = {
+    const v0Wire = JSON.stringify({
       id: crypto.randomUUID(),
       from: peerId,
       to: recipientId,
       type: "chat.message",
       thread: "v0-stale-thread",
       seq: 99,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: "x",
       sig: "fake",
-    } as unknown as OuterEnvelope;
+    });
     const v1 = makeOuterEnvelope(peer, recipientId, "still-here", 1);
-    relay.responses[0] = { envelopes: [v0Flat, v1], cursor: 2 };
+    relay.responses[0] = {
+      rows: [
+        { rowid: 1, wire: v0Wire },
+        { rowid: 2, wire: wireFromEnvelope(v1) },
+      ],
+      cursor: 2,
+    };
 
     bonds.add(recipientId, {
       peer: peerId,
@@ -564,8 +659,218 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
       return;
     }
     expect(result.envelopes).toHaveLength(1);
+    expect(result.rejected).toHaveLength(1);
     expect(result.envelopes[0]?.payload).toBe("still-here");
-    expect(result.skipped_unsupported).toBe(1);
+    expect(result).not.toHaveProperty("skipped_unsupported");
+  });
+});
+
+describe("inbox receiveEnvelope wiring (M1.2 §4.3)", () => {
+  it("mixed batch: 2 accepted, 1 stale_seq in rejected[], cursor advances", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agentpair-inbox-rejected-"));
+    try {
+      const peer = generateKeyPair();
+      const peerId = publicKeyToAgentId(peer.publicKey);
+      const relay = new StubInboxRelayWithRowids();
+      const ctx = createAgentContext({
+        keyStore: createKeyStore({ keyPath: join(dir, "keys.json") }),
+        relay: relay as unknown as HttpRelayClient,
+        bonds: new MemoryBondStore(),
+        allowlist: new MemoryAllowlistStore(),
+        pending: createPendingQueue(),
+        dataDir: dir,
+      });
+      const recipientKeys = await ctx.keyStore.loadOrCreate();
+      const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
+      ctx.bonds.add(recipientId, {
+        peer: peerId,
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+        profiles: ["core/1"],
+      });
+
+      relay.responses = [
+        {
+          rows: [
+            { rowid: 1, wire: wireFromEnvelope(makeOuterEnvelope(peer, recipientId, "ok-1", 1)) },
+            { rowid: 2, wire: wireFromEnvelope(makeOuterEnvelope(peer, recipientId, "stale", 1)) },
+            { rowid: 3, wire: wireFromEnvelope(makeOuterEnvelope(peer, recipientId, "ok-2", 2)) },
+          ],
+          cursor: 3,
+        },
+      ];
+
+      const result = structured(await handleInbox(ctx, { since: 0 }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+
+      expect(result.envelopes).toHaveLength(2);
+      expect(result.rejected).toEqual(
+        expect.arrayContaining([expect.objectContaining({ error: "stale_seq", cursor: 2 })]),
+      );
+      expect(result.cursor).toBe(3);
+      expect(result).not.toHaveProperty("skippedUnsupported");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("invalid_json → rejected[], not fatal pull error", async () => {
+    const peer = generateKeyPair();
+    const peerId = publicKeyToAgentId(peer.publicKey);
+    const relay = new StubInboxRelayWithRowids();
+    const bonds = new MemoryBondStore();
+    const ctx = createAgentContext({
+      keyStore: createKeyStore(),
+      relay: relay as unknown as HttpRelayClient,
+      bonds,
+      allowlist: new MemoryAllowlistStore(),
+      pending: createPendingQueue(),
+      inboxCursor: new MemoryInboxCursorStore(),
+    });
+    const recipientKeys = await ctx.keyStore.loadOrCreate();
+    const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
+    bonds.add(recipientId, {
+      peer: peerId,
+      scope: ["session.negotiate"],
+      mode: "bonded_contact",
+      profiles: ["core/1"],
+    });
+
+    relay.responses = [
+      {
+        rows: [
+          {
+            rowid: 9,
+            wire: JSON.stringify({
+              v: 1,
+              from: peerId,
+              to: recipientId,
+              blob: Buffer.from("not-json", "utf8").toString("base64url"),
+              sig: "a".repeat(86),
+            }),
+          },
+        ],
+        cursor: 9,
+      },
+    ];
+
+    const result = structured(await handleInbox(ctx, {}));
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.envelopes).toHaveLength(0);
+    expect(result.rejected).toEqual([{ error: "invalid_json", cursor: 9 }]);
+    expect(result.rejected?.[0]?.id).toBeUndefined();
+  });
+
+  it("envelope_too_large → rejected[{ error, cursor }], id omitted", async () => {
+    const peer = generateKeyPair();
+    const peerId = publicKeyToAgentId(peer.publicKey);
+    const relay = new StubInboxRelayWithRowids();
+    const bonds = new MemoryBondStore();
+    const ctx = createAgentContext({
+      keyStore: createKeyStore(),
+      relay: relay as unknown as HttpRelayClient,
+      bonds,
+      allowlist: new MemoryAllowlistStore(),
+      pending: createPendingQueue(),
+      inboxCursor: new MemoryInboxCursorStore(),
+    });
+    const recipientKeys = await ctx.keyStore.loadOrCreate();
+    const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
+    bonds.add(recipientId, {
+      peer: peerId,
+      scope: ["session.negotiate"],
+      mode: "bonded_contact",
+      profiles: ["core/1"],
+    });
+
+    relay.responses = [
+      { rows: [{ rowid: 42, wire: wireOver65536Bytes(peer, recipientId) }], cursor: 42 },
+    ];
+
+    const result = structured(await handleInbox(ctx, {}));
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.rejected).toEqual([{ error: "envelope_too_large", cursor: 42 }]);
+    expect(result.rejected?.[0]?.id).toBeUndefined();
+  });
+
+  it("does not populate inbound gap state on receive path", async () => {
+    const peer = generateKeyPair();
+    const peerId = publicKeyToAgentId(peer.publicKey);
+    const relay = new StubInboxRelayWithRowids();
+    const bonds = new MemoryBondStore();
+    const ctx = createAgentContext({
+      keyStore: createKeyStore(),
+      relay: relay as unknown as HttpRelayClient,
+      bonds,
+      allowlist: new MemoryAllowlistStore(),
+      pending: createPendingQueue(),
+      inboxCursor: new MemoryInboxCursorStore(),
+    });
+    const recipientKeys = await ctx.keyStore.loadOrCreate();
+    const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
+    bonds.add(recipientId, {
+      peer: peerId,
+      scope: ["session.negotiate"],
+      mode: "bonded_contact",
+      profiles: ["core/1"],
+    });
+    relay.responses = [
+      {
+        rows: [{ rowid: 1, wire: wireFromEnvelope(makeOuterEnvelope(peer, recipientId, "x", 1)) }],
+        cursor: 1,
+      },
+    ];
+
+    await handleInbox(ctx, {});
+    expect(detectClientThreadGaps(ctx)).toEqual([]);
+  });
+
+  it("include_history unbonded → recipient_not_allowed in rejected[]", async () => {
+    const stranger = generateKeyPair();
+    const strangerId = publicKeyToAgentId(stranger.publicKey);
+    const relay = new StubInboxRelayWithRowids();
+    const bonds = new MemoryBondStore();
+    const ctx = createAgentContext({
+      keyStore: createKeyStore(),
+      relay: relay as unknown as HttpRelayClient,
+      bonds,
+      allowlist: new MemoryAllowlistStore(),
+      pending: createPendingQueue(),
+      inboxCursor: new MemoryInboxCursorStore(),
+    });
+    const recipientKeys = await ctx.keyStore.loadOrCreate();
+    const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
+
+    relay.responses = [
+      {
+        rows: [
+          { rowid: 1, wire: wireFromEnvelope(makeOuterEnvelope(stranger, recipientId, "x", 1)) },
+        ],
+        cursor: 1,
+      },
+    ];
+
+    const result = structured(await handleInbox(ctx, { include_history: true }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.envelopes).toHaveLength(0);
+    expect(result.rejected).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ error: "recipient_not_allowed", cursor: 1 }),
+      ]),
+    );
+    expect(relay.pullBondedOnly).toEqual([false]);
   });
 });
 

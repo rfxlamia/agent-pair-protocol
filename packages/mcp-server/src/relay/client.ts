@@ -2,7 +2,6 @@ import {
   type KeyPair,
   type OuterEnvelope,
   type PairingRelayClient,
-  deserializeOuterEnvelope,
   publicKeyToAgentId,
   serializeOuterEnvelope,
   sign,
@@ -148,8 +147,9 @@ export class HttpRelayClient implements PairingRelayClient {
   ): Promise<
     | {
         ok: true;
-        envelopes: OuterEnvelope[];
-        cursor?: number;
+        wires: string[];
+        rowids: number[];
+        cursor: number;
         relay_gaps?: Array<{
           thread: string;
           last_good_seq: number;
@@ -185,6 +185,7 @@ export class HttpRelayClient implements PairingRelayClient {
 
     const payload = (await pullRes.json()) as {
       envelopes?: Array<string | Record<string, unknown>>;
+      rowids?: number[];
       cursor?: number;
       gaps?: Array<{
         thread: string;
@@ -193,19 +194,14 @@ export class HttpRelayClient implements PairingRelayClient {
       }>;
       filtered_count?: number;
     };
-    const envelopes: OuterEnvelope[] = [];
-    for (const raw of payload.envelopes ?? []) {
-      try {
-        const serialized = typeof raw === "string" ? raw : JSON.stringify(raw);
-        envelopes.push(deserializeOuterEnvelope(serialized));
-      } catch {
-        return { ok: false, error: "invalid_outer_envelope" };
-      }
-    }
+    const wires = (payload.envelopes ?? []).map((raw) =>
+      typeof raw === "string" ? raw : JSON.stringify(raw),
+    );
     return {
       ok: true,
-      envelopes,
-      cursor: payload.cursor,
+      wires,
+      rowids: payload.rowids ?? [],
+      cursor: payload.cursor ?? since,
       relay_gaps: payload.gaps,
       filtered_count: payload.filtered_count,
     };

@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { init as initPake } from "@agentpair/protocol";
 import {
   type EnvelopeBody,
+  type OuterEnvelope,
   agentIdToPublicKey,
   decryptEnvelopePayload,
+  deserializeOuterEnvelope,
   parseEnvelopeBody,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
@@ -140,7 +142,13 @@ export async function syncInboxes(agents: AgentContext[]): Promise<void> {
       throw new Error(`inbox pull failed: ${pull.error}`);
     }
 
-    for (const outer of pull.envelopes) {
+    for (const wire of pull.wires) {
+      let outer: OuterEnvelope;
+      try {
+        outer = deserializeOuterEnvelope(wire);
+      } catch {
+        continue;
+      }
       let body: EnvelopeBody;
       try {
         body = parseEnvelopeBody(outer);

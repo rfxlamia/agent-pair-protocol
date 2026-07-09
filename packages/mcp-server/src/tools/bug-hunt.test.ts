@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createOuterEnvelope,
+  defaultEnvelopeTtl,
+  deserializeOuterEnvelope,
   generateKeyPair,
   init as initPake,
   parseEnvelopeBody,
@@ -112,7 +114,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
       type: "chat.message",
       thread: "thread-verify",
       seq: 1,
-      ttl: 3600,
+      ttl: defaultEnvelopeTtl(),
       payload: new TextEncoder().encode("hello"),
     });
 
@@ -157,7 +159,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
         return new Response(JSON.stringify({ challenge }), { status: 401 });
       }
       if (url.includes("challenge=") && url.includes("sig=")) {
-        return new Response(JSON.stringify({ envelopes: [wire], cursor: 1 }), {
+        return new Response(JSON.stringify({ envelopes: [wire], rowids: [1], cursor: 1 }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -172,8 +174,13 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
       if (!pull.ok) {
         return;
       }
-      expect(pull.envelopes).toHaveLength(1);
-      const pulled = pull.envelopes[0];
+      expect(pull.wires).toHaveLength(1);
+      expect(pull.rowids).toEqual([1]);
+      const wire = pull.wires[0];
+      if (!wire) {
+        return;
+      }
+      const pulled = deserializeOuterEnvelope(wire);
       expect(pulled).toEqual(outer);
       if (!pulled) {
         return;
@@ -352,18 +359,18 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     const inboxBefore = await bob.relay.pullInbox(bobKeys, 0, { bonded_only: false });
     expect(inboxBefore.ok).toBe(true);
     if (inboxBefore.ok) {
-      const revokeNotice = inboxBefore.envelopes.find((outer) => {
+      const revokeNotice = inboxBefore.wires.find((wire) => {
         try {
-          return parseEnvelopeBody(outer).type === "revoke.notice";
+          return parseEnvelopeBody(deserializeOuterEnvelope(wire)).type === "revoke.notice";
         } catch {
           return false;
         }
       });
       expect(revokeNotice).toBeDefined();
       expect(
-        inboxBefore.envelopes.some((outer) => {
+        inboxBefore.wires.some((wire) => {
           try {
-            const body = parseEnvelopeBody(outer);
+            const body = parseEnvelopeBody(deserializeOuterEnvelope(wire));
             return body.type === "chat.message" && body.from === aliceId;
           } catch {
             return false;

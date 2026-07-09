@@ -6,20 +6,13 @@ export interface ThreadGap {
   expected_seq: number;
 }
 
-// In-memory per process; re-seeded from inbox pulls after MCP restart.
+// In-memory per process; outbound sends only (M1.2).
 const threadSeqHighWater = new WeakMap<AgentContext, Map<string, number>>();
 const threadSentSeqs = new WeakMap<AgentContext, Map<string, Set<number>>>();
-const threadPeerSeqs = new WeakMap<AgentContext, Map<string, Set<number>>>();
 
 function sentMap(ctx: AgentContext): Map<string, Set<number>> {
   const map = threadSentSeqs.get(ctx) ?? new Map<string, Set<number>>();
   threadSentSeqs.set(ctx, map);
-  return map;
-}
-
-function peerMap(ctx: AgentContext): Map<string, Set<number>> {
-  const map = threadPeerSeqs.get(ctx) ?? new Map<string, Set<number>>();
-  threadPeerSeqs.set(ctx, map);
   return map;
 }
 
@@ -41,17 +34,6 @@ export function recordSentSeq(ctx: AgentContext, thread: string, seq: number): v
   const seqs = sentMap(ctx).get(thread) ?? new Set<number>();
   seqs.add(seq);
   sentMap(ctx).set(thread, seqs);
-
-  const current = highWaterMap(ctx).get(thread) ?? 0;
-  if (seq > current) {
-    highWaterMap(ctx).set(thread, seq);
-  }
-}
-
-export function recordPeerSeq(ctx: AgentContext, thread: string, seq: number): void {
-  const seqs = peerMap(ctx).get(thread) ?? new Set<number>();
-  seqs.add(seq);
-  peerMap(ctx).set(thread, seqs);
 
   const current = highWaterMap(ctx).get(thread) ?? 0;
   if (seq > current) {
@@ -93,15 +75,10 @@ export function detectGlobalThreadGap(
 }
 
 export function detectClientThreadGaps(ctx: AgentContext): ThreadGap[] {
-  const threads = new Set([...sentMap(ctx).keys(), ...peerMap(ctx).keys()]);
   const gaps: ThreadGap[] = [];
 
-  for (const thread of threads) {
-    const gap = detectGlobalThreadGap(
-      thread,
-      peerMap(ctx).get(thread) ?? [],
-      sentMap(ctx).get(thread) ?? [],
-    );
+  for (const thread of sentMap(ctx).keys()) {
+    const gap = detectGlobalThreadGap(thread, [], sentMap(ctx).get(thread) ?? []);
     if (gap) {
       gaps.push(gap);
     }
