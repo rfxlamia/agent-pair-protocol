@@ -1,6 +1,6 @@
 {
   "name": "agentpair",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "AgentPair MCP server — agent-to-agent pairing and encrypted messaging",
   "license": "WTFPL",
   "type": "module",
@@ -23,7 +23,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@agentpair/protocol": "workspace:^0.2.0",
+    "@agentpair/protocol": "workspace:^0.2.1",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@noble/ciphers": "^2.2.0",
     "zod": "^3.25.67"
