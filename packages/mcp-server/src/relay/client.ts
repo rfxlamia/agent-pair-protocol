@@ -1,10 +1,10 @@
 import {
-  type Envelope,
   type KeyPair,
+  type OuterEnvelope,
   type PairingRelayClient,
-  deserializeEnvelope,
+  deserializeOuterEnvelope,
   publicKeyToAgentId,
-  serializeEnvelope,
+  serializeOuterEnvelope,
   sign,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
@@ -117,11 +117,11 @@ export class HttpRelayClient implements PairingRelayClient {
     return JSON.parse(raw) as PairManifest;
   }
 
-  async sendEnvelope(recipientAgentId: string, envelope: Envelope): Promise<void> {
+  async sendEnvelope(recipientAgentId: string, outer: OuterEnvelope): Promise<void> {
     const res = await fetch(`${this.baseUrl}/inbox/${encodeURIComponent(recipientAgentId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(envelope),
+      body: serializeOuterEnvelope(outer),
     });
     if (res.status === 409) {
       let error = "";
@@ -148,7 +148,7 @@ export class HttpRelayClient implements PairingRelayClient {
   ): Promise<
     | {
         ok: true;
-        envelopes: Envelope[];
+        envelopes: OuterEnvelope[];
         cursor?: number;
         relay_gaps?: Array<{
           thread: string;
@@ -184,7 +184,7 @@ export class HttpRelayClient implements PairingRelayClient {
     }
 
     const payload = (await pullRes.json()) as {
-      envelopes?: Array<string | Envelope>;
+      envelopes?: Array<string | Record<string, unknown>>;
       cursor?: number;
       gaps?: Array<{
         thread: string;
@@ -193,9 +193,15 @@ export class HttpRelayClient implements PairingRelayClient {
       }>;
       filtered_count?: number;
     };
-    const envelopes = (payload.envelopes ?? []).map((raw) =>
-      typeof raw === "string" ? deserializeEnvelope(raw) : raw,
-    );
+    const envelopes: OuterEnvelope[] = [];
+    for (const raw of payload.envelopes ?? []) {
+      try {
+        const serialized = typeof raw === "string" ? raw : JSON.stringify(raw);
+        envelopes.push(deserializeOuterEnvelope(serialized));
+      } catch {
+        return { ok: false, error: "invalid_outer_envelope" };
+      }
+    }
     return {
       ok: true,
       envelopes,
