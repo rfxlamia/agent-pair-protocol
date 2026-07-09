@@ -166,16 +166,19 @@ function ensureInboxSchema(db: RelayDatabase): void {
       .all() as Array<{ id: string; envelope_json: string; received_at: number }>;
     const update = db.prepare("UPDATE inbox SET expires_at = ? WHERE id = ?");
     for (const row of rows) {
-      let ttlSec = DEFAULT_ENVELOPE_TTL_SEC;
+      let expiresAt = row.received_at + DEFAULT_ENVELOPE_TTL_SEC * 1000;
       try {
-        const parsed = JSON.parse(row.envelope_json) as { ttl?: number };
-        if (typeof parsed.ttl === "number" && parsed.ttl > 0) {
-          ttlSec = parsed.ttl;
+        const outer = deserializeOuterEnvelope(row.envelope_json);
+        if (outer.v === 1) {
+          const body = parseEnvelopeBody(outer);
+          if (typeof body.ttl === "number" && body.ttl > 0) {
+            expiresAt = body.ttl * 1000;
+          }
         }
       } catch {
         // keep default ttl
       }
-      update.run(row.received_at + ttlSec * 1000, row.id);
+      update.run(expiresAt, row.id);
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_inbox_expires_at ON inbox (expires_at)");
   }
@@ -333,7 +336,7 @@ export function createInboxRoutes(
     }
 
     const now = Date.now();
-    const expiresAt = now + body.ttl * 1000;
+    const expiresAt = body.ttl * 1000;
     const insert = db
       .prepare(
         `INSERT INTO inbox (

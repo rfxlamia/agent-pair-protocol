@@ -20,6 +20,10 @@ import { createInboxRoutes } from "./inbox.js";
 const TEST_PORT = 3001;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
 
+function futureTtl(seconds = 3600): number {
+  return Math.floor(Date.now() / 1000) + seconds;
+}
+
 function signedAllowlist(
   owner: ReturnType<typeof generateKeyPair>,
   allowed: string[],
@@ -98,6 +102,7 @@ describe("inbox relay routes", () => {
     recipientId: string,
     sender: ReturnType<typeof generateKeyPair>,
     seq: number,
+    overrides?: { ttl?: number; id?: string },
   ) {
     const envelope = createOuterEnvelope({
       sender,
@@ -105,9 +110,9 @@ describe("inbox relay routes", () => {
       type: "chat.message",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq,
-      ttl: 3600,
+      ttl: overrides?.ttl ?? futureTtl(),
       payload: utf8ToBytes(`message-${seq}`),
-      id: crypto.randomUUID(),
+      id: overrides?.id ?? crypto.randomUUID(),
     });
 
     return fetch(`${BASE_URL}/inbox/${recipientId}`, {
@@ -132,7 +137,7 @@ describe("inbox relay routes", () => {
       type: "chat.message",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq: 99,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("spoof"),
       id: spoofId,
     });
@@ -194,7 +199,7 @@ describe("inbox relay routes", () => {
       type: "chat.message",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq: 1,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("bad-from"),
       id: crypto.randomUUID(),
     });
@@ -233,7 +238,7 @@ describe("inbox relay routes", () => {
           type: "chat.message",
           thread,
           seq: 42,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("round-trip"),
           id: envelopeId,
         }),
@@ -293,7 +298,7 @@ describe("inbox relay routes", () => {
         type: "chat.message",
         thread: gapThread,
         seq,
-        ttl: 3600,
+        ttl: futureTtl(),
         payload: utf8ToBytes(`gap-${seq}`),
         id: crypto.randomUUID(),
       });
@@ -411,7 +416,7 @@ describe("inbox relay routes", () => {
           type: "chat.message",
           thread: "purge-thread",
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("reply"),
           id: crypto.randomUUID(),
         }),
@@ -482,7 +487,7 @@ describe("inbox relay routes", () => {
           type: "chat.message",
           thread: "peer-purge-thread",
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("peer-purge"),
           id: crypto.randomUUID(),
         }),
@@ -565,7 +570,7 @@ describe("inbox relay routes", () => {
       type: "count",
       thread,
       seq: 1,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("1"),
       id: crypto.randomUUID(),
     });
@@ -575,7 +580,7 @@ describe("inbox relay routes", () => {
       type: "count",
       thread,
       seq: 2,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("2"),
       id: crypto.randomUUID(),
     });
@@ -639,7 +644,7 @@ describe("inbox relay routes", () => {
         type: "chat.message",
         thread: "cc0e8400-e29b-41d4-a716-446655440011",
         seq: 42,
-        ttl: 3600,
+        ttl: futureTtl(),
         payload: utf8ToBytes("round-trip"),
         id: envelopeId,
       });
@@ -712,7 +717,7 @@ describe("inbox relay routes", () => {
         type: "chat.message",
         thread: "550e8400-e29b-41d4-a716-446655440000",
         seq: 99,
-        ttl: 3600,
+        ttl: futureTtl(),
         payload: utf8ToBytes("bad-sig"),
       });
       const tampered = { ...outer, sig: `${outer.sig.slice(0, -2)}XX` };
@@ -738,7 +743,7 @@ describe("inbox relay routes", () => {
         type: "chat.message",
         thread: "550e8400-e29b-41d4-a716-446655440000",
         seq: 100,
-        ttl: 3600,
+        ttl: futureTtl(),
         payload: Buffer.from("v0-flat", "utf8").toString("base64url"),
         sig: "fake-sig-string",
       });
@@ -756,7 +761,7 @@ describe("inbox relay routes", () => {
         type: "chat.message",
         thread: "550e8400-e29b-41d4-a716-446655440000",
         seq: 101,
-        ttl: 3600,
+        ttl: futureTtl(),
         payload: utf8ToBytes("v2-outer"),
       });
       const parsed = JSON.parse(serializeOuterEnvelope(outer)) as Record<string, unknown>;
@@ -776,7 +781,7 @@ describe("inbox relay routes", () => {
         type: "chat.message",
         thread: "550e8400-e29b-41d4-a716-446655440000",
         seq: 102,
-        ttl: 3600,
+        ttl: futureTtl(),
         payload: utf8ToBytes("wrong-recipient"),
       });
       const wire = serializeOuterEnvelope(outer);
@@ -889,7 +894,7 @@ describe("inbox relay regressions (isolated db)", () => {
           type: "chat.message",
           thread,
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("cursor-test"),
           id: crypto.randomUUID(),
         }),
@@ -921,7 +926,7 @@ describe("inbox relay regressions (isolated db)", () => {
           type: "chat.message",
           thread,
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("empty-pull"),
           id: crypto.randomUUID(),
         }),
@@ -956,7 +961,7 @@ describe("inbox relay regressions (isolated db)", () => {
           type: "chat.message",
           thread,
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("legacy-cursor"),
           id: envelopeId,
         }),
@@ -995,7 +1000,7 @@ describe("inbox relay regressions (isolated db)", () => {
             type: "chat.message",
             thread,
             seq,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes(`incr-${seq}`),
             id: crypto.randomUUID(),
           }),
@@ -1019,7 +1024,7 @@ describe("inbox relay regressions (isolated db)", () => {
           type: "chat.message",
           thread,
           seq: 4,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("incr-4"),
           id: crypto.randomUUID(),
         }),
@@ -1048,7 +1053,7 @@ describe("inbox relay regressions (isolated db)", () => {
         type: "chat.message",
         thread,
         seq,
-        ttl: 3600,
+        ttl: futureTtl(),
         payload: utf8ToBytes(`hist-${seq}`),
         id: crypto.randomUUID(),
       });
@@ -1086,7 +1091,7 @@ describe("inbox relay regressions (isolated db)", () => {
             type: "chat.message",
             thread,
             seq,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes(`new-${seq}`),
             id: crypto.randomUUID(),
           }),
@@ -1194,7 +1199,7 @@ describe("inbox gap detection (isolated db)", () => {
             type: "chat.message",
             thread,
             seq,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes(`long-${seq}`),
             id: crypto.randomUUID(),
           }),
@@ -1218,7 +1223,7 @@ describe("inbox gap detection (isolated db)", () => {
             type: "chat.message",
             thread,
             seq,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes(`long-${seq}`),
             id: crypto.randomUUID(),
           }),
@@ -1246,7 +1251,7 @@ describe("inbox gap detection (isolated db)", () => {
             type: "chat.message",
             thread,
             seq,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes(`bound-${seq}`),
             id: crypto.randomUUID(),
           }),
@@ -1268,7 +1273,7 @@ describe("inbox gap detection (isolated db)", () => {
           type: "chat.message",
           thread,
           seq: 4,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("bound-4"),
           id: crypto.randomUUID(),
         }),
@@ -1353,7 +1358,7 @@ describe("inbox rowid cursor (isolated db)", () => {
           type: "chat.message",
           thread,
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("burst-1"),
           id: firstId,
         }),
@@ -1381,7 +1386,7 @@ describe("inbox rowid cursor (isolated db)", () => {
         type: "chat.message",
         thread,
         seq: index + 2,
-        ttl: 3600,
+        ttl: futureTtl(),
         payload: utf8ToBytes(`burst-${index + 2}`),
         id,
       });
@@ -1456,7 +1461,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
       type: "chat.message",
       thread: "aa1e8400-e29b-41d4-a716-446655440001",
       seq: 1,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("expired"),
       id: expiredId,
     });
@@ -1467,7 +1472,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
       type: "chat.message",
       thread: "aa1e8400-e29b-41d4-a716-446655440002",
       seq: 1,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("fresh"),
       id: freshId,
     });
@@ -1516,7 +1521,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
           type: "chat.message",
           thread: "aa1e8400-e29b-41d4-a716-446655440003",
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("trigger-gc"),
           id: crypto.randomUUID(),
         }),
@@ -1602,7 +1607,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
       type: "chat.message",
       thread: "bb1e8400-e29b-41d4-a716-446655440001",
       seq: 1,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("expired-pull"),
       id: expiredId,
     });
@@ -1612,7 +1617,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
       type: "chat.message",
       thread: "bb1e8400-e29b-41d4-a716-446655440002",
       seq: 1,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("fresh-pull"),
       id: freshId,
     });
@@ -1724,7 +1729,7 @@ describe("inbox ttl gc throttle (isolated db)", () => {
           type: "chat.message",
           thread: "cc1e8400-e29b-41d4-a716-446655440001",
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("throttle"),
           id: expiredId,
         }),
@@ -1748,7 +1753,7 @@ describe("inbox ttl gc throttle (isolated db)", () => {
             type: "chat.message",
             thread: "cc1e8400-e29b-41d4-a716-446655440099",
             seq: 1,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes("gc-trigger"),
             id: crypto.randomUUID(),
           }),
@@ -1780,7 +1785,7 @@ describe("inbox ttl gc throttle (isolated db)", () => {
           type: "chat.message",
           thread: "cc1e8400-e29b-41d4-a716-446655440002",
           seq: 1,
-          ttl: 3600,
+          ttl: futureTtl(),
           payload: utf8ToBytes("throttle-2"),
           id: secondExpiredId,
         }),
@@ -1804,13 +1809,90 @@ describe("inbox ttl gc throttle (isolated db)", () => {
   });
 });
 
-describe("inbox ttl schema migration", () => {
+describe("inbox absolute unix ttl (M1.2)", () => {
+  let server: ServerType;
+  let db: ReturnType<typeof createRelayApp>["db"];
   const alice = generateKeyPair();
   const bob = generateKeyPair();
   const aliceId = publicKeyToAgentId(alice.publicKey);
   const bobId = publicKeyToAgentId(bob.publicKey);
+  const ABSOLUTE_TTL_SEC = 1_700_003_600;
+  const ABSOLUTE_TTL_PORT = 3010;
+  const ABSOLUTE_TTL_BASE = `http://127.0.0.1:${ABSOLUTE_TTL_PORT}`;
 
-  it("backfills expires_at when migrating brownfield inbox schema", () => {
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+    db = relay.db;
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: ABSOLUTE_TTL_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${ABSOLUTE_TTL_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  async function postEnvelope(
+    recipientId: string,
+    sender: ReturnType<typeof generateKeyPair>,
+    seq: number,
+    overrides?: { ttl?: number; id?: string },
+  ) {
+    const envelope = createOuterEnvelope({
+      sender,
+      recipientAgentId: recipientId,
+      type: "chat.message",
+      thread: "550e8400-e29b-41d4-a716-446655440000",
+      seq,
+      ttl: overrides?.ttl ?? futureTtl(),
+      payload: utf8ToBytes(`message-${seq}`),
+      id: overrides?.id ?? crypto.randomUUID(),
+    });
+
+    return fetch(`${ABSOLUTE_TTL_BASE}/inbox/${recipientId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeOuterEnvelope(envelope),
+    });
+  }
+
+  it("POST stores expires_at = body.ttl * 1000 (not received_at + duration)", async () => {
+    const envelopeId = crypto.randomUUID();
+    const res = await postEnvelope(bobId, alice, 1, {
+      ttl: ABSOLUTE_TTL_SEC,
+      id: envelopeId,
+    });
+    expect(res.status).toBe(204);
+
+    const row = db
+      .prepare("SELECT expires_at, received_at FROM inbox WHERE id = ?")
+      .get(envelopeId) as { expires_at: number; received_at: number };
+
+    expect(row.expires_at).toBe(ABSOLUTE_TTL_SEC * 1000);
+    expect(row.expires_at).not.toBe(row.received_at + ABSOLUTE_TTL_SEC * 1000);
+  });
+
+  it("ensureInboxSchema backfills v1 outer blob absolute ttl", () => {
     const legacyDb = new Database(":memory:");
     legacyDb.exec(`
       CREATE TABLE inbox (
@@ -1826,8 +1908,20 @@ describe("inbox ttl schema migration", () => {
     `);
 
     const rowId = crypto.randomUUID();
-    const receivedAt = Date.now() - 1800_000;
+    const receivedAt = Date.now() - 1_800_000;
     const thread = "dd1e8400-e29b-41d4-a716-446655440001";
+    const outer = createOuterEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "chat.message",
+      thread,
+      seq: 1,
+      ttl: ABSOLUTE_TTL_SEC,
+      payload: utf8ToBytes("backfill"),
+      id: rowId,
+    });
+    const wire = serializeOuterEnvelope(outer);
+
     legacyDb
       .prepare(
         `INSERT INTO inbox (
@@ -1835,26 +1929,7 @@ describe("inbox ttl schema migration", () => {
            thread_id, seq, msg_type, received_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(
-        rowId,
-        bobId,
-        JSON.stringify({
-          id: rowId,
-          from: aliceId,
-          to: bobId,
-          type: "chat.message",
-          thread,
-          seq: 1,
-          ttl: 1800,
-          payload: "legacy",
-          sig: "fake-sig",
-        }),
-        aliceId,
-        thread,
-        1,
-        "chat.message",
-        receivedAt,
-      );
+      .run(rowId, bobId, wire, aliceId, thread, 1, "chat.message", receivedAt);
 
     const rateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 100 });
     createInboxRoutes(legacyDb, rateLimit);
@@ -1862,7 +1937,8 @@ describe("inbox ttl schema migration", () => {
     const row = legacyDb.prepare("SELECT expires_at FROM inbox WHERE id = ?").get(rowId) as {
       expires_at: number;
     };
-    expect(row.expires_at).toBe(receivedAt + 1800 * 1000);
+    expect(row.expires_at).toBe(ABSOLUTE_TTL_SEC * 1000);
+    expect(row.expires_at).not.toBe(receivedAt + ABSOLUTE_TTL_SEC * 1000);
     legacyDb.close();
   });
 });
@@ -1930,7 +2006,7 @@ describe("inbox global turn-taking seq (isolated db)", () => {
             type: "suggestion",
             thread,
             seq,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes(`turn-${seq}`),
             id: crypto.randomUUID(),
           }),
@@ -1958,7 +2034,7 @@ describe("inbox global turn-taking seq (isolated db)", () => {
             type: "suggestion",
             thread,
             seq,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes(`turn-${seq}`),
             id: crypto.randomUUID(),
           }),
@@ -1992,7 +2068,7 @@ describe("inbox global turn-taking seq (isolated db)", () => {
             type: "suggestion",
             thread,
             seq,
-            ttl: 3600,
+            ttl: futureTtl(),
             payload: utf8ToBytes(`burst-${seq}`),
             id: crypto.randomUUID(),
           }),
@@ -2018,7 +2094,7 @@ describe("inbox global turn-taking seq (isolated db)", () => {
       type: "suggestion",
       thread,
       seq: 1,
-      ttl: 3600,
+      ttl: futureTtl(),
       payload: utf8ToBytes("dup"),
       id: crypto.randomUUID(),
     });
