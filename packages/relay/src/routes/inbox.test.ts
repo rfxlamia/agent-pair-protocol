@@ -1810,46 +1810,28 @@ describe("inbox ttl gc throttle (isolated db)", () => {
 });
 
 describe("inbox absolute unix ttl (M1.2)", () => {
-  let server: ServerType;
+  let relay: ReturnType<typeof createRelayApp>;
   let db: ReturnType<typeof createRelayApp>["db"];
   const alice = generateKeyPair();
   const bob = generateKeyPair();
   const aliceId = publicKeyToAgentId(alice.publicKey);
   const bobId = publicKeyToAgentId(bob.publicKey);
   const ABSOLUTE_TTL_SEC = 1_700_003_600;
-  const ABSOLUTE_TTL_PORT = 3010;
-  const ABSOLUTE_TTL_BASE = `http://127.0.0.1:${ABSOLUTE_TTL_PORT}`;
 
   beforeAll(async () => {
-    const relay = createRelayApp({
+    relay = createRelayApp({
       rateLimitWindowMs: 60_000,
       rateLimitMax: 100,
     });
     db = relay.db;
 
-    await new Promise<void>((resolve) => {
-      server = serve({ fetch: relay.app.fetch, port: ABSOLUTE_TTL_PORT }, resolve);
-    });
-
     const bobAllowlist = signedAllowlist(bob, [aliceId]);
-    const res = await fetch(`${ABSOLUTE_TTL_BASE}/allowlist/${bobId}`, {
+    const res = await relay.app.request(`/allowlist/${bobId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(bobAllowlist),
     });
     expect(res.status).toBe(204);
-  });
-
-  afterAll(async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
   });
 
   async function postEnvelope(
@@ -1869,7 +1851,7 @@ describe("inbox absolute unix ttl (M1.2)", () => {
       id: overrides?.id ?? crypto.randomUUID(),
     });
 
-    return fetch(`${ABSOLUTE_TTL_BASE}/inbox/${recipientId}`, {
+    return relay.app.request(`/inbox/${recipientId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: serializeOuterEnvelope(envelope),

@@ -318,14 +318,12 @@ describe("inbox production path", () => {
     expect(statusBefore.pending_id).toBeTypeOf("string");
     expect(statusBefore.pending_id).not.toBe(sessionOpen.pending_id);
 
-    const secondInbox = structured(await handleInbox(bob.ctx, { since: 0 }));
-    expect(secondInbox.ok).toBe(true);
-    if (!secondInbox.ok) {
+    const statusAfter = structured(await handleSessionStatus(bob.ctx, { thread: opened.thread }));
+    expect(statusAfter.ok).toBe(true);
+    if (!statusAfter.ok) {
       return;
     }
-
-    const secondOpen = secondInbox.envelopes.find((envelope) => envelope.type === "session.open");
-    expect(secondOpen?.pending_id).toBe(statusBefore.pending_id);
+    expect(statusAfter.pending_id).toBe(statusBefore.pending_id);
   });
 
   it("exposes pending_id from session_status when signed so MCP clients can ratify", async () => {
@@ -471,7 +469,7 @@ describe("inbox production path", () => {
     const opened = structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "suggestion",
+        type: "chat.message",
         payload: "Saran 1",
         thread,
         seq: 1,
@@ -489,7 +487,7 @@ describe("inbox production path", () => {
     const bobReply = structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "reply",
+        type: "chat.message",
         payload: "Setuju",
         thread,
         seq: 2,
@@ -503,7 +501,7 @@ describe("inbox production path", () => {
     const aliceAgreement = structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "reply",
+        type: "chat.message",
         payload: "Makasih",
         thread,
       }),
@@ -512,14 +510,14 @@ describe("inbox production path", () => {
     if (!aliceAgreement.ok) {
       return;
     }
-    expect(aliceAgreement.seq).toBe(3);
+    expect(aliceAgreement.seq).toBe(2);
 
-    const bobInbox2 = structured(await handleInbox(bob.ctx, { since: 0 }));
+    const bobInbox2 = structured(await handleInbox(bob.ctx, {}));
     expect(bobInbox2.ok).toBe(true);
     if (!bobInbox2.ok) {
       return;
     }
-    expect(bobInbox2.envelopes.map((envelope) => envelope.seq).sort()).toEqual([1, 3]);
+    expect(bobInbox2.envelopes.map((envelope) => envelope.seq)).toEqual([2]);
   });
 
   it("auto-assigns next seq after explicit send without resetting to 1", async () => {
@@ -531,7 +529,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "suggestion",
+        type: "chat.message",
         payload: "Saran 1",
         thread,
         seq: 1,
@@ -543,7 +541,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "reply",
+        type: "chat.message",
         payload: "Setuju",
         thread,
         seq: 2,
@@ -553,7 +551,7 @@ describe("inbox production path", () => {
     const bobFollowUp = structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "suggestion",
+        type: "chat.message",
         payload: "Saran dari bob",
         thread,
       }),
@@ -574,7 +572,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "suggestion",
+        type: "chat.message",
         payload: "Saran 1",
         thread,
         seq: 1,
@@ -586,7 +584,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "reply",
+        type: "chat.message",
         payload: "Balas 1",
         thread,
         seq: 2,
@@ -595,7 +593,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "reply",
+        type: "chat.message",
         payload: "Balas 2",
         thread,
         seq: 3,
@@ -607,19 +605,19 @@ describe("inbox production path", () => {
     structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "suggestion",
+        type: "chat.message",
         payload: "Saran 2",
         thread,
         seq: 4,
       }),
     );
 
-    const bobInbox = structured(await handleInbox(bob.ctx, { since: 0 }));
+    const bobInbox = structured(await handleInbox(bob.ctx, {}));
     expect(bobInbox.ok).toBe(true);
     if (!bobInbox.ok) {
       return;
     }
     expect(bobInbox.gap_warnings).toBeUndefined();
-    expect(bobInbox.envelopes.map((envelope) => envelope.seq).sort()).toEqual([1, 4]);
+    expect(bobInbox.envelopes.map((envelope) => envelope.seq)).toEqual([4]);
   }, 15_000);
 });
