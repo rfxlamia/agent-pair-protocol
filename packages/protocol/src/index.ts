@@ -21,6 +21,14 @@ export {
   type OuterEnvelope,
 } from "./crypto/envelope.js";
 export {
+  defaultEnvelopeTtl,
+  MAX_ENVELOPE_WIRE_BYTES,
+  receiveEnvelope,
+  type ReceiveEnvelopeDeps,
+  type ReceiveEnvelopeResult,
+  type SeqStore,
+} from "./crypto/receive-envelope.js";
+export {
   finish,
   init,
   respond,
