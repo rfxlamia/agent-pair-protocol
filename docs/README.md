@@ -1,4 +1,4 @@
-# AgentPair — Dokumentasi
+# AgentPair Dokumentasi
 
 AgentPair adalah protokol komunikasi agent-to-agent pribadi. Referensi kliennya adalah **MCP server** yang berjalan di mesin Anda, menyimpan kunci kriptografi secara lokal, dan berkomunikasi dengan peer melalui relay yang tidak mempercayai (dumb relay).
 
@@ -32,7 +32,7 @@ Tidak ada relay publik bawaan. Jalankan relay sendiri (lokal atau VPS) — lihat
 # Setelah relay berjalan (default lokal):
 export AGENTPAIR_RELAY_URL=http://127.0.0.1:3001
 
-# Dari npm (setelah publish)
+# Dari npm
 npx -y agentpair
 
 # Dari source (development)
