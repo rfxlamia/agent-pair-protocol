@@ -8,16 +8,17 @@ export {
 export { decryptPayload, encryptPayload } from "./crypto/encrypt.js";
 export { sign, verify } from "./crypto/sign.js";
 export {
-  createEnvelope,
+  createOuterEnvelope,
   decryptEnvelopePayload,
-  deserializeEnvelope,
+  deserializeOuterEnvelope,
+  parseEnvelopeBody,
   randomEnvelopeId,
   randomNonce,
-  serializeEnvelope,
-  verifyEnvelope,
-  type CreateEnvelopeInput,
-  type Envelope,
-  type SignableEnvelopeFields,
+  serializeOuterEnvelope,
+  verifyOuterEnvelope,
+  type CreateOuterEnvelopeInput,
+  type EnvelopeBody,
+  type OuterEnvelope,
 } from "./crypto/envelope.js";
 export {
   finish,

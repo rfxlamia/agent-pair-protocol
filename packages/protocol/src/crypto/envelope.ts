@@ -3,7 +3,16 @@ import { decryptPayload, encryptPayload } from "./encrypt.js";
 import { type KeyPair, agentIdToPublicKey, publicKeyToAgentId } from "./keys.js";
 import { sign, verify } from "./sign.js";
 
-export interface Envelope {
+export interface OuterEnvelope {
+  v: 1;
+  from: string;
+  to: string;
+  blob: string;
+  sig: string;
+}
+
+export interface EnvelopeBody {
+  v: 1;
   id: string;
   from: string;
   to: string;
@@ -12,12 +21,9 @@ export interface Envelope {
   seq: number;
   ttl: number;
   payload: string;
-  sig: string;
 }
 
-export type SignableEnvelopeFields = Omit<Envelope, "sig">;
-
-export interface CreateEnvelopeInput {
+export interface CreateOuterEnvelopeInput {
   sender: KeyPair;
   recipientAgentId: string;
   type: string;
@@ -36,21 +42,43 @@ function fromBase64Url(value: string): Uint8Array {
   return new Uint8Array(Buffer.from(value, "base64url"));
 }
 
-function canonicalSignBytes(fields: SignableEnvelopeFields): Uint8Array {
+export function serializeBodyBytes(body: EnvelopeBody): Uint8Array {
   const ordered = {
-    from: fields.from,
-    id: fields.id,
-    payload: fields.payload,
-    seq: fields.seq,
-    thread: fields.thread,
-    to: fields.to,
-    ttl: fields.ttl,
-    type: fields.type,
+    v: body.v,
+    id: body.id,
+    from: body.from,
+    to: body.to,
+    type: body.type,
+    thread: body.thread,
+    seq: body.seq,
+    ttl: body.ttl,
+    payload: body.payload,
   };
   return utf8ToBytes(JSON.stringify(ordered));
 }
 
-export function createEnvelope(input: CreateEnvelopeInput): Envelope {
+function validateEnvelopeBody(parsed: unknown): EnvelopeBody {
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Invalid envelope body shape");
+  }
+  const body = parsed as Record<string, unknown>;
+  if (
+    body.v !== 1 ||
+    typeof body.id !== "string" ||
+    typeof body.from !== "string" ||
+    typeof body.to !== "string" ||
+    typeof body.type !== "string" ||
+    typeof body.thread !== "string" ||
+    typeof body.seq !== "number" ||
+    typeof body.ttl !== "number" ||
+    typeof body.payload !== "string"
+  ) {
+    throw new Error("Invalid envelope body shape");
+  }
+  return body as unknown as EnvelopeBody;
+}
+
+export function createOuterEnvelope(input: CreateOuterEnvelopeInput): OuterEnvelope {
   const recipientPublicKey = agentIdToPublicKey(input.recipientAgentId);
   const encryptedPayload = encryptPayload(
     input.payload,
@@ -58,9 +86,11 @@ export function createEnvelope(input: CreateEnvelopeInput): Envelope {
     recipientPublicKey,
   );
 
-  const unsigned: SignableEnvelopeFields = {
+  const from = publicKeyToAgentId(input.sender.publicKey);
+  const body: EnvelopeBody = {
+    v: 1,
     id: input.id ?? crypto.randomUUID(),
-    from: publicKeyToAgentId(input.sender.publicKey),
+    from,
     to: input.recipientAgentId,
     type: input.type,
     thread: input.thread,
@@ -69,50 +99,65 @@ export function createEnvelope(input: CreateEnvelopeInput): Envelope {
     payload: encryptedPayload,
   };
 
-  const signature = sign(canonicalSignBytes(unsigned), input.sender.secretKey);
+  const bodyBytes = serializeBodyBytes(body);
+  const signature = sign(bodyBytes, input.sender.secretKey);
 
   return {
-    ...unsigned,
+    v: 1,
+    from,
+    to: input.recipientAgentId,
+    blob: toBase64Url(bodyBytes),
     sig: toBase64Url(signature),
   };
 }
 
-export function verifyEnvelope(envelope: Envelope, senderPublicKey: Uint8Array): boolean {
-  const { sig, ...unsigned } = envelope;
-  return verify(fromBase64Url(sig), canonicalSignBytes(unsigned), senderPublicKey);
+export function verifyOuterEnvelope(outer: OuterEnvelope, senderPublicKey: Uint8Array): boolean {
+  const blobBytes = fromBase64Url(outer.blob);
+  return verify(fromBase64Url(outer.sig), blobBytes, senderPublicKey);
+}
+
+export function parseEnvelopeBody(outer: OuterEnvelope): EnvelopeBody {
+  const blobBytes = fromBase64Url(outer.blob);
+  const parsed = JSON.parse(new TextDecoder().decode(blobBytes)) as unknown;
+  return validateEnvelopeBody(parsed);
+}
+
+export function serializeOuterEnvelope(outer: OuterEnvelope): string {
+  return JSON.stringify({
+    v: outer.v,
+    from: outer.from,
+    to: outer.to,
+    blob: outer.blob,
+    sig: outer.sig,
+  });
+}
+
+export function deserializeOuterEnvelope(serialized: string): OuterEnvelope {
+  const parsed = JSON.parse(serialized) as Record<string, unknown>;
+  if (
+    parsed.v !== 1 ||
+    typeof parsed.from !== "string" ||
+    typeof parsed.to !== "string" ||
+    typeof parsed.blob !== "string" ||
+    typeof parsed.sig !== "string"
+  ) {
+    throw new Error("Invalid outer envelope shape");
+  }
+  return {
+    v: 1,
+    from: parsed.from,
+    to: parsed.to,
+    blob: parsed.blob,
+    sig: parsed.sig,
+  };
 }
 
 export function decryptEnvelopePayload(
-  envelope: Envelope,
+  body: EnvelopeBody,
   recipient: KeyPair,
   senderPublicKey: Uint8Array,
 ): Uint8Array {
-  if (!verifyEnvelope(envelope, senderPublicKey)) {
-    throw new Error("Envelope signature verification failed");
-  }
-  return decryptPayload(envelope.payload, recipient.secretKey, senderPublicKey);
-}
-
-export function serializeEnvelope(envelope: Envelope): string {
-  return JSON.stringify(envelope);
-}
-
-export function deserializeEnvelope(serialized: string): Envelope {
-  const parsed = JSON.parse(serialized) as Envelope;
-  if (
-    typeof parsed.id !== "string" ||
-    typeof parsed.from !== "string" ||
-    typeof parsed.to !== "string" ||
-    typeof parsed.type !== "string" ||
-    typeof parsed.thread !== "string" ||
-    typeof parsed.seq !== "number" ||
-    typeof parsed.ttl !== "number" ||
-    typeof parsed.payload !== "string" ||
-    typeof parsed.sig !== "string"
-  ) {
-    throw new Error("Invalid envelope shape");
-  }
-  return parsed;
+  return decryptPayload(body.payload, recipient.secretKey, senderPublicKey);
 }
 
 export function randomEnvelopeId(): string {
