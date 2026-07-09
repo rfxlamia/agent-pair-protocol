@@ -5,17 +5,19 @@ import {
   type KeyPair,
   type OuterEnvelope,
   createOuterEnvelope,
+  defaultEnvelopeTtl,
   generateKeyPair,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
-import { describe, expect, it } from "vitest";
+import * as protocol from "@agentpair/protocol";
+import { describe, expect, it, vi } from "vitest";
 import type { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
 import { MemoryBondStore } from "../store/bonds.js";
 import { MemoryInboxCursorStore } from "../store/inbox-cursor.js";
 import { createKeyStore } from "../store/keys.js";
 import { createPendingQueue } from "../store/pending.js";
-import { handleInbox } from "./inbox.js";
+import { handleInbox, handleSend } from "./inbox.js";
 import { createAgentContext } from "./pair.js";
 
 function structured<T>(result: { structuredContent: T }): T {
@@ -71,7 +73,7 @@ function makeOuterEnvelope(
     type: "chat.message",
     thread: `thread-${seq}`,
     seq,
-    ttl: 3600,
+    ttl: defaultEnvelopeTtl(),
     payload: new TextEncoder().encode(body),
   });
 }
@@ -564,5 +566,42 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     expect(result.envelopes).toHaveLength(1);
     expect(result.envelopes[0]?.payload).toBe("still-here");
     expect(result.skipped_unsupported).toBe(1);
+  });
+});
+
+describe("inbox send absolute ttl (M1.2 §4.2)", () => {
+  it("handleSend without explicit ttl uses absolute unix body.ttl", async () => {
+    const peer = generateKeyPair();
+    const peerId = publicKeyToAgentId(peer.publicKey);
+    const allowlist = new MemoryAllowlistStore();
+    const sendEnvelope = vi.fn(async () => undefined);
+    const ctx = createAgentContext({
+      keyStore: createKeyStore(),
+      relay: { sendEnvelope } as unknown as HttpRelayClient,
+      allowlist,
+      bonds: new MemoryBondStore(),
+      pending: createPendingQueue(),
+      inboxCursor: new MemoryInboxCursorStore(),
+    });
+    const keys = await ctx.keyStore.loadOrCreate();
+    const selfId = publicKeyToAgentId(keys.publicKey);
+    allowlist.set(selfId, [peerId]);
+
+    const beforeUnix = Math.floor(Date.now() / 1000);
+    const createSpy = vi.spyOn(protocol, "createOuterEnvelope");
+
+    const result = structured(
+      await handleSend(ctx, { to: peerId, type: "chat.message", payload: "ttl-check" }),
+    );
+    expect(result.ok).toBe(true);
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const ttl = createSpy.mock.calls[0]?.[0]?.ttl;
+    expect(typeof ttl).toBe("number");
+    expect(ttl).toBeGreaterThanOrEqual(beforeUnix + 3500);
+    expect(ttl).toBeLessThanOrEqual(beforeUnix + 3700);
+    expect(ttl).toBeGreaterThan(1_000_000);
+
+    createSpy.mockRestore();
   });
 });
