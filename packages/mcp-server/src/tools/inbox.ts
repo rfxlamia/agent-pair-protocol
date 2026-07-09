@@ -1,11 +1,14 @@
 import {
+  type EnvelopeBody,
+  type OuterEnvelope,
   agentIdToPublicKey,
-  createEnvelope,
+  createOuterEnvelope,
   decryptEnvelopePayload,
+  deserializeOuterEnvelope,
+  parseEnvelopeBody,
   publicKeyToAgentId,
-  verifyEnvelope,
+  verifyOuterEnvelope,
 } from "@agentpair/protocol";
-import type { Envelope } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { AgentContext } from "./pair.js";
 import { ensureAllowlistReady } from "./pair.js";
@@ -48,10 +51,10 @@ function resolveAllowedPeers(
 }
 
 function filterBondedEnvelopes(
-  envelopes: Envelope[],
+  envelopes: OuterEnvelope[],
   allowedPeers: string[],
   includeHistory: boolean,
-): { envelopes: Envelope[]; filteredCount: number } {
+): { envelopes: OuterEnvelope[]; filteredCount: number } {
   if (includeHistory) {
     return { envelopes, filteredCount: 0 };
   }
@@ -61,6 +64,13 @@ function filterBondedEnvelopes(
     envelopes: filtered,
     filteredCount: envelopes.length - filtered.length,
   };
+}
+
+function parseOuterEnvelope(raw: OuterEnvelope | string): OuterEnvelope {
+  if (typeof raw === "string") {
+    return deserializeOuterEnvelope(raw);
+  }
+  return raw;
 }
 
 export async function handleInbox(
@@ -107,46 +117,57 @@ export async function handleInbox(
   processedEnvelopeIds.set(ctx, seen);
 
   const envelopes = [];
-  for (const envelope of envelopesToProcess) {
-    recordPeerSeq(ctx, envelope.thread, envelope.seq);
+  let skippedUnsupported = 0;
+  for (const raw of envelopesToProcess) {
+    let outer: OuterEnvelope;
+    let body: EnvelopeBody;
+    try {
+      outer = parseOuterEnvelope(raw);
+      body = parseEnvelopeBody(outer);
+    } catch {
+      skippedUnsupported += 1;
+      continue;
+    }
 
-    const senderPublicKey = agentIdToPublicKey(envelope.from);
-    const verified = verifyEnvelope(envelope, senderPublicKey);
+    recordPeerSeq(ctx, body.thread, body.seq);
 
-    let payload = envelope.payload;
+    const senderPublicKey = agentIdToPublicKey(body.from);
+    const verified = verifyOuterEnvelope(outer, senderPublicKey);
+
+    let payload = body.payload;
     let pendingId: string | undefined;
     let sessionStatus: string | undefined;
     if (verified) {
       try {
-        const plaintext = decryptEnvelopePayload(envelope, keyPair, senderPublicKey);
+        const plaintext = decryptEnvelopePayload(body, keyPair, senderPublicKey);
         payload = new TextDecoder().decode(plaintext);
 
-        if (envelope.type.startsWith("session.") && !seen.has(envelope.id)) {
+        if (body.type.startsWith("session.") && !seen.has(body.id)) {
           const processed = await processSessionInboxEnvelope(ctx, {
-            from: envelope.from,
-            type: envelope.type,
-            thread: envelope.thread,
+            from: body.from,
+            type: body.type,
+            thread: body.thread,
             payload,
           });
           const effect = processed.structuredContent;
           if (effect.ok === true) {
-            seen.add(envelope.id);
+            seen.add(body.id);
           }
           if (effect.ok === true && typeof effect.pending_id === "string") {
             pendingId = effect.pending_id;
           }
         }
 
-        if (envelope.type === "session.open" && !pendingId) {
-          pendingId = await resolveSessionOpenPendingId(ctx, envelope.thread);
+        if (body.type === "session.open" && !pendingId) {
+          pendingId = await resolveSessionOpenPendingId(ctx, body.thread);
         }
 
-        if (envelope.type === "session.peer_signed" && !pendingId) {
-          pendingId = await resolveRatifyPendingId(ctx, envelope.thread);
+        if (body.type === "session.peer_signed" && !pendingId) {
+          pendingId = await resolveRatifyPendingId(ctx, body.thread);
         }
 
-        if (envelope.type === "session.open") {
-          sessionStatus = peekSessionOpenStatus(ctx, envelope.thread);
+        if (body.type === "session.open") {
+          sessionStatus = peekSessionOpenStatus(ctx, body.thread);
         }
       } catch {
         // Keep wire ciphertext if decryption fails.
@@ -154,15 +175,15 @@ export async function handleInbox(
     }
 
     envelopes.push({
-      id: envelope.id,
-      from: envelope.from,
-      to: envelope.to,
-      type: envelope.type,
-      thread: envelope.thread,
-      seq: envelope.seq,
-      ttl: envelope.ttl,
+      id: body.id,
+      from: body.from,
+      to: body.to,
+      type: body.type,
+      thread: body.thread,
+      seq: body.seq,
+      ttl: body.ttl,
       payload,
-      sig: envelope.sig,
+      sig: outer.sig,
       verified,
       ...(pendingId ? { pending_id: pendingId } : {}),
       ...(sessionStatus ? { session_status: sessionStatus } : {}),
@@ -191,6 +212,7 @@ export async function handleInbox(
     ...(cursorReset ? { cursor_reset: true } : {}),
     ...(gapWarnings.length > 0 ? { gap_warnings: gapWarnings } : {}),
     ...(pull.relay_gaps && pull.relay_gaps.length > 0 ? { relay_gaps: pull.relay_gaps } : {}),
+    ...(skippedUnsupported > 0 ? { skipped_unsupported: skippedUnsupported } : {}),
   };
   assertNoSecrets(result);
   return toolTextResult(result);
@@ -217,24 +239,26 @@ export async function handleSend(
   }
 
   const thread = input.thread ?? crypto.randomUUID();
-  const envelope = createEnvelope({
+  const seq = input.seq ?? nextThreadSeq(ctx, thread);
+  const outer = createOuterEnvelope({
     sender: keyPair,
     recipientAgentId: input.to,
     type: input.type,
     thread,
-    seq: input.seq ?? nextThreadSeq(ctx, thread),
+    seq,
     ttl: input.ttl ?? 3600,
     payload: utf8ToBytes(input.payload),
   });
+  const body = parseEnvelopeBody(outer);
 
-  await ctx.relay.sendEnvelope(input.to, envelope);
-  recordSentSeq(ctx, thread, envelope.seq);
+  await ctx.relay.sendEnvelope(input.to, outer);
+  recordSentSeq(ctx, thread, body.seq);
 
   const result = {
     ok: true,
-    id: envelope.id,
-    thread: envelope.thread,
-    seq: envelope.seq,
+    id: body.id,
+    thread: body.thread,
+    seq: body.seq,
   };
   assertNoSecrets(result);
   return toolTextResult(result);

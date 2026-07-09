@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init as initPake } from "@agentpair/protocol";
 import {
+  type EnvelopeBody,
   agentIdToPublicKey,
   decryptEnvelopePayload,
+  parseEnvelopeBody,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
 import { createRelayApp } from "@agentpair/relay";
@@ -138,21 +140,27 @@ export async function syncInboxes(agents: AgentContext[]): Promise<void> {
       throw new Error(`inbox pull failed: ${pull.error}`);
     }
 
-    for (const envelope of pull.envelopes) {
-      if (seen.has(envelope.id)) {
+    for (const outer of pull.envelopes) {
+      let body: EnvelopeBody;
+      try {
+        body = parseEnvelopeBody(outer);
+      } catch {
         continue;
       }
-      const senderPublicKey = agentIdToPublicKey(envelope.from);
-      const plaintext = decryptEnvelopePayload(envelope, keyPair, senderPublicKey);
+      if (seen.has(body.id)) {
+        continue;
+      }
+      const senderPublicKey = agentIdToPublicKey(body.from);
+      const plaintext = decryptEnvelopePayload(body, keyPair, senderPublicKey);
       const payload = new TextDecoder().decode(plaintext);
       const processed = await processSessionInboxEnvelope(ctx, {
-        from: envelope.from,
-        type: envelope.type,
-        thread: envelope.thread,
+        from: body.from,
+        type: body.type,
+        thread: body.thread,
         payload,
       });
       if (processed.structuredContent.ok === true) {
-        seen.add(envelope.id);
+        seen.add(body.id);
       }
     }
   }

@@ -5,6 +5,7 @@ import {
   createOuterEnvelope,
   generateKeyPair,
   init as initPake,
+  parseEnvelopeBody,
   publicKeyToAgentId,
   serializeOuterEnvelope,
   verifyOuterEnvelope,
@@ -98,7 +99,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     });
   }
 
-  it.skip("handleInbox verifies v1 outer envelopes with sender public key — requires T4", async () => {
+  it("handleInbox verifies v1 outer envelopes with sender public key", async () => {
     const bob = await makeAgent("inbox-crash");
     const aliceKeys = generateKeyPair();
     const bobKeys = await bob.keyStore.loadOrCreate();
@@ -351,12 +352,23 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     const inboxBefore = await bob.relay.pullInbox(bobKeys, 0, { bonded_only: false });
     expect(inboxBefore.ok).toBe(true);
     if (inboxBefore.ok) {
-      const revokeNotice = inboxBefore.envelopes.find((e) => e.type === "revoke.notice");
+      const revokeNotice = inboxBefore.envelopes.find((outer) => {
+        try {
+          return parseEnvelopeBody(outer).type === "revoke.notice";
+        } catch {
+          return false;
+        }
+      });
       expect(revokeNotice).toBeDefined();
       expect(
-        inboxBefore.envelopes.some(
-          (envelope) => envelope.type === "chat.message" && envelope.from === aliceId,
-        ),
+        inboxBefore.envelopes.some((outer) => {
+          try {
+            const body = parseEnvelopeBody(outer);
+            return body.type === "chat.message" && body.from === aliceId;
+          } catch {
+            return false;
+          }
+        }),
       ).toBe(false);
     }
   });

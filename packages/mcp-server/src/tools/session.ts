@@ -1,7 +1,7 @@
 import {
   type SessionStateMachine,
   type SessionStatus,
-  createEnvelope,
+  createOuterEnvelope,
   createSessionStateMachine,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
@@ -78,16 +78,17 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
       bonds: ctx.bonds,
       relay: {
         async send(input) {
-          const envelope = createEnvelope({
+          const seq = input.seq ?? nextSessionSeq(ctx, input.thread);
+          const outer = createOuterEnvelope({
             sender: keyPair,
             recipientAgentId: input.to,
             type: input.type,
             thread: input.thread,
-            seq: input.seq ?? nextSessionSeq(ctx, input.thread),
+            seq,
             ttl: 3600,
             payload: utf8ToBytes(input.payload),
           });
-          await ctx.relay.sendEnvelope(input.to, envelope);
+          await ctx.relay.sendEnvelope(input.to, outer);
           return { ok: true };
         },
       },

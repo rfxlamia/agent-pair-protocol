@@ -5,7 +5,7 @@ import {
   type PairFlowResult,
   type PairingRegistry,
   type SessionStore,
-  createEnvelope,
+  createOuterEnvelope,
   createSessionStore,
   pairInit,
   pairJoin,
@@ -277,7 +277,7 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
   ctx.allowlist.set(agentId, next);
   ctx.bonds.remove(agentId, input.peer);
 
-  const notice = createEnvelope({
+  const notice = createOuterEnvelope({
     sender: keyPair,
     recipientAgentId: input.peer,
     type: "revoke.notice",
