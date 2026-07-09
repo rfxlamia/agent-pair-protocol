@@ -3,6 +3,7 @@ import {
   type SessionStatus,
   createOuterEnvelope,
   createSessionStateMachine,
+  defaultEnvelopeTtl,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
@@ -85,7 +86,7 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
             type: input.type,
             thread: input.thread,
             seq,
-            ttl: 3600,
+            ttl: defaultEnvelopeTtl(),
             payload: utf8ToBytes(input.payload),
           });
           await ctx.relay.sendEnvelope(input.to, outer);

@@ -7,6 +7,7 @@ import {
   type SessionStore,
   createOuterEnvelope,
   createSessionStore,
+  defaultEnvelopeTtl,
   pairInit,
   pairJoin,
   publicKeyToAgentId,
@@ -295,7 +296,7 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
     type: "revoke.notice",
     thread: `revoke:${agentId}`,
     seq: 1,
-    ttl: 3600,
+    ttl: defaultEnvelopeTtl(),
     payload: utf8ToBytes(JSON.stringify({ from: agentId })),
   });
   await ctx.relay.sendEnvelope(input.peer, notice);

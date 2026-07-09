@@ -4,6 +4,7 @@ import {
   agentIdToPublicKey,
   createOuterEnvelope,
   decryptEnvelopePayload,
+  defaultEnvelopeTtl,
   deserializeOuterEnvelope,
   parseEnvelopeBody,
   publicKeyToAgentId,
@@ -247,7 +248,7 @@ export async function handleSend(
     type: input.type,
     thread,
     seq,
-    ttl: input.ttl ?? 3600,
+    ttl: defaultEnvelopeTtl(input.ttl),
     payload: utf8ToBytes(input.payload),
   });
   const body = parseEnvelopeBody(outer);
