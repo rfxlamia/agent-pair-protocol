@@ -1,23 +1,19 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { MemoryEnvelopeSeqStore, createFileEnvelopeSeqStore } from "./envelope-seq.js";
 
-describe("EnvelopeSeqStore", () => {
-  const tempDirs: string[] = [];
-
-  afterEach(async () => {
-    await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
-    tempDirs.length = 0;
-  });
-
-  async function tempDataDir(): Promise<string> {
-    const dir = await mkdtemp(join(tmpdir(), "agentpair-envelope-seq-"));
-    tempDirs.push(dir);
-    return dir;
+async function withTempDataDir(run: (dataDir: string) => Promise<void>): Promise<void> {
+  const dataDir = await mkdtemp(join(tmpdir(), "agentpair-envelope-seq-"));
+  try {
+    await run(dataDir);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
   }
+}
 
+describe("EnvelopeSeqStore", () => {
   it("getLastAccepted returns 0 for unknown (thread, from)", async () => {
     const store = new MemoryEnvelopeSeqStore();
     await store.init("alice");
@@ -25,15 +21,17 @@ describe("EnvelopeSeqStore", () => {
   });
 
   it("commitAccepted persists after flush", async () => {
-    const dataDir = await tempDataDir();
-    const store = createFileEnvelopeSeqStore({ dataDir });
-    await store.init("alice");
-    store.commitAccepted("thread-T", "alice", 5);
-    await store.flush();
+    await withTempDataDir(async (dataDir) => {
+      const store = createFileEnvelopeSeqStore({ dataDir });
+      await store.init("alice");
+      store.commitAccepted("thread-T", "alice", 5);
+      await store.flush();
 
-    const reloaded = createFileEnvelopeSeqStore({ dataDir });
-    await reloaded.init("alice");
-    expect(reloaded.getLastAccepted("thread-T", "alice")).toBe(5);
+      const reloaded = createFileEnvelopeSeqStore({ dataDir });
+      await reloaded.init("alice");
+      expect(reloaded.getLastAccepted("thread-T", "alice")).toBe(5);
+      await reloaded.flush();
+    });
   });
 
   it("independent (T, alice) vs (T, bob) streams", async () => {
@@ -46,15 +44,17 @@ describe("EnvelopeSeqStore", () => {
   });
 
   it("survives reload from disk", async () => {
-    const dataDir = await tempDataDir();
-    const first = createFileEnvelopeSeqStore({ dataDir });
-    await first.init("alice");
-    first.commitAccepted("thread-T", "alice", 3);
-    await first.flush();
+    await withTempDataDir(async (dataDir) => {
+      const first = createFileEnvelopeSeqStore({ dataDir });
+      await first.init("alice");
+      first.commitAccepted("thread-T", "alice", 3);
+      await first.flush();
 
-    const second = createFileEnvelopeSeqStore({ dataDir });
-    await second.init("alice");
-    expect(second.getLastAccepted("thread-T", "alice")).toBe(3);
+      const second = createFileEnvelopeSeqStore({ dataDir });
+      await second.init("alice");
+      expect(second.getLastAccepted("thread-T", "alice")).toBe(3);
+      await second.flush();
+    });
   });
 
   it("MemoryEnvelopeSeqStore works without dataDir", async () => {
