@@ -83,6 +83,7 @@ export async function handleInbox(
   const keyPair = await ctx.keyStore.loadOrCreate();
   const agentId = publicKeyToAgentId(keyPair.publicKey);
   await ctx.inboxCursor.init(agentId);
+  await ctx.envelopeSeq.init(agentId);
 
   const includeHistory = input.include_history ?? false;
   let cursorReset = false;
