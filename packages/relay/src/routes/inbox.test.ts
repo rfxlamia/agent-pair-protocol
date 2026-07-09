@@ -1,8 +1,11 @@
 import {
-  createEnvelope,
+  type OuterEnvelope,
+  createOuterEnvelope,
+  deserializeOuterEnvelope,
   generateKeyPair,
+  parseEnvelopeBody,
   publicKeyToAgentId,
-  serializeEnvelope,
+  serializeOuterEnvelope,
 } from "@agentpair/protocol";
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
@@ -25,6 +28,27 @@ function signedAllowlist(
   const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
   const sig = signChallenge(JSON.stringify(ordered), owner.secretKey);
   return { agent_id: agentId, allowed, sig };
+}
+
+function bodyFromGetItem(item: Record<string, unknown>) {
+  return parseEnvelopeBody(deserializeOuterEnvelope(JSON.stringify(item)));
+}
+
+function tamperBodyFrom(outer: OuterEnvelope, from: string): string {
+  const parsed = JSON.parse(serializeOuterEnvelope(outer)) as {
+    v: number;
+    from: string;
+    to: string;
+    blob: string;
+    sig: string;
+  };
+  const bodyObj = JSON.parse(Buffer.from(parsed.blob, "base64url").toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+  bodyObj.from = from;
+  parsed.blob = Buffer.from(JSON.stringify(bodyObj)).toString("base64url");
+  return JSON.stringify(parsed);
 }
 
 describe("inbox relay routes", () => {
@@ -75,7 +99,7 @@ describe("inbox relay routes", () => {
     sender: ReturnType<typeof generateKeyPair>,
     seq: number,
   ) {
-    const envelope = createEnvelope({
+    const envelope = createOuterEnvelope({
       sender,
       recipientAgentId: recipientId,
       type: "chat.message",
@@ -89,7 +113,7 @@ describe("inbox relay routes", () => {
     return fetch(`${BASE_URL}/inbox/${recipientId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(envelope),
+      body: serializeOuterEnvelope(envelope),
     });
   }
 
@@ -102,7 +126,7 @@ describe("inbox relay routes", () => {
 
   it("rejects spoofed envelope with invalid signature", async () => {
     const spoofId = crypto.randomUUID();
-    const envelope = createEnvelope({
+    const envelope = createOuterEnvelope({
       sender: stranger,
       recipientAgentId: bobId,
       type: "chat.message",
@@ -112,13 +136,11 @@ describe("inbox relay routes", () => {
       payload: utf8ToBytes("spoof"),
       id: spoofId,
     });
-    const tampered = JSON.parse(serializeEnvelope(envelope)) as Record<string, unknown>;
-    tampered.from = aliceId;
 
     const res = await fetch(`${BASE_URL}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(tampered),
+      body: tamperBodyFrom(envelope, aliceId),
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
@@ -144,23 +166,21 @@ describe("inbox relay routes", () => {
   });
 
   it("returns 400 for non-positive ttl on POST", async () => {
-    const envelope = createEnvelope({
+    const envelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
       type: "chat.message",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq: 1,
-      ttl: 3600,
+      ttl: 0,
       payload: utf8ToBytes("bad-ttl"),
       id: crypto.randomUUID(),
     });
-    const tampered = JSON.parse(serializeEnvelope(envelope)) as Record<string, unknown>;
-    tampered.ttl = 0;
 
     const res = await fetch(`${BASE_URL}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(tampered),
+      body: serializeOuterEnvelope(envelope),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -168,7 +188,7 @@ describe("inbox relay routes", () => {
   });
 
   it("returns 400 for malformed from agent id on POST", async () => {
-    const envelope = createEnvelope({
+    const envelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
       type: "chat.message",
@@ -178,13 +198,11 @@ describe("inbox relay routes", () => {
       payload: utf8ToBytes("bad-from"),
       id: crypto.randomUUID(),
     });
-    const tampered = JSON.parse(serializeEnvelope(envelope)) as Record<string, unknown>;
-    tampered.from = "not-a-valid-agent-id";
 
     const res = await fetch(`${BASE_URL}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(tampered),
+      body: tamperBodyFrom(envelope, "not-a-valid-agent-id"),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -208,8 +226,8 @@ describe("inbox relay routes", () => {
     const postRes = await fetch(`${BASE_URL}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -230,9 +248,10 @@ describe("inbox relay routes", () => {
       `${BASE_URL}/inbox/${bobId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
     );
     expect(pullRes.status).toBe(200);
-    const body = (await pullRes.json()) as { envelopes: Array<{ id: string; seq: number }> };
-    const delivered = body.envelopes.find((item) => item.id === envelopeId);
-    expect(delivered?.seq).toBe(42);
+    const body = (await pullRes.json()) as { envelopes: Array<Record<string, unknown>> };
+    const delivered = body.envelopes.find((item) => bodyFromGetItem(item).id === envelopeId);
+    expect(delivered).toBeDefined();
+    expect(bodyFromGetItem(delivered as Record<string, unknown>).seq).toBe(42);
   });
 
   it("returns 401 challenge when GET inbox has no signature", async () => {
@@ -268,7 +287,7 @@ describe("inbox relay routes", () => {
   it("returns advisory gaps when sequence numbers have a gap", async () => {
     const gapThread = "660e8400-e29b-41d4-a716-446655440099";
     for (const seq of [1, 2, 4]) {
-      const envelope = createEnvelope({
+      const envelope = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
         type: "chat.message",
@@ -281,7 +300,7 @@ describe("inbox relay routes", () => {
       const postRes = await fetch(`${BASE_URL}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(envelope),
+        body: serializeOuterEnvelope(envelope),
       });
       expect(postRes.status).toBe(204);
     }
@@ -385,8 +404,8 @@ describe("inbox relay routes", () => {
     const bobToAlice = await fetch(`${BASE_URL}/inbox/${aliceId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: bob,
           recipientAgentId: aliceId,
           type: "chat.message",
@@ -456,8 +475,8 @@ describe("inbox relay routes", () => {
     const bobToAlice = await fetch(`${BASE_URL}/inbox/${aliceId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: bob,
           recipientAgentId: aliceId,
           type: "chat.message",
@@ -540,7 +559,7 @@ describe("inbox relay routes", () => {
     const beforeBody = (await beforePull.json()) as { cursor: number };
     const since = beforeBody.cursor ?? 0;
 
-    const toBob = createEnvelope({
+    const toBob = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
       type: "count",
@@ -550,7 +569,7 @@ describe("inbox relay routes", () => {
       payload: utf8ToBytes("1"),
       id: crypto.randomUUID(),
     });
-    const toAlice = createEnvelope({
+    const toAlice = createOuterEnvelope({
       sender: bob,
       recipientAgentId: aliceId,
       type: "count",
@@ -568,7 +587,7 @@ describe("inbox relay routes", () => {
       const postRes = await fetch(`${BASE_URL}/inbox/${recipient}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(envelope),
+        body: serializeOuterEnvelope(envelope),
       });
       expect(postRes.status).toBe(204);
     }
@@ -581,9 +600,9 @@ describe("inbox relay routes", () => {
       `${BASE_URL}/inbox/${aliceId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { envelopes: Array<{ seq: number }> };
+    const body = (await res.json()) as { envelopes: Array<Record<string, unknown>> };
     expect(body.envelopes).toHaveLength(1);
-    expect(body.envelopes[0]?.seq).toBe(2);
+    expect(bodyFromGetItem(body.envelopes[0] as Record<string, unknown>).seq).toBe(2);
   });
 
   it("returns 403 (not 404) for unknown challenge nonce per spec", async () => {
@@ -592,6 +611,181 @@ describe("inbox relay routes", () => {
       `${BASE_URL}/inbox/${bobId}?since=0&challenge=nonexistent-nonce&sig=${encodeURIComponent(sig)}`,
     );
     expect(res.status).toBe(403);
+  });
+
+  describe("v1 outer envelope wire", () => {
+    async function pullInbox(since = 0) {
+      const challengeRes = await fetch(`${BASE_URL}/inbox/${bobId}?since=${since}`);
+      const { challenge } = (await challengeRes.json()) as { challenge: string };
+      const sig = signChallenge(challenge, bob.secretKey);
+      return fetch(
+        `${BASE_URL}/inbox/${bobId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+      );
+    }
+
+    async function postV1Wire(wire: string) {
+      return fetch(`${BASE_URL}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: wire,
+      });
+    }
+
+    it("accepts valid v1 outer POST with 204 and stores exact wire bytes", async () => {
+      const envelopeId = crypto.randomUUID();
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "chat.message",
+        thread: "cc0e8400-e29b-41d4-a716-446655440011",
+        seq: 42,
+        ttl: 3600,
+        payload: utf8ToBytes("round-trip"),
+        id: envelopeId,
+      });
+      const wire = serializeOuterEnvelope(outer);
+      const body = parseEnvelopeBody(outer);
+
+      const postRes = await postV1Wire(wire);
+      expect(postRes.status).toBe(204);
+
+      const row = db
+        .prepare(
+          "SELECT envelope_json, id, thread_id, seq, sender_agent_id FROM inbox WHERE id = ?",
+        )
+        .get(envelopeId) as {
+        envelope_json: string;
+        id: string;
+        thread_id: string;
+        seq: number;
+        sender_agent_id: string;
+      };
+      expect(row.envelope_json).toBe(wire);
+      expect(row.id).toBe(body.id);
+      expect(row.thread_id).toBe(body.thread);
+      expect(row.seq).toBe(body.seq);
+      expect(row.sender_agent_id).toBe(body.from);
+
+      const pullRes = await pullInbox(0);
+      expect(pullRes.status).toBe(200);
+      const pullBody = (await pullRes.json()) as { envelopes: Array<Record<string, unknown>> };
+      const delivered = pullBody.envelopes.find((item) => bodyFromGetItem(item).id === envelopeId);
+      expect(delivered).toEqual(JSON.parse(wire));
+    });
+
+    it("returns 400 invalid_envelope for invalid blob JSON and inserts no row", async () => {
+      const beforeCount = (
+        db
+          .prepare("SELECT COUNT(*) AS count FROM inbox WHERE sender_agent_id = ?")
+          .get(aliceId) as {
+          count: number;
+        }
+      ).count;
+
+      const wire = JSON.stringify({
+        v: 1,
+        from: aliceId,
+        to: bobId,
+        blob: Buffer.from("not-json", "utf8").toString("base64url"),
+        sig: "a".repeat(86),
+      });
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("invalid_envelope");
+
+      const afterCount = (
+        db
+          .prepare("SELECT COUNT(*) AS count FROM inbox WHERE sender_agent_id = ?")
+          .get(aliceId) as {
+          count: number;
+        }
+      ).count;
+      expect(afterCount).toBe(beforeCount);
+    });
+
+    it("returns 403 invalid_signature for bad sig", async () => {
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "chat.message",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 99,
+        ttl: 3600,
+        payload: utf8ToBytes("bad-sig"),
+      });
+      const tampered = { ...outer, sig: `${outer.sig.slice(0, -2)}XX` };
+      const wire = serializeOuterEnvelope(tampered);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("invalid_signature");
+
+      const count = (
+        db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE seq = ?").get(99) as { count: number }
+      ).count;
+      expect(count).toBe(0);
+    });
+
+    it("returns 400 invalid_envelope for v0 flat envelope", async () => {
+      const flatId = crypto.randomUUID();
+      const flat = JSON.stringify({
+        id: flatId,
+        from: aliceId,
+        to: bobId,
+        type: "chat.message",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 100,
+        ttl: 3600,
+        payload: Buffer.from("v0-flat", "utf8").toString("base64url"),
+        sig: "fake-sig-string",
+      });
+
+      const res = await postV1Wire(flat);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("invalid_envelope");
+    });
+
+    it("returns 400 invalid_envelope when outer.v !== 1", async () => {
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "chat.message",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 101,
+        ttl: 3600,
+        payload: utf8ToBytes("v2-outer"),
+      });
+      const parsed = JSON.parse(serializeOuterEnvelope(outer)) as Record<string, unknown>;
+      parsed.v = 2;
+      const wire = JSON.stringify(parsed);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("invalid_envelope");
+    });
+
+    it("returns 400 recipient_mismatch when body.to !== path agentId", async () => {
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: aliceId,
+        type: "chat.message",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 102,
+        ttl: 3600,
+        payload: utf8ToBytes("wrong-recipient"),
+      });
+      const wire = serializeOuterEnvelope(outer);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("recipient_mismatch");
+    });
   });
 
   it("enforces per-IP rate limits on POST /pair", async () => {
@@ -688,8 +882,8 @@ describe("inbox relay regressions (isolated db)", () => {
     const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -720,8 +914,8 @@ describe("inbox relay regressions (isolated db)", () => {
     const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -755,8 +949,8 @@ describe("inbox relay regressions (isolated db)", () => {
     const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -782,7 +976,9 @@ describe("inbox relay regressions (isolated db)", () => {
       envelopes: Array<{ id: string }>;
       cursor: number;
     };
-    expect(body.envelopes.some((envelope) => envelope.id === envelopeId)).toBe(true);
+    expect(body.envelopes.some((envelope) => bodyFromGetItem(envelope).id === envelopeId)).toBe(
+      true,
+    );
     expect(body.cursor).toBeLessThan(1_000_000_000_000);
   });
 
@@ -792,8 +988,8 @@ describe("inbox relay regressions (isolated db)", () => {
       const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "chat.message",
@@ -816,8 +1012,8 @@ describe("inbox relay regressions (isolated db)", () => {
     const gapPost = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -846,7 +1042,7 @@ describe("inbox relay regressions (isolated db)", () => {
   it("bounds gap detection queries for large thread history", async () => {
     const thread = "990e8400-e29b-41d4-a716-446655440033";
     for (let seq = 1; seq <= 50; seq += 1) {
-      const envelope = createEnvelope({
+      const envelope = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
         type: "chat.message",
@@ -865,7 +1061,7 @@ describe("inbox relay regressions (isolated db)", () => {
       ).run(
         crypto.randomUUID(),
         bobId,
-        serializeEnvelope(envelope),
+        serializeOuterEnvelope(envelope),
         aliceId,
         thread,
         seq,
@@ -883,8 +1079,8 @@ describe("inbox relay regressions (isolated db)", () => {
       const postRes = await fetch(`${ISOLATED_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "chat.message",
@@ -991,8 +1187,8 @@ describe("inbox gap detection (isolated db)", () => {
       const postRes = await fetch(`${GAP_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "chat.message",
@@ -1015,8 +1211,8 @@ describe("inbox gap detection (isolated db)", () => {
       const postRes = await fetch(`${GAP_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "chat.message",
@@ -1043,8 +1239,8 @@ describe("inbox gap detection (isolated db)", () => {
       const postRes = await fetch(`${GAP_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "chat.message",
@@ -1065,8 +1261,8 @@ describe("inbox gap detection (isolated db)", () => {
     const gapPost = await fetch(`${GAP_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -1150,8 +1346,8 @@ describe("inbox rowid cursor (isolated db)", () => {
     const firstPost = await fetch(`${CURSOR_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -1168,18 +1364,18 @@ describe("inbox rowid cursor (isolated db)", () => {
     const firstPull = await authenticatedInboxPull(0);
     expect(firstPull.status).toBe(200);
     const firstBody = (await firstPull.json()) as {
-      envelopes: Array<{ id: string }>;
+      envelopes: Array<Record<string, unknown>>;
       cursor: number;
     };
     expect(firstBody.envelopes).toHaveLength(1);
-    expect(firstBody.envelopes[0]?.id).toBe(firstId);
+    expect(bodyFromGetItem(firstBody.envelopes[0] as Record<string, unknown>).id).toBe(firstId);
 
     const receivedAt = Date.now();
     for (const [index, id] of ids.slice(1).entries()) {
       if (id === undefined) {
         continue;
       }
-      const envelope = createEnvelope({
+      const envelope = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
         type: "chat.message",
@@ -1192,7 +1388,7 @@ describe("inbox rowid cursor (isolated db)", () => {
       const postRes = await fetch(`${CURSOR_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(envelope),
+        body: serializeOuterEnvelope(envelope),
       });
       expect(postRes.status).toBe(204);
       db.prepare("UPDATE inbox SET received_at = ? WHERE id = ?").run(receivedAt, id);
@@ -1201,9 +1397,9 @@ describe("inbox rowid cursor (isolated db)", () => {
     const secondPull = await authenticatedInboxPull(firstBody.cursor);
     expect(secondPull.status).toBe(200);
     const secondBody = (await secondPull.json()) as {
-      envelopes: Array<{ id: string }>;
+      envelopes: Array<Record<string, unknown>>;
     };
-    expect(secondBody.envelopes.map((envelope) => envelope.id).sort()).toEqual(
+    expect(secondBody.envelopes.map((envelope) => bodyFromGetItem(envelope).id).sort()).toEqual(
       [ids[1], ids[2]].sort(),
     );
   });
@@ -1254,7 +1450,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
 
   it("garbage-collects expired inbox rows on POST", async () => {
     const expiredId = crypto.randomUUID();
-    const expiredEnvelope = createEnvelope({
+    const expiredEnvelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
       type: "chat.message",
@@ -1265,7 +1461,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
       id: expiredId,
     });
     const freshId = crypto.randomUUID();
-    const freshEnvelope = createEnvelope({
+    const freshEnvelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
       type: "chat.message",
@@ -1285,9 +1481,9 @@ describe("inbox ttl garbage collection (isolated db)", () => {
     ).run(
       expiredId,
       bobId,
-      serializeEnvelope(expiredEnvelope),
+      serializeOuterEnvelope(expiredEnvelope),
       aliceId,
-      expiredEnvelope.thread,
+      parseEnvelopeBody(expiredEnvelope).thread,
       1,
       "chat.message",
       now - 7200_000,
@@ -1301,9 +1497,9 @@ describe("inbox ttl garbage collection (isolated db)", () => {
     ).run(
       freshId,
       bobId,
-      serializeEnvelope(freshEnvelope),
+      serializeOuterEnvelope(freshEnvelope),
       aliceId,
-      freshEnvelope.thread,
+      parseEnvelopeBody(freshEnvelope).thread,
       1,
       "chat.message",
       now,
@@ -1313,8 +1509,8 @@ describe("inbox ttl garbage collection (isolated db)", () => {
     const postRes = await fetch(`${INBOX_GC_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(
-        createEnvelope({
+      body: serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -1400,7 +1596,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
     const freshId = crypto.randomUUID();
     const now = Date.now();
 
-    const expiredEnvelope = createEnvelope({
+    const expiredEnvelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
       type: "chat.message",
@@ -1410,7 +1606,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
       payload: utf8ToBytes("expired-pull"),
       id: expiredId,
     });
-    const freshEnvelope = createEnvelope({
+    const freshEnvelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
       type: "chat.message",
@@ -1429,9 +1625,9 @@ describe("inbox ttl gc via GET (isolated db)", () => {
     ).run(
       expiredId,
       bobId,
-      serializeEnvelope(expiredEnvelope),
+      serializeOuterEnvelope(expiredEnvelope),
       aliceId,
-      expiredEnvelope.thread,
+      parseEnvelopeBody(expiredEnvelope).thread,
       1,
       "chat.message",
       now - 7200_000,
@@ -1445,9 +1641,9 @@ describe("inbox ttl gc via GET (isolated db)", () => {
     ).run(
       freshId,
       bobId,
-      serializeEnvelope(freshEnvelope),
+      serializeOuterEnvelope(freshEnvelope),
       aliceId,
-      freshEnvelope.thread,
+      parseEnvelopeBody(freshEnvelope).thread,
       1,
       "chat.message",
       now,
@@ -1459,9 +1655,11 @@ describe("inbox ttl gc via GET (isolated db)", () => {
 
     const pullRes = await authenticatedInboxPull(0);
     expect(pullRes.status).toBe(200);
-    const body = (await pullRes.json()) as { envelopes: Array<{ id: string }> };
-    expect(body.envelopes.some((envelope) => envelope.id === expiredId)).toBe(false);
-    expect(body.envelopes.some((envelope) => envelope.id === freshId)).toBe(true);
+    const body = (await pullRes.json()) as { envelopes: Array<Record<string, unknown>> };
+    expect(body.envelopes.some((envelope) => bodyFromGetItem(envelope).id === expiredId)).toBe(
+      false,
+    );
+    expect(body.envelopes.some((envelope) => bodyFromGetItem(envelope).id === freshId)).toBe(true);
   });
 });
 
@@ -1519,8 +1717,8 @@ describe("inbox ttl gc throttle (isolated db)", () => {
     ).run(
       expiredId,
       bobId,
-      serializeEnvelope(
-        createEnvelope({
+      serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -1543,8 +1741,8 @@ describe("inbox ttl gc throttle (isolated db)", () => {
       fetch(`${INBOX_GC_THROTTLE_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "chat.message",
@@ -1575,8 +1773,8 @@ describe("inbox ttl gc throttle (isolated db)", () => {
     ).run(
       secondExpiredId,
       bobId,
-      serializeEnvelope(
-        createEnvelope({
+      serializeOuterEnvelope(
+        createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
           type: "chat.message",
@@ -1629,16 +1827,7 @@ describe("inbox ttl schema migration", () => {
 
     const rowId = crypto.randomUUID();
     const receivedAt = Date.now() - 1800_000;
-    const envelope = createEnvelope({
-      sender: alice,
-      recipientAgentId: bobId,
-      type: "chat.message",
-      thread: "dd1e8400-e29b-41d4-a716-446655440001",
-      seq: 1,
-      ttl: 1800,
-      payload: utf8ToBytes("legacy"),
-      id: rowId,
-    });
+    const thread = "dd1e8400-e29b-41d4-a716-446655440001";
     legacyDb
       .prepare(
         `INSERT INTO inbox (
@@ -1649,9 +1838,19 @@ describe("inbox ttl schema migration", () => {
       .run(
         rowId,
         bobId,
-        serializeEnvelope(envelope),
+        JSON.stringify({
+          id: rowId,
+          from: aliceId,
+          to: bobId,
+          type: "chat.message",
+          thread,
+          seq: 1,
+          ttl: 1800,
+          payload: "legacy",
+          sig: "fake-sig",
+        }),
         aliceId,
-        envelope.thread,
+        thread,
         1,
         "chat.message",
         receivedAt,
@@ -1724,8 +1923,8 @@ describe("inbox global turn-taking seq (isolated db)", () => {
       const postRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "suggestion",
@@ -1742,8 +1941,8 @@ describe("inbox global turn-taking seq (isolated db)", () => {
 
     const res = await pullBobInbox(0);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { envelopes: Array<{ seq: number }> };
-    expect(body.envelopes.map((envelope) => envelope.seq).sort()).toEqual([1, 3]);
+    const body = (await res.json()) as { envelopes: Array<Record<string, unknown>> };
+    expect(body.envelopes.map((envelope) => bodyFromGetItem(envelope).seq).sort()).toEqual([1, 3]);
   });
 
   it("detects true gaps when global turn-taking skips an odd slot", async () => {
@@ -1752,8 +1951,8 @@ describe("inbox global turn-taking seq (isolated db)", () => {
       const postRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "suggestion",
@@ -1786,8 +1985,8 @@ describe("inbox global turn-taking seq (isolated db)", () => {
       const postRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: serializeEnvelope(
-          createEnvelope({
+        body: serializeOuterEnvelope(
+          createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
             type: "suggestion",
@@ -1804,16 +2003,16 @@ describe("inbox global turn-taking seq (isolated db)", () => {
 
     const res = await pullBobInbox(0);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      envelopes: Array<{ seq: number; thread: string }>;
-    };
-    const burstEnvelopes = body.envelopes.filter((envelope) => envelope.thread === thread);
-    expect(burstEnvelopes.map((envelope) => envelope.seq).sort()).toEqual([1, 4]);
+    const body = (await res.json()) as { envelopes: Array<Record<string, unknown>> };
+    const burstEnvelopes = body.envelopes.filter(
+      (envelope) => bodyFromGetItem(envelope).thread === thread,
+    );
+    expect(burstEnvelopes.map((envelope) => bodyFromGetItem(envelope).seq).sort()).toEqual([1, 4]);
   });
 
   it("returns 409 for duplicate envelope id on POST", async () => {
     const thread = "bb0e8400-e29b-41d4-a716-446655440099";
-    const envelope = createEnvelope({
+    const envelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
       type: "suggestion",
@@ -1827,14 +2026,14 @@ describe("inbox global turn-taking seq (isolated db)", () => {
     const first = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(envelope),
+      body: serializeOuterEnvelope(envelope),
     });
     expect(first.status).toBe(204);
 
     const second = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: serializeEnvelope(envelope),
+      body: serializeOuterEnvelope(envelope),
     });
     expect(second.status).toBe(409);
     const body = (await second.json()) as { error: string };
