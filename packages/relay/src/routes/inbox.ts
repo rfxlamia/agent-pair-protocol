@@ -1,10 +1,12 @@
 import { randomBytes } from "node:crypto";
 import {
-  type Envelope,
+  type EnvelopeBody,
+  type OuterEnvelope,
   agentIdToPublicKey,
-  deserializeEnvelope,
+  deserializeOuterEnvelope,
+  parseEnvelopeBody,
   verify,
-  verifyEnvelope,
+  verifyOuterEnvelope,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
@@ -287,40 +289,51 @@ export function createInboxRoutes(
   routes.post("/inbox/:agentId", rateLimit, async (c) => {
     maybeGarbageCollectInbox(db, inboxGcState);
     const recipientAgentId = c.req.param("agentId");
-    const envelopeJson = await c.req.text();
+    const wireText = await c.req.text();
 
-    let envelope: Envelope;
+    let outer: OuterEnvelope;
     try {
-      envelope = deserializeEnvelope(envelopeJson);
+      outer = deserializeOuterEnvelope(wireText);
     } catch {
       return c.json({ error: "invalid_envelope" }, 400);
     }
 
-    if (envelope.to !== recipientAgentId) {
+    if (outer.v !== 1) {
+      return c.json({ error: "invalid_envelope" }, 400);
+    }
+
+    let body: EnvelopeBody;
+    try {
+      body = parseEnvelopeBody(outer);
+    } catch {
+      return c.json({ error: "invalid_envelope" }, 400);
+    }
+
+    if (body.to !== recipientAgentId) {
       return c.json({ error: "recipient_mismatch" }, 400);
     }
 
-    if (!Number.isFinite(envelope.ttl) || envelope.ttl <= 0) {
+    if (!Number.isFinite(body.ttl) || body.ttl <= 0) {
       return c.json({ error: "invalid_envelope" }, 400);
     }
 
     let senderPublicKey: Uint8Array;
     try {
-      senderPublicKey = agentIdToPublicKey(envelope.from);
+      senderPublicKey = agentIdToPublicKey(body.from);
     } catch {
       return c.json({ error: "invalid_envelope" }, 400);
     }
 
-    if (!verifyEnvelope(envelope, senderPublicKey)) {
+    if (!verifyOuterEnvelope(outer, senderPublicKey)) {
       return c.json({ error: "invalid_signature" }, 403);
     }
 
-    if (!isSenderAllowed(db, recipientAgentId, envelope.from)) {
+    if (!isSenderAllowed(db, recipientAgentId, body.from)) {
       return c.json({ error: "sender_not_allowed" }, 403);
     }
 
     const now = Date.now();
-    const expiresAt = now + envelope.ttl * 1000;
+    const expiresAt = now + body.ttl * 1000;
     const insert = db
       .prepare(
         `INSERT INTO inbox (
@@ -330,13 +343,13 @@ export function createInboxRoutes(
        ON CONFLICT(id) DO NOTHING`,
       )
       .run(
-        envelope.id,
+        body.id,
         recipientAgentId,
-        envelopeJson,
-        envelope.from,
-        envelope.thread,
-        envelope.seq,
-        envelope.type,
+        wireText,
+        body.from,
+        body.thread,
+        body.seq,
+        body.type,
         now,
         expiresAt,
       );
