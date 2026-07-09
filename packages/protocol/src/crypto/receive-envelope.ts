@@ -2,10 +2,11 @@ import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import {
   type EnvelopeBody,
   type OuterEnvelope,
+  decryptEnvelopePayload,
   deserializeOuterEnvelope,
   verifyOuterEnvelope,
 } from "./envelope.js";
-import { agentIdToPublicKey } from "./keys.js";
+import { type KeyPair, agentIdToPublicKey } from "./keys.js";
 
 export const MAX_ENVELOPE_WIRE_BYTES = 65536;
 
@@ -21,6 +22,7 @@ export interface SeqStore {
 
 export interface ReceiveEnvelopeDeps {
   isBonded(from: string): boolean;
+  selfKeyPair: KeyPair;
   seqStore: SeqStore;
   dispatch(
     type: string,
@@ -125,6 +127,30 @@ export async function receiveEnvelope(
     return { ok: false, error: "routing_mismatch", body };
   }
 
-  // T1: steps 7–8 deferred
-  return { ok: false, error: "envelope_incomplete" };
+  // Step 7: replay/ordering — seq before ttl
+  const lastAccepted = _deps.seqStore.getLastAccepted(body.thread, body.from);
+  if (body.seq <= lastAccepted) {
+    return { ok: false, error: "stale_seq", body };
+  }
+
+  const now = (_deps.nowUnix ?? (() => Math.floor(Date.now() / 1000)))();
+  if (body.ttl <= now) {
+    return { ok: false, error: "envelope_expired", body };
+  }
+
+  // Step 8: decrypt, dispatch, commit on success only
+  let plaintext: Uint8Array;
+  try {
+    plaintext = decryptEnvelopePayload(body, _deps.selfKeyPair, senderPublicKey);
+  } catch {
+    return { ok: false, error: "invalid_payload", body };
+  }
+
+  const dispatchResult = await _deps.dispatch(body.type, plaintext);
+  if (!dispatchResult.ok) {
+    return { ok: false, error: dispatchResult.error, body };
+  }
+
+  _deps.seqStore.commitAccepted(body.thread, body.from, body.seq);
+  return { ok: true, body, outer, plaintext };
 }
