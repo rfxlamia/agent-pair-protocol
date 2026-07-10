@@ -22,14 +22,19 @@ export interface SeqStore {
   commitAccepted(thread: string, from: string, seq: number): void;
 }
 
+export type ReceiveDispatchError =
+  | "unsupported_envelope_type"
+  | "invalid_payload"
+  | "close_not_allowed";
+
 export interface ReceiveEnvelopeDeps {
   isBonded(from: string): boolean;
   selfKeyPair: KeyPair;
   seqStore: SeqStore;
   dispatch(
-    type: string,
+    body: EnvelopeBody,
     plaintext: Uint8Array,
-  ): Promise<{ ok: true } | { ok: false; error: "unsupported_envelope_type" | "invalid_payload" }>;
+  ): Promise<{ ok: true } | { ok: false; error: ReceiveDispatchError }>;
   nowUnix?: () => number;
 }
 
@@ -135,7 +140,7 @@ export async function receiveEnvelope(
     return { ok: false, error: "invalid_payload", body };
   }
 
-  const dispatchResult = await deps.dispatch(body.type, plaintext);
+  const dispatchResult = await deps.dispatch(body, plaintext);
   if (!dispatchResult.ok) {
     return { ok: false, error: dispatchResult.error, body };
   }

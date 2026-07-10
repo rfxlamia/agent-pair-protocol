@@ -968,6 +968,7 @@ export function createSessionStateMachine(
       };
     },
 
+    /** Unilateral close (§8.3): `closed` + `rejectReason`, no `coSignedHash`. */
     async handleThreadClose(thread: string, reason?: string) {
       const found = store.get(thread);
       if (!found) {

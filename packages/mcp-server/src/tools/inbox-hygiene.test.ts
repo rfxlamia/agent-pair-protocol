@@ -1105,6 +1105,68 @@ describe("M1.4 envelope types", () => {
     );
     expect(blocked).toEqual({ ok: false, error: "thread_closed" });
   });
+
+  it("rejects core.close from bonded peer who is not a session participant", async () => {
+    const { aliceId, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const charlieKeys = generateKeyPair();
+    const charlieId = publicKeyToAgentId(charlieKeys.publicKey);
+    bobCtx.allowlist.set(bobId, [aliceId, charlieId]);
+    bobCtx.bonds.add(bobId, { peer: charlieId, scope: ["msg"], mode: "bonded_contact" });
+
+    const thread = crypto.randomUUID();
+    bobCtx.sessionStore.upsert({
+      thread,
+      initiator: aliceId,
+      recipient: bobId,
+      role: "recipient",
+      status: "live",
+      goal: "probe",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+
+    const wire = makeWireEnvelope(charlieKeys, bobId, {
+      type: "core.close",
+      payload: { reason: "intruder" },
+      thread,
+      seq: 1,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    expect(result.rejected).toEqual([expect.objectContaining({ error: "close_not_allowed" })]);
+    expect(result.envelopes).toHaveLength(0);
+    expect(bobCtx.closedThreads.isClosed(thread)).toBe(false);
+    expect(bobCtx.envelopeSeq.getLastAccepted(thread, charlieId)).toBe(0);
+  });
+
+  it("renders nego.open payload as structured object", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const openPayload = {
+      goal: "test",
+      acceptance: [{ id: "a1", test: "judgment" as const, desc: "d" }],
+      budget: { max_turns: 3 },
+      mandate: { agent_may: ["propose"], human_required: ["sign"] },
+      expires_at: Date.now() + 3_600_000,
+    };
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "nego.open",
+      payload: openPayload,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    const open = result.envelopes.find((e) => e.type === "nego.open");
+    expect(open?.payload).toEqual(openPayload);
+  });
 });
 
 describe("inbox send absolute ttl (M1.2 §4.2)", () => {

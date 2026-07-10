@@ -24,16 +24,20 @@ import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const processedEnvelopeIds = new WeakMap<AgentContext, Set<string>>();
 
-function parseStructuredInboxPayload(type: string, rawPayload: string): unknown {
+function parseStructuredInboxPayload(rawPayload: string): unknown {
   try {
-    const parsed = JSON.parse(rawPayload);
-    if (type === "core.msg" || type === "core.close" || type === "core.ack") {
-      return parsed;
-    }
+    return JSON.parse(rawPayload);
   } catch {
-    // fall through
+    return rawPayload;
   }
-  return rawPayload;
+}
+
+function isThreadCloseAuthorized(ctx: AgentContext, thread: string, senderId: string): boolean {
+  const session = ctx.sessionStore.get(thread);
+  if (!session) {
+    return true;
+  }
+  return session.initiator === senderId || session.recipient === senderId;
 }
 
 function closeReasonFromPayload(inboxPayload: unknown): string | undefined {
@@ -156,8 +160,8 @@ export async function handleInbox(
       isBonded: (from) => bondedPeerSet.has(from),
       selfKeyPair: keyPair,
       seqStore: ctx.envelopeSeq,
-      dispatch: async (type, plaintext) => {
-        if (!isKnownEnvelopeType(type)) {
+      dispatch: async (body, plaintext) => {
+        if (!isKnownEnvelopeType(body.type)) {
           return { ok: false as const, error: "unsupported_envelope_type" };
         }
         let parsed: unknown;
@@ -166,7 +170,14 @@ export async function handleInbox(
         } catch {
           return { ok: false as const, error: "invalid_payload" };
         }
-        return parseEnvelopePayload(type, parsed);
+        const payloadResult = parseEnvelopePayload(body.type, parsed);
+        if (!payloadResult.ok) {
+          return payloadResult;
+        }
+        if (body.type === "core.close" && !isThreadCloseAuthorized(ctx, body.thread, body.from)) {
+          return { ok: false as const, error: "close_not_allowed" };
+        }
+        return payloadResult;
       },
     });
 
@@ -184,7 +195,7 @@ export async function handleInbox(
     // envelope won't be redelivered (stale_seq would reject if it were). Session
     // side effects may still fail after commit — in-process `seen` dedupes by body.id.
     const payload = new TextDecoder().decode(plaintext);
-    const inboxPayload = parseStructuredInboxPayload(body.type, payload);
+    const inboxPayload = parseStructuredInboxPayload(payload);
 
     let pendingId: string | undefined;
     let sessionStatus: string | undefined;
@@ -337,9 +348,13 @@ export async function handleClose(
 
   const keyPair = await ctx.keyStore.loadOrCreate();
   const senderId = publicKeyToAgentId(keyPair.publicKey);
+  const session = ctx.sessionStore.get(input.thread);
+  if (session && session.initiator !== senderId && session.recipient !== senderId) {
+    return toolTextResult({ ok: false, error: "close_not_allowed" });
+  }
+
   let to = input.to;
   if (!to) {
-    const session = ctx.sessionStore.get(input.thread);
     if (session) {
       to = session.initiator === senderId ? session.recipient : session.initiator;
     }
@@ -364,9 +379,10 @@ export async function handleClose(
     ttl: defaultEnvelopeTtl(),
     payload: utf8ToBytes(JSON.stringify(payloadObj)),
   });
+  const closeBody = parseEnvelopeBody(outer);
 
   await ctx.relay.sendEnvelope(to, outer);
-  recordSentSeq(ctx, input.thread, parseEnvelopeBody(outer).seq);
+  recordSentSeq(ctx, input.thread, closeBody.seq);
 
   ctx.closedThreads.markClosed(input.thread, {
     closed_at: Math.floor(Date.now() / 1000),
@@ -379,6 +395,6 @@ export async function handleClose(
   return toolTextResult({
     ok: true,
     thread: input.thread,
-    seq: parseEnvelopeBody(outer).seq,
+    seq: closeBody.seq,
   });
 }

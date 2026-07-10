@@ -1,5 +1,6 @@
 export const SESSION_OPEN_TTL_MS = 60 * 60 * 1000;
 
+/** Terminal `closed`: ratify success when `coSignedHash` is set; unilateral `core.close` when `rejectReason` is set (§8.3). */
 export type SessionStatus =
   | "pending"
   | "live"

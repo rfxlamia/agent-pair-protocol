@@ -453,7 +453,10 @@ describe("receiveEnvelope steps 7–8 (§4.3)", () => {
 
     expect(result.ok).toBe(true);
     expect(commitAccepted).toHaveBeenCalledWith(thread, aliceId, 3);
-    expect(deps.dispatch).toHaveBeenCalledWith("core.msg", expect.any(Uint8Array));
+    expect(deps.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "core.msg", seq: 3, thread }),
+      expect.any(Uint8Array),
+    );
   });
 
   it("step 8: decrypt failure → invalid_payload", async () => {

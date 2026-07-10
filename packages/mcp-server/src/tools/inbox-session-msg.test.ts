@@ -75,7 +75,7 @@ describe("inbox session negotiation fixes", () => {
     expect(peerTurn).toBeDefined();
     if (!peerTurn) return;
 
-    const payload = JSON.parse(peerTurn.payload);
+    const payload = peerTurn.payload as { msg_type?: string; body?: string };
     expect(payload.msg_type).toBe("propose");
     expect(payload.body).toBe(proposalBody);
 
