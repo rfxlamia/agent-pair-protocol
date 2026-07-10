@@ -1,6 +1,14 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { encodeBase64Url } from "../crypto/base64url.js";
 import { sign } from "../crypto/sign.js";
+import {
+  parseAtestReportPayload,
+  parseEnvelopePayload,
+  parseNegoOpenPayload,
+  parseNegoOpenRejectPayload,
+  parseNegoSignedPayload,
+  parseNegoTurnPayload,
+} from "../envelope/schema.js";
 import { isEphemeralBond } from "./bond.js";
 import type { SessionStateMachineDeps } from "./deps.js";
 import { type SessionStore, createSessionStore } from "./store.js";
@@ -13,14 +21,6 @@ import type {
   TestReport,
 } from "./types.js";
 import { SESSION_OPEN_TTL_MS } from "./types.js";
-import {
-  parseOpenEnvelopePayload,
-  parseOpenRejectEnvelopePayload,
-  parsePeerSignedEnvelopePayload,
-  parsePeerTestReportEnvelopePayload,
-  parsePeerTurnEnvelopePayload,
-  parseSignalEnvelopePayload,
-} from "./validate.js";
 
 /** Recipient sessions past open must not be reset by a redelivered session.open. */
 const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = ["live", "signed", "closed", "open_rejected"];
@@ -319,7 +319,7 @@ export function createSessionStateMachine(
 
       await deps.relay.send({
         to: input.to,
-        type: "session.open",
+        type: "nego.open",
         payload: JSON.stringify({
           goal: input.goal,
           acceptance: input.acceptance,
@@ -363,7 +363,7 @@ export function createSessionStateMachine(
       const live = upsert({ ...session, status: "live" });
       deps.pending.remove(pending.id);
 
-      await notifyPeer(live, "session.open_approved", {
+      await notifyPeer(live, "nego.open_approved", {
         thread: live.thread,
         approved_by: deps.agentId,
       });
@@ -397,7 +397,7 @@ export function createSessionStateMachine(
       });
       deps.pending.remove(pending.id);
 
-      await notifyPeer(rejected, "session.open_reject", {
+      await notifyPeer(rejected, "nego.open_reject", {
         thread: rejected.thread,
         reason: input.reason,
       });
@@ -418,7 +418,7 @@ export function createSessionStateMachine(
         }
         const expired = upsert({ ...session, status: "open_expired" });
         if (session.role === "recipient") {
-          await notifyPeer(expired, "session.open_expired", {
+          await notifyPeer(expired, "nego.open_expired", {
             thread: expired.thread,
           });
         }
@@ -465,8 +465,8 @@ export function createSessionStateMachine(
       const parsed = raw as Record<string, unknown>;
 
       switch (input.type) {
-        case "session.open": {
-          const openPayload = parseOpenEnvelopePayload(parsed);
+        case "nego.open": {
+          const openPayload = parseNegoOpenPayload(parsed);
           if (!openPayload.ok) {
             return openPayload;
           }
@@ -480,12 +480,12 @@ export function createSessionStateMachine(
             expires_at: openPayload.data.expires_at ?? now() + SESSION_OPEN_TTL_MS,
           });
         }
-        case "session.open_approved": {
+        case "nego.open_approved": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return found;
           }
-          const openApprovedPayload = parseSignalEnvelopePayload(parsed);
+          const openApprovedPayload = parseEnvelopePayload("nego.open_approved", parsed);
           if (!openApprovedPayload.ok) {
             return openApprovedPayload;
           }
@@ -496,12 +496,12 @@ export function createSessionStateMachine(
           upsert({ ...found.session, status: "live" });
           return { ok: true, thread: input.thread, status: "live" };
         }
-        case "session.open_reject": {
+        case "nego.open_reject": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return found;
           }
-          const openRejectPayload = parseOpenRejectEnvelopePayload(parsed);
+          const openRejectPayload = parseNegoOpenRejectPayload(parsed);
           if (!openRejectPayload.ok) {
             return openRejectPayload;
           }
@@ -520,12 +520,12 @@ export function createSessionStateMachine(
             status: "open_rejected",
           };
         }
-        case "session.open_expired": {
+        case "nego.open_expired": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return found;
           }
-          const openExpiredPayload = parseSignalEnvelopePayload(parsed);
+          const openExpiredPayload = parseEnvelopePayload("nego.open_expired", parsed);
           if (!openExpiredPayload.ok) {
             return openExpiredPayload;
           }
@@ -540,12 +540,12 @@ export function createSessionStateMachine(
             status: "open_expired",
           };
         }
-        case "session.peer_challenge": {
+        case "atest.challenge": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return found;
           }
-          const challengePayload = parseSignalEnvelopePayload(parsed);
+          const challengePayload = parseEnvelopePayload("atest.challenge", parsed);
           if (!challengePayload.ok) {
             return challengePayload;
           }
@@ -557,12 +557,12 @@ export function createSessionStateMachine(
           upsert({ ...found.session, challenges });
           return { ok: true, thread: input.thread, type: "challenge" };
         }
-        case "session.peer_test_report": {
+        case "atest.report": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return found;
           }
-          const testReportPayload = parsePeerTestReportEnvelopePayload(parsed);
+          const testReportPayload = parseAtestReportPayload(parsed);
           if (!testReportPayload.ok) {
             return testReportPayload;
           }
@@ -587,12 +587,12 @@ export function createSessionStateMachine(
           upsert({ ...found.session, testReports });
           return { ok: true, thread: input.thread, type: "test_report" };
         }
-        case "session.peer_signed": {
+        case "nego.signed": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return found;
           }
-          const signedPayload = parsePeerSignedEnvelopePayload(parsed);
+          const signedPayload = parseNegoSignedPayload(parsed);
           if (!signedPayload.ok) {
             return signedPayload;
           }
@@ -624,12 +624,12 @@ export function createSessionStateMachine(
               : {}),
           };
         }
-        case "session.peer_turn": {
+        case "nego.turn": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return found;
           }
-          const turnPayload = parsePeerTurnEnvelopePayload(parsed);
+          const turnPayload = parseNegoTurnPayload(parsed);
           if (!turnPayload.ok) {
             return turnPayload;
           }
@@ -665,12 +665,12 @@ export function createSessionStateMachine(
           });
           return { ok: true, thread: input.thread, type: "turn" };
         }
-        case "session.peer_ratified": {
+        case "nego.ratified": {
           const found = getOrError(input.thread);
           if (!found.ok) {
             return found;
           }
-          const ratifiedPayload = parseSignalEnvelopePayload(parsed);
+          const ratifiedPayload = parseEnvelopePayload("nego.ratified", parsed);
           if (!ratifiedPayload.ok) {
             return ratifiedPayload;
           }
@@ -726,7 +726,7 @@ export function createSessionStateMachine(
           },
         };
         const updated = upsert({ ...session, testReports });
-        await notifyPeer(updated, "session.peer_test_report", {
+        await notifyPeer(updated, "atest.report", {
           thread: updated.thread,
           artifact_hash: report.artifact_hash,
           passed: report.passed,
@@ -740,7 +740,7 @@ export function createSessionStateMachine(
         const role = roleFor(session, deps.agentId);
         const challenges = { ...session.challenges, [role]: true };
         const updated = upsert({ ...session, challenges });
-        await notifyPeer(updated, "session.peer_challenge", {
+        await notifyPeer(updated, "atest.challenge", {
           thread: updated.thread,
         });
         return { ok: true, thread: input.thread, type: "challenge" };
@@ -775,7 +775,7 @@ export function createSessionStateMachine(
           lockedSections,
           turnCount: session.turnCount + 1,
         });
-        await notifyPeer(updated, "session.peer_turn", {
+        await notifyPeer(updated, "nego.turn", {
           thread: updated.thread,
           turn_count: updated.turnCount,
           msg_type: input.type,
@@ -790,7 +790,7 @@ export function createSessionStateMachine(
       }
 
       const updated = upsert({ ...session, turnCount: session.turnCount + 1 });
-      await notifyPeer(updated, "session.peer_turn", {
+      await notifyPeer(updated, "nego.turn", {
         thread: updated.thread,
         turn_count: updated.turnCount,
         msg_type: input.type,
@@ -825,7 +825,7 @@ export function createSessionStateMachine(
         status: bothSigned({ ...session, signHashes }) ? "signed" : session.status,
       });
 
-      await notifyPeer(updated, "session.peer_signed", {
+      await notifyPeer(updated, "nego.signed", {
         thread: updated.thread,
         artifact_hash: input.artifact_hash,
       });
@@ -886,7 +886,7 @@ export function createSessionStateMachine(
       const updated = upsert({ ...session, ratifyApproved });
       removeRatifyPendingForThread(thread);
 
-      await notifyPeer(updated, "session.peer_ratified", {
+      await notifyPeer(updated, "nego.ratified", {
         thread: updated.thread,
         artifact_hash: hash,
       });
@@ -966,6 +966,27 @@ export function createSessionStateMachine(
           : {}),
         ...(pendingRatify ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const } : {}),
       };
+    },
+
+    async handleThreadClose(thread: string, reason?: string) {
+      const found = store.get(thread);
+      if (!found) {
+        return { ok: true as const, thread };
+      }
+      const closeReason = reason ?? found.rejectReason ?? "thread_closed";
+      if (found.status === "closed") {
+        return { ok: true as const, thread, status: "closed" as const };
+      }
+      const terminal: SessionStatus[] = ["open_rejected", "open_expired"];
+      if (terminal.includes(found.status)) {
+        return { ok: true as const, thread, status: found.status };
+      }
+      const updated = upsert({
+        ...found,
+        status: "closed",
+        rejectReason: closeReason,
+      });
+      return { ok: true as const, thread, status: updated.status };
     },
   };
 }
