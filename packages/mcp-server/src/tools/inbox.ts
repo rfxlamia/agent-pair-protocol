@@ -1,7 +1,10 @@
 import {
   createOuterEnvelope,
   defaultEnvelopeTtl,
+  isKnownEnvelopeType,
+  isSessionDispatchType,
   parseEnvelopeBody,
+  parseEnvelopePayload,
   publicKeyToAgentId,
   receiveEnvelope,
 } from "@agentpair/protocol";
@@ -12,6 +15,7 @@ import {
   expirePendingSessions,
   peekSessionOpenStatus,
   processSessionInboxEnvelope,
+  processThreadClose,
   resolveRatifyPendingId,
   resolveSessionOpenPendingId,
 } from "./session.js";
@@ -20,8 +24,16 @@ import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const processedEnvelopeIds = new WeakMap<AgentContext, Set<string>>();
 
-function isSupportedEnvelopeType(type: string): boolean {
-  return type === "chat.message" || type.startsWith("session.");
+function formatPayloadForInbox(type: string, rawPayload: string): unknown {
+  try {
+    const parsed = JSON.parse(rawPayload);
+    if (type === "core.msg" || type === "core.close" || type === "core.ack") {
+      return parsed;
+    }
+  } catch {
+    // fall through
+  }
+  return rawPayload;
 }
 
 function resolveAllowedPeers(
@@ -136,11 +148,17 @@ export async function handleInbox(
       isBonded: (from) => bondedPeerSet.has(from),
       selfKeyPair: keyPair,
       seqStore: ctx.envelopeSeq,
-      dispatch: async (type) => {
-        if (!isSupportedEnvelopeType(type)) {
+      dispatch: async (type, plaintext) => {
+        if (!isKnownEnvelopeType(type)) {
           return { ok: false as const, error: "unsupported_envelope_type" };
         }
-        return { ok: true as const };
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(new TextDecoder().decode(plaintext));
+        } catch {
+          return { ok: false as const, error: "invalid_payload" };
+        }
+        return parseEnvelopePayload(type, parsed);
       },
     });
 
@@ -162,7 +180,7 @@ export async function handleInbox(
     let pendingId: string | undefined;
     let sessionStatus: string | undefined;
 
-    if (body.type.startsWith("session.") && !seen.has(body.id)) {
+    if (isSessionDispatchType(body.type) && !seen.has(body.id)) {
       const processed = await processSessionInboxEnvelope(ctx, {
         from: body.from,
         type: body.type,
@@ -178,16 +196,33 @@ export async function handleInbox(
       }
     }
 
-    if (body.type === "session.open" && !pendingId) {
+    if (body.type === "nego.open" && !pendingId) {
       pendingId = await resolveSessionOpenPendingId(ctx, body.thread);
     }
 
-    if (body.type === "session.peer_signed" && !pendingId) {
+    if (body.type === "nego.signed" && !pendingId) {
       pendingId = await resolveRatifyPendingId(ctx, body.thread);
     }
 
-    if (body.type === "session.open") {
+    if (body.type === "nego.open") {
       sessionStatus = peekSessionOpenStatus(ctx, body.thread);
+    }
+
+    if (body.type === "core.close" && !ctx.closedThreads.isClosed(body.thread)) {
+      let reason: string | undefined;
+      try {
+        const parsed = JSON.parse(payload) as { reason?: string };
+        reason = parsed.reason;
+      } catch {
+        reason = undefined;
+      }
+      ctx.closedThreads.markClosed(body.thread, {
+        closed_at: Math.floor(Date.now() / 1000),
+        reason,
+        by: body.from,
+      });
+      await ctx.closedThreads.flush();
+      await processThreadClose(ctx, body.thread, reason);
     }
 
     envelopes.push({
@@ -198,7 +233,7 @@ export async function handleInbox(
       thread: body.thread,
       seq: body.seq,
       ttl: body.ttl,
-      payload,
+      payload: formatPayloadForInbox(body.type, payload),
       sig: outer.sig,
       verified: true,
       ...(pendingId ? { pending_id: pendingId } : {}),

@@ -96,16 +96,69 @@ function makeOuterEnvelope(
   recipientId: string,
   body: string,
   seq: number,
+  thread = `thread-${seq}`,
 ): OuterEnvelope {
   return createOuterEnvelope({
     sender,
     recipientAgentId: recipientId,
-    type: "chat.message",
-    thread: `thread-${seq}`,
+    type: "core.msg",
+    thread,
     seq,
     ttl: futureTtl(),
-    payload: new TextEncoder().encode(body),
+    payload: new TextEncoder().encode(JSON.stringify({ body })),
   });
+}
+
+function makeWireEnvelope(
+  sender: KeyPair,
+  recipientId: string,
+  input: { type: string; payload: unknown; thread?: string; seq?: number },
+): string {
+  const outer = createOuterEnvelope({
+    sender,
+    recipientAgentId: recipientId,
+    type: input.type,
+    thread: input.thread ?? crypto.randomUUID(),
+    seq: input.seq ?? 1,
+    ttl: futureTtl(),
+    payload: new TextEncoder().encode(JSON.stringify(input.payload)),
+  });
+  return wireFromEnvelope(outer);
+}
+
+async function makeBondedInboxPair() {
+  const allowlistAlice = new MemoryAllowlistStore();
+  const allowlistBob = new MemoryAllowlistStore();
+  const bondsAlice = new MemoryBondStore();
+  const bondsBob = new MemoryBondStore();
+  const relay = new StubInboxRelayWithRowids([]);
+
+  const aliceCtx = createAgentContext({
+    keyStore: createKeyStore({ keyPath: ":memory:alice" }),
+    relay: relay as unknown as HttpRelayClient,
+    allowlist: allowlistAlice,
+    bonds: bondsAlice,
+  });
+  const bobCtx = createAgentContext({
+    keyStore: createKeyStore({ keyPath: ":memory:bob" }),
+    relay: relay as unknown as HttpRelayClient,
+    allowlist: allowlistBob,
+    bonds: bondsBob,
+  });
+
+  const aliceKeys = await aliceCtx.keyStore.loadOrCreate();
+  const bobKeys = await bobCtx.keyStore.loadOrCreate();
+  const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+  const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+  allowlistAlice.set(aliceId, [bobId]);
+  allowlistBob.set(bobId, [aliceId]);
+  bondsAlice.add(aliceId, { peer: bobId, scope: ["msg"], mode: "bonded_contact" });
+  bondsBob.add(bobId, { peer: aliceId, scope: ["msg"], mode: "bonded_contact" });
+
+  await aliceCtx.envelopeSeq.init(aliceId);
+  await bobCtx.envelopeSeq.init(bobId);
+  return { aliceKeys, bobKeys, aliceId, bobId, aliceCtx, bobCtx, relay };
 }
 
 function wireOver65536Bytes(sender: KeyPair, recipientId: string): string {
@@ -113,11 +166,11 @@ function wireOver65536Bytes(sender: KeyPair, recipientId: string): string {
     createOuterEnvelope({
       sender,
       recipientAgentId: recipientId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "thread-big",
       seq: 1,
       ttl: futureTtl(),
-      payload: new TextEncoder().encode("x"),
+      payload: new TextEncoder().encode(JSON.stringify({ body: "x" })),
     }),
   );
   const obj = JSON.parse(base) as Record<string, unknown>;
@@ -863,6 +916,81 @@ describe("inbox receiveEnvelope wiring (M1.2 §4.3)", () => {
       ]),
     );
     expect(relay.pullBondedOnly).toEqual([false]);
+  });
+});
+
+describe("M1.4 envelope types", () => {
+  it("rejects v0 chat.message with unsupported_envelope_type", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "chat.message",
+      payload: { body: "legacy" },
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    expect(result.rejected).toEqual([
+      expect.objectContaining({ error: "unsupported_envelope_type" }),
+    ]);
+  });
+
+  it("renders core.ack payload as structured ack_seq", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.ack",
+      payload: { ack_seq: 7 },
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    const ack = result.envelopes.find((e) => e.type === "core.ack");
+    expect(ack?.payload).toEqual({ ack_seq: 7 });
+  });
+
+  it("core.close receive marks closedThreads idempotently", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    const wire1 = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.close",
+      payload: { reason: "done" },
+      thread,
+      seq: 1,
+    });
+    const wire2 = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.close",
+      payload: { reason: "again" },
+      thread,
+      seq: 2,
+    });
+    relay.responses = [
+      { rows: [{ rowid: 1, wire: wire1 }], cursor: 1 },
+      { rows: [{ rowid: 2, wire: wire2 }], cursor: 2 },
+    ];
+    await handleInbox(bobCtx, {});
+    const first = bobCtx.closedThreads.get(thread);
+    expect(first?.closed_at).toBeTypeOf("number");
+    expect(first?.reason).toBe("done");
+
+    await handleInbox(bobCtx, {});
+    const second = bobCtx.closedThreads.get(thread);
+    expect(second?.closed_at).toBe(first?.closed_at);
+    expect(second?.reason).toBe("done");
+  });
+
+  it("rejects core.msg with invalid_payload and does not commit seq", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.msg",
+      payload: { kind: "text" },
+      thread,
+      seq: 1,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    expect(result.rejected).toEqual([expect.objectContaining({ error: "invalid_payload" })]);
+    expect(result.envelopes).toHaveLength(0);
+    expect(
+      bobCtx.envelopeSeq.getLastAccepted(thread, publicKeyToAgentId(aliceKeys.publicKey)),
+    ).toBe(0);
   });
 });
 

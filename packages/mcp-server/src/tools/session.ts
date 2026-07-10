@@ -79,6 +79,9 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
       bonds: ctx.bonds,
       relay: {
         async send(input) {
+          if (ctx.closedThreads.isClosed(input.thread)) {
+            return { ok: false, error: "thread_closed" };
+          }
           const seq = input.seq ?? nextSessionSeq(ctx, input.thread);
           const outer = createOuterEnvelope({
             sender: keyPair,
@@ -182,4 +185,15 @@ export async function processSessionInboxEnvelope(
   input: { from: string; type: string; thread: string; payload: string },
 ) {
   return withSessionMachine(ctx, (machine) => machine.handleIncomingEnvelope(input));
+}
+
+export async function processThreadClose(
+  ctx: AgentContext,
+  thread: string,
+  reason?: string,
+): Promise<void> {
+  const machine = sessionMachines.get(ctx);
+  if (machine) {
+    await machine.handleThreadClose(thread, reason);
+  }
 }

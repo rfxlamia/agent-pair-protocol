@@ -112,17 +112,25 @@ export function parseNegoOpenPayload(parsed: Record<string, unknown>) {
 }
 
 export function parseNegoOpenRejectPayload(parsed: Record<string, unknown>) {
-  return parseEnvelopePayload("nego.open_reject", parsed);
+  return parseEnvelopePayload("nego.open_reject", parsed) as
+    | { ok: true; data: z.infer<(typeof PAYLOAD_SCHEMAS)["nego.open_reject"]> }
+    | { ok: false; error: "invalid_payload" };
 }
 
 export function parseNegoTurnPayload(parsed: Record<string, unknown>) {
-  return parseEnvelopePayload("nego.turn", parsed);
+  return parseEnvelopePayload("nego.turn", parsed) as
+    | { ok: true; data: z.infer<(typeof PAYLOAD_SCHEMAS)["nego.turn"]> }
+    | { ok: false; error: "invalid_payload" };
 }
 
 export function parseNegoSignedPayload(parsed: Record<string, unknown>) {
-  return parseEnvelopePayload("nego.signed", parsed);
+  return parseEnvelopePayload("nego.signed", parsed) as
+    | { ok: true; data: z.infer<(typeof PAYLOAD_SCHEMAS)["nego.signed"]> }
+    | { ok: false; error: "invalid_payload" };
 }
 
 export function parseAtestReportPayload(parsed: Record<string, unknown>) {
-  return parseEnvelopePayload("atest.report", parsed);
+  return parseEnvelopePayload("atest.report", parsed) as
+    | { ok: true; data: z.infer<(typeof PAYLOAD_SCHEMAS)["atest.report"]> }
+    | { ok: false; error: "invalid_payload" };
 }
