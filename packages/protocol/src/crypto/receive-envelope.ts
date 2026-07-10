@@ -101,7 +101,12 @@ export async function receiveEnvelope(
   }
 
   // Step 5: verify signature over blob bytes
-  const senderPublicKey = agentIdToPublicKey(body.from);
+  let senderPublicKey: Uint8Array;
+  try {
+    senderPublicKey = agentIdToPublicKey(body.from);
+  } catch {
+    return { ok: false, error: "invalid_signature", body };
+  }
   if (!verifyOuterEnvelope(outer, senderPublicKey)) {
     return { ok: false, error: "invalid_signature", body };
   }
