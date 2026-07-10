@@ -18,7 +18,7 @@ describe("inbox session negotiation fixes", () => {
   let env: DualRelayEnv;
 
   beforeAll(async () => {
-    env = await startDualRelay(3100);
+    env = await startDualRelay(13310);
   });
 
   afterAll(async () => {

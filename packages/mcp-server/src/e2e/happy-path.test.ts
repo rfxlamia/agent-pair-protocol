@@ -12,7 +12,7 @@ describe("e2e happy path", () => {
   let env: DualRelayEnv;
 
   beforeAll(async () => {
-    env = await startDualRelay(3021);
+    env = await startDualRelay(13221);
   });
 
   afterAll(async () => {

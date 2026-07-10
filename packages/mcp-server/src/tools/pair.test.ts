@@ -22,7 +22,7 @@ import {
 } from "./pair.js";
 import { assertNoSecrets } from "./util.js";
 
-const TEST_PORT = 3010;
+const TEST_PORT = 13110;
 const RELAY_URL = `http://127.0.0.1:${TEST_PORT}`;
 
 class FailAllowlistRelay extends HttpRelayClient {

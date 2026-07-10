@@ -32,7 +32,7 @@ import {
   handleRevoke,
 } from "./pair.js";
 
-const TEST_PORT = 3011;
+const TEST_PORT = 13111;
 const RELAY_URL = `http://127.0.0.1:${TEST_PORT}`;
 
 class FailAllowlistOnRevokeRelay extends HttpRelayClient {

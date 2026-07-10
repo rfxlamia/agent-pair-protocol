@@ -130,7 +130,7 @@ describe("inbox production path", () => {
   let env: DualRelayEnv;
 
   beforeAll(async () => {
-    env = await startDualRelay(3022);
+    env = await startDualRelay(13222);
   });
 
   afterAll(async () => {

@@ -82,7 +82,7 @@ function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
 
-export async function startDualRelay(port = 3020): Promise<DualRelayEnv> {
+export async function startDualRelay(port = 13220): Promise<DualRelayEnv> {
   await initPake();
   const tempDirs: string[] = [];
   const { app } = createRelayApp({

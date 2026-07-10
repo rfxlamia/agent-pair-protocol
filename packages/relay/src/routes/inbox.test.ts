@@ -17,8 +17,9 @@ import { createRelayApp } from "../server.js";
 import { type AllowlistBody, signChallenge } from "./allowlist.js";
 import { createInboxRoutes } from "./inbox.js";
 
-const TEST_PORT = 3001;
+const TEST_PORT = 13001;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
+const RATE_LIMIT_PORT = 13002;
 
 function futureTtl(seconds = 3600): number {
   return Math.floor(Date.now() / 1000) + seconds;
@@ -798,8 +799,8 @@ describe("inbox relay routes", () => {
       rateLimitWindowMs: 60_000,
       rateLimitMax: 3,
     });
-    const rateLimitServer = serve({ fetch: app.fetch, port: 3002 });
-    const rateBase = "http://127.0.0.1:3002";
+    const rateLimitServer = serve({ fetch: app.fetch, port: RATE_LIMIT_PORT });
+    const rateBase = `http://127.0.0.1:${RATE_LIMIT_PORT}`;
 
     try {
       const responses = await Promise.all(
@@ -830,7 +831,7 @@ describe("inbox relay routes", () => {
   });
 });
 
-const ISOLATED_PORT = 3003;
+const ISOLATED_PORT = 13003;
 const ISOLATED_BASE = `http://127.0.0.1:${ISOLATED_PORT}`;
 
 describe("inbox relay regressions (isolated db)", () => {
@@ -1136,7 +1137,7 @@ describe("inbox relay regressions (isolated db)", () => {
   });
 });
 
-const GAP_PORT = 3007;
+const GAP_PORT = 13007;
 const GAP_BASE = `http://127.0.0.1:${GAP_PORT}`;
 
 describe("inbox gap detection (isolated db)", () => {
@@ -1291,7 +1292,7 @@ describe("inbox gap detection (isolated db)", () => {
   });
 });
 
-const CURSOR_PORT = 3006;
+const CURSOR_PORT = 13006;
 const CURSOR_BASE = `http://127.0.0.1:${CURSOR_PORT}`;
 
 describe("inbox rowid cursor (isolated db)", () => {
@@ -1410,7 +1411,7 @@ describe("inbox rowid cursor (isolated db)", () => {
   });
 });
 
-const INBOX_GC_PORT = 3005;
+const INBOX_GC_PORT = 13005;
 const INBOX_GC_BASE = `http://127.0.0.1:${INBOX_GC_PORT}`;
 
 describe("inbox ttl garbage collection (isolated db)", () => {
@@ -1544,7 +1545,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
   });
 });
 
-const INBOX_GC_GET_PORT = 3008;
+const INBOX_GC_GET_PORT = 13008;
 const INBOX_GC_GET_BASE = `http://127.0.0.1:${INBOX_GC_GET_PORT}`;
 
 describe("inbox ttl gc via GET (isolated db)", () => {
@@ -1668,7 +1669,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
   });
 });
 
-const INBOX_GC_THROTTLE_PORT = 3009;
+const INBOX_GC_THROTTLE_PORT = 13009;
 const INBOX_GC_THROTTLE_BASE = `http://127.0.0.1:${INBOX_GC_THROTTLE_PORT}`;
 
 describe("inbox ttl gc throttle (isolated db)", () => {
@@ -1925,7 +1926,7 @@ describe("inbox absolute unix ttl (M1.2)", () => {
   });
 });
 
-const GLOBAL_SEQ_PORT = 3004;
+const GLOBAL_SEQ_PORT = 13004;
 const GLOBAL_SEQ_BASE = `http://127.0.0.1:${GLOBAL_SEQ_PORT}`;
 
 describe("inbox global turn-taking seq (isolated db)", () => {
@@ -2099,7 +2100,7 @@ describe("inbox global turn-taking seq (isolated db)", () => {
   });
 });
 
-const PURGE_RL_PORT = 3005;
+const PURGE_RL_PORT = 13010;
 const PURGE_RL_BASE = `http://127.0.0.1:${PURGE_RL_PORT}`;
 
 describe("inbox purge rate limit (isolated db)", () => {
