@@ -1,7 +1,9 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import { decodeBase64UrlStrict } from "./base64url.js";
 import {
   type EnvelopeBody,
   type OuterEnvelope,
+  coerceEnvelopeBody,
   decryptEnvelopePayload,
   deserializeOuterEnvelope,
   verifyOuterEnvelope,
@@ -50,26 +52,9 @@ function parseOuterVersion(wire: string): number | null {
 
 function tryParseEnvelopeBody(outer: OuterEnvelope): EnvelopeBody | null {
   try {
-    const blobBytes = Buffer.from(outer.blob, "base64url");
+    const blobBytes = decodeBase64UrlStrict(outer.blob);
     const parsed = JSON.parse(new TextDecoder().decode(blobBytes)) as unknown;
-    if (typeof parsed !== "object" || parsed === null) {
-      return null;
-    }
-    const body = parsed as Record<string, unknown>;
-    if (
-      typeof body.v !== "number" ||
-      typeof body.id !== "string" ||
-      typeof body.from !== "string" ||
-      typeof body.to !== "string" ||
-      typeof body.type !== "string" ||
-      typeof body.thread !== "string" ||
-      typeof body.seq !== "number" ||
-      typeof body.ttl !== "number" ||
-      typeof body.payload !== "string"
-    ) {
-      return null;
-    }
-    return body as unknown as EnvelopeBody;
+    return coerceEnvelopeBody(parsed);
   } catch {
     return null;
   }
@@ -78,7 +63,7 @@ function tryParseEnvelopeBody(outer: OuterEnvelope): EnvelopeBody | null {
 export async function receiveEnvelope(
   wire: string,
   selfId: string,
-  _deps: ReceiveEnvelopeDeps,
+  deps: ReceiveEnvelopeDeps,
 ): Promise<ReceiveEnvelopeResult> {
   // Step 0: known wire version
   const outerVersion = parseOuterVersion(wire);
@@ -99,12 +84,11 @@ export async function receiveEnvelope(
     return { ok: false, error: "invalid_json" };
   }
 
-  let body: EnvelopeBody;
   const parsedBody = tryParseEnvelopeBody(outer);
   if (parsedBody === null) {
     return { ok: false, error: "invalid_json" };
   }
-  body = parsedBody;
+  const body = parsedBody;
 
   // Step 3: inner/outer version match
   if (body.v !== outer.v) {
@@ -112,7 +96,7 @@ export async function receiveEnvelope(
   }
 
   // Step 4: sender bonded
-  if (!_deps.isBonded(body.from)) {
+  if (!deps.isBonded(body.from)) {
     return { ok: false, error: "recipient_not_allowed", body };
   }
 
@@ -128,12 +112,12 @@ export async function receiveEnvelope(
   }
 
   // Step 7: replay/ordering — seq before ttl
-  const lastAccepted = _deps.seqStore.getLastAccepted(body.thread, body.from);
+  const lastAccepted = deps.seqStore.getLastAccepted(body.thread, body.from);
   if (body.seq <= lastAccepted) {
     return { ok: false, error: "stale_seq", body };
   }
 
-  const now = (_deps.nowUnix ?? (() => Math.floor(Date.now() / 1000)))();
+  const now = (deps.nowUnix ?? (() => Math.floor(Date.now() / 1000)))();
   if (body.ttl <= now) {
     return { ok: false, error: "envelope_expired", body };
   }
@@ -141,16 +125,16 @@ export async function receiveEnvelope(
   // Step 8: decrypt, dispatch, commit on success only
   let plaintext: Uint8Array;
   try {
-    plaintext = decryptEnvelopePayload(body, _deps.selfKeyPair, senderPublicKey);
+    plaintext = decryptEnvelopePayload(body, deps.selfKeyPair, senderPublicKey);
   } catch {
     return { ok: false, error: "invalid_payload", body };
   }
 
-  const dispatchResult = await _deps.dispatch(body.type, plaintext);
+  const dispatchResult = await deps.dispatch(body.type, plaintext);
   if (!dispatchResult.ok) {
     return { ok: false, error: dispatchResult.error, body };
   }
 
-  _deps.seqStore.commitAccepted(body.thread, body.from, body.seq);
+  deps.seqStore.commitAccepted(body.thread, body.from, body.seq);
   return { ok: true, body, outer, plaintext };
 }

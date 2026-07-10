@@ -154,6 +154,9 @@ export async function handleInbox(
     }
 
     const { body, outer, plaintext } = received;
+    // receiveEnvelope already committed seq; cursor advances at pull end, so this
+    // envelope won't be redelivered (stale_seq would reject if it were). Session
+    // side effects may still fail after commit — in-process `seen` dedupes by body.id.
     const payload = new TextDecoder().decode(plaintext);
 
     let pendingId: string | undefined;

@@ -113,16 +113,32 @@ function wireUtf8Length(wire: string): number {
 }
 
 function padWireToSize(wire: string, targetBytes: number): string {
-  const deficit = targetBytes - wireUtf8Length(wire);
-  if (deficit === 0) {
+  const current = wireUtf8Length(wire);
+  if (current === targetBytes) {
     return wire;
   }
-  if (deficit < 0) {
+  if (current > targetBytes) {
     throw new Error(`wire already exceeds ${targetBytes} bytes`);
   }
-  const outer = JSON.parse(wire) as OuterEnvelope;
-  outer.blob = `${outer.blob}${"A".repeat(deficit)}`;
-  return JSON.stringify(outer);
+  const outer = JSON.parse(wire) as Record<string, unknown>;
+  let low = 0;
+  let high = targetBytes;
+  let best = "";
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = JSON.stringify({ ...outer, _pad: "x".repeat(mid) });
+    const len = wireUtf8Length(candidate);
+    if (len <= targetBytes) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  if (!best || wireUtf8Length(best) !== targetBytes) {
+    throw new Error(`could not pad wire to exactly ${targetBytes} bytes`);
+  }
+  return best;
 }
 
 describe("receiveEnvelope steps 0–6 (§4.3)", () => {
@@ -170,6 +186,25 @@ describe("receiveEnvelope steps 0–6 (§4.3)", () => {
     const outer = JSON.parse(wire) as OuterEnvelope;
     const badBlob = Buffer.from("{not-json", "utf8").toString("base64url");
     const badWire = serializeOuterEnvelope({ ...outer, blob: badBlob });
+
+    const result = await receiveEnvelope(badWire, bobId, deps);
+
+    expect(result).toEqual({ ok: false, error: "invalid_json" });
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(deps.seqStore.commitAccepted).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["padded blob", "YQ=="],
+    ["non-alphabet blob", "ab!cd"],
+    ["non-canonical blob", (outer: OuterEnvelope) => `${outer.blob}A`],
+    ["empty blob", ""],
+  ])("step 2: strict-decode rejects %s → invalid_json", async (_label, blobOrFn) => {
+    const { wire, bob, bobId } = makeValidWire();
+    const deps = makeDeps(bob);
+    const outer = JSON.parse(wire) as OuterEnvelope;
+    const blob = typeof blobOrFn === "function" ? blobOrFn(outer) : blobOrFn;
+    const badWire = serializeOuterEnvelope({ ...outer, blob });
 
     const result = await receiveEnvelope(badWire, bobId, deps);
 

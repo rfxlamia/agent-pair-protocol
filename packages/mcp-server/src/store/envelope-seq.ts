@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createJsonPersistentStore, resolveDataDir, storePath } from "./persistent-store.js";
 
 interface EnvelopeSeqFile {
@@ -34,24 +33,6 @@ function validateEnvelopeSeqFile(parsed: unknown): EnvelopeSeqFile | undefined {
     }
   }
   return { v: 1, streams: { ...record.streams } };
-}
-
-function loadStreamsFromDisk(filePath: string): Record<string, number> {
-  try {
-    const raw = readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    const validated = validateEnvelopeSeqFile(parsed);
-    if (validated !== undefined) {
-      return validated.streams;
-    }
-    return {};
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") {
-      return {};
-    }
-    return {};
-  }
 }
 
 export function resolveEnvelopeSeqPath(dataDir?: string): string {
@@ -104,8 +85,7 @@ export function createFileEnvelopeSeqStore(
     filePath,
     async init(forAgentId: string): Promise<void> {
       agentId = forAgentId;
-      streams = loadStreamsFromDisk(filePath);
-      backing.replace({ v: 1, streams: { ...streams } });
+      streams = { ...backing.read().streams };
     },
     getLastAccepted(thread: string, from: string): number {
       if (!agentId) {

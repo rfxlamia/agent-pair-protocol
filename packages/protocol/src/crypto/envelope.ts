@@ -1,4 +1,5 @@
 import { randomBytes, utf8ToBytes } from "@noble/ciphers/utils.js";
+import { decodeBase64UrlStrict, encodeBase64Url } from "./base64url.js";
 import { decryptPayload, encryptPayload } from "./encrypt.js";
 import { type KeyPair, agentIdToPublicKey, publicKeyToAgentId } from "./keys.js";
 import { sign, verify } from "./sign.js";
@@ -34,14 +35,6 @@ export interface CreateOuterEnvelopeInput {
   id?: string;
 }
 
-function toBase64Url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64url");
-}
-
-function fromBase64Url(value: string): Uint8Array {
-  return new Uint8Array(Buffer.from(value, "base64url"));
-}
-
 export function serializeBodyBytes(body: EnvelopeBody): Uint8Array {
   const ordered = {
     v: body.v,
@@ -57,25 +50,37 @@ export function serializeBodyBytes(body: EnvelopeBody): Uint8Array {
   return utf8ToBytes(JSON.stringify(ordered));
 }
 
-function validateEnvelopeBody(parsed: unknown): EnvelopeBody {
+function hasEnvelopeBodyFieldTypes(parsed: unknown): boolean {
   if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("Invalid envelope body shape");
+    return false;
   }
   const body = parsed as Record<string, unknown>;
-  if (
-    body.v !== 1 ||
-    typeof body.id !== "string" ||
-    typeof body.from !== "string" ||
-    typeof body.to !== "string" ||
-    typeof body.type !== "string" ||
-    typeof body.thread !== "string" ||
-    typeof body.seq !== "number" ||
-    typeof body.ttl !== "number" ||
-    typeof body.payload !== "string"
-  ) {
+  return (
+    typeof body.v === "number" &&
+    typeof body.id === "string" &&
+    typeof body.from === "string" &&
+    typeof body.to === "string" &&
+    typeof body.type === "string" &&
+    typeof body.thread === "string" &&
+    typeof body.seq === "number" &&
+    typeof body.ttl === "number" &&
+    typeof body.payload === "string"
+  );
+}
+
+function validateEnvelopeBody(parsed: unknown): EnvelopeBody {
+  if (!hasEnvelopeBodyFieldTypes(parsed)) {
     throw new Error("Invalid envelope body shape");
   }
-  return body as unknown as EnvelopeBody;
+  const body = parsed as EnvelopeBody;
+  if (body.v !== 1) {
+    throw new Error("Invalid envelope body shape");
+  }
+  return body;
+}
+
+export function coerceEnvelopeBody(parsed: unknown): EnvelopeBody | null {
+  return hasEnvelopeBodyFieldTypes(parsed) ? (parsed as EnvelopeBody) : null;
 }
 
 export function createOuterEnvelope(input: CreateOuterEnvelopeInput): OuterEnvelope {
@@ -106,18 +111,22 @@ export function createOuterEnvelope(input: CreateOuterEnvelopeInput): OuterEnvel
     v: 1,
     from,
     to: input.recipientAgentId,
-    blob: toBase64Url(bodyBytes),
-    sig: toBase64Url(signature),
+    blob: encodeBase64Url(bodyBytes),
+    sig: encodeBase64Url(signature),
   };
 }
 
 export function verifyOuterEnvelope(outer: OuterEnvelope, senderPublicKey: Uint8Array): boolean {
-  const blobBytes = fromBase64Url(outer.blob);
-  return verify(fromBase64Url(outer.sig), blobBytes, senderPublicKey);
+  try {
+    const blobBytes = decodeBase64UrlStrict(outer.blob);
+    return verify(decodeBase64UrlStrict(outer.sig), blobBytes, senderPublicKey);
+  } catch {
+    return false;
+  }
 }
 
 export function parseEnvelopeBody(outer: OuterEnvelope): EnvelopeBody {
-  const blobBytes = fromBase64Url(outer.blob);
+  const blobBytes = decodeBase64UrlStrict(outer.blob);
   const parsed = JSON.parse(new TextDecoder().decode(blobBytes)) as unknown;
   return validateEnvelopeBody(parsed);
 }

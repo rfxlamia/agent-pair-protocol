@@ -8,7 +8,6 @@ import {
   generateKeyPair,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
-import * as protocol from "@agentpair/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
@@ -41,8 +40,7 @@ class StubInboxRelayWithRowids {
 
   constructor(responses: StubResponse[] = []) {
     this.responses = responses.map((response, index) => ({
-      rows:
-        response.rows ?? envelopesToRows(response.envelopes ?? [], response.cursor ?? index + 1),
+      rows: response.rows ?? envelopesToRows(response.envelopes ?? []),
       cursor: response.cursor ?? 0,
     }));
   }
@@ -58,7 +56,7 @@ class StubInboxRelayWithRowids {
     const raw = this.responses[this.pullIndex] ?? { rows: [], cursor: since };
     this.pullIndex += 1;
     const next = {
-      rows: raw.rows ?? envelopesToRows((raw as StubResponse).envelopes ?? [], raw.cursor ?? since),
+      rows: raw.rows ?? envelopesToRows((raw as StubResponse).envelopes ?? []),
       cursor: raw.cursor ?? since,
     };
     let rows = next.rows;
@@ -78,7 +76,7 @@ class StubInboxRelayWithRowids {
   }
 }
 
-function envelopesToRows(envelopes: OuterEnvelope[], cursor: number): PullRow[] {
+function envelopesToRows(envelopes: OuterEnvelope[]): PullRow[] {
   return envelopes.map((envelope, index) => ({
     rowid: index + 1,
     wire: wireFromEnvelope(envelope),
@@ -267,7 +265,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       makeOuterEnvelope(currentPeer, recipientId, "current-2", 2),
     ];
     relay.responses[0] = {
-      rows: envelopesToRows([...staleEnvelopes, ...currentEnvelopes], 20),
+      rows: envelopesToRows([...staleEnvelopes, ...currentEnvelopes]),
       cursor: 20,
     };
 
@@ -316,7 +314,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       makeOuterEnvelope(currentPeer, recipientId, "current-2", 2),
     ];
     relay.responses[0] = {
-      rows: envelopesToRows([...staleEnvelopes, ...currentEnvelopes], 20),
+      rows: envelopesToRows([...staleEnvelopes, ...currentEnvelopes]),
       cursor: 20,
     };
 
@@ -390,13 +388,10 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
     relay.responses[0] = {
-      rows: envelopesToRows(
-        [
-          makeOuterEnvelope(bondedPeer, recipientId, "bonded", 1),
-          makeOuterEnvelope(extraPeer, recipientId, "extra", 2),
-        ],
-        2,
-      ),
+      rows: envelopesToRows([
+        makeOuterEnvelope(bondedPeer, recipientId, "bonded", 1),
+        makeOuterEnvelope(extraPeer, recipientId, "extra", 2),
+      ]),
       cursor: 2,
     };
 
@@ -438,13 +433,10 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     const recipientKeys = await ctx.keyStore.loadOrCreate();
     const recipientId = publicKeyToAgentId(recipientKeys.publicKey);
     relay.responses[0] = {
-      rows: envelopesToRows(
-        [
-          makeOuterEnvelope(peer, recipientId, "allowed", 1),
-          makeOuterEnvelope(stranger, recipientId, "blocked", 2),
-        ],
-        2,
-      ),
+      rows: envelopesToRows([
+        makeOuterEnvelope(peer, recipientId, "allowed", 1),
+        makeOuterEnvelope(stranger, recipientId, "blocked", 2),
+      ]),
       cursor: 2,
     };
 
@@ -893,6 +885,7 @@ describe("inbox send absolute ttl (M1.2 §4.2)", () => {
     allowlist.set(selfId, [peerId]);
 
     const beforeUnix = Math.floor(Date.now() / 1000);
+    const protocol = await import("@agentpair/protocol");
     const createSpy = vi.spyOn(protocol, "createOuterEnvelope");
 
     const result = structured(
