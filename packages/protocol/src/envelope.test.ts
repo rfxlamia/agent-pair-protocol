@@ -1,5 +1,6 @@
 import { bytesToUtf8, utf8ToBytes } from "@noble/ciphers/utils.js";
 import { describe, expect, it } from "vitest";
+import { decodeBase64UrlStrict, encodeBase64Url } from "./crypto/base64url.js";
 import {
   createOuterEnvelope,
   decryptEnvelopePayload,
@@ -61,7 +62,7 @@ describe("outer envelope v1 sign-the-blob", () => {
     });
 
     const body = parseEnvelopeBody(outer);
-    const bodyJson = new TextDecoder().decode(Buffer.from(outer.blob, "base64url"));
+    const bodyJson = new TextDecoder().decode(decodeBase64UrlStrict(outer.blob));
     expect(bodyJson).toBe(
       JSON.stringify({
         v: 1,
@@ -91,9 +92,9 @@ describe("outer envelope v1 sign-the-blob", () => {
       payload: utf8ToBytes("tamper blob"),
     });
 
-    const blobBytes = new Uint8Array(Buffer.from(outer.blob, "base64url"));
+    const blobBytes = decodeBase64UrlStrict(outer.blob);
     blobBytes[10] ^= 0xff;
-    const tampered = { ...outer, blob: Buffer.from(blobBytes).toString("base64url") };
+    const tampered = { ...outer, blob: encodeBase64Url(blobBytes) };
 
     expect(verifyOuterEnvelope(tampered, alice.publicKey)).toBe(false);
   });

@@ -1,5 +1,6 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeBase64Url } from "../crypto/base64url.js";
 import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
 import { sign } from "../crypto/sign.js";
 import {
@@ -29,7 +30,7 @@ function signAllowlist(
   return {
     agent_id: agentId,
     allowed: [...allowed].sort(),
-    sig: Buffer.from(signature).toString("base64url"),
+    sig: encodeBase64Url(signature),
   };
 }
 
