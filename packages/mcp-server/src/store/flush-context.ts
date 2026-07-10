@@ -9,6 +9,7 @@ export async function flushAgentContext(ctx: AgentContext): Promise<void> {
     ctx.sessionStore,
     ctx.allowlist,
     ctx.inboxCursor,
+    ctx.closedThreads,
   ] as FlushableStore[];
   const results = await Promise.allSettled(
     stores.map((store) => store.flush?.() ?? Promise.resolve()),
