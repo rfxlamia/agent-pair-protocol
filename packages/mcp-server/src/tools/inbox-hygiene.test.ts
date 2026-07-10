@@ -281,7 +281,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       return;
     }
     expect(first.envelopes).toHaveLength(1);
-    expect(first.envelopes[0]?.payload).toBe("first");
+    expect(first.envelopes[0]?.payload).toEqual({ body: "first" });
 
     const second = structured(await handleInbox(ctx, {}));
     expect(second.ok).toBe(true);
@@ -289,7 +289,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       return;
     }
     expect(second.envelopes).toHaveLength(1);
-    expect(second.envelopes[0]?.payload).toBe("second");
+    expect(second.envelopes[0]?.payload).toEqual({ body: "second" });
     expect(relay.pulls).toEqual([0, 10]);
   });
 
@@ -465,7 +465,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     }
     expect(relay.pullSenders[0]).toEqual([bondedPeerId]);
     expect(result.envelopes).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toBe("bonded");
+    expect(result.envelopes[0]?.payload).toEqual({ body: "bonded" });
     expect(result.filtered_count).toBe(0);
     expect(result.relay_filtered_count).toBeUndefined();
   });
@@ -504,7 +504,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     }
     expect(result.bonds_empty).toBe(true);
     expect(result.envelopes).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toBe("allowed");
+    expect(result.envelopes[0]?.payload).toEqual({ body: "allowed" });
   });
 
   it("reports cursor_reset when cursor file is corrupt", async () => {
@@ -599,7 +599,7 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     }
     expect(result.envelopes).toHaveLength(1);
     const item = result.envelopes[0];
-    expect(item?.payload).toBe("hello-v1");
+    expect(item?.payload).toEqual({ body: "hello-v1" });
     expect(item?.verified).toBe(true);
     expect(item?.sig).toBe(outer.sig);
     expect(item?.from).toBe(peerId);
@@ -707,7 +707,7 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     }
     expect(result.envelopes).toHaveLength(1);
     expect(result.rejected).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toBe("still-here");
+    expect(result.envelopes[0]?.payload).toEqual({ body: "still-here" });
     expect(result).not.toHaveProperty("skipped_unsupported");
   });
 });

@@ -22,7 +22,7 @@ import type {
 } from "./types.js";
 import { SESSION_OPEN_TTL_MS } from "./types.js";
 
-/** Recipient sessions past open must not be reset by a redelivered session.open. */
+/** Recipient sessions past open must not be reset by a redelivered nego.open. */
 const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = ["live", "signed", "closed", "open_rejected"];
 
 function peerFor(session: SessionRecord, agentId: string): string {

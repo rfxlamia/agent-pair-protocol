@@ -22,11 +22,11 @@ describe("outer envelope v1 sign-the-blob", () => {
     const outer = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread,
       seq: 1,
       ttl: 86400,
-      payload: utf8ToBytes('{"hello":"world"}'),
+      payload: utf8ToBytes('{"body":"world"}'),
     });
 
     expect(verifyOuterEnvelope(outer, alice.publicKey)).toBe(true);
@@ -35,7 +35,7 @@ describe("outer envelope v1 sign-the-blob", () => {
     expect(body.v).toBe(1);
     expect(body.from).toBe(publicKeyToAgentId(alice.publicKey));
     expect(body.to).toBe(bobId);
-    expect(body.type).toBe("chat.message");
+    expect(body.type).toBe("core.msg");
     expect(body.thread).toBe(thread);
     expect(body.seq).toBe(1);
     expect(body.ttl).toBe(86400);
@@ -43,7 +43,7 @@ describe("outer envelope v1 sign-the-blob", () => {
     expect(typeof body.payload).toBe("string");
 
     const decrypted = decryptEnvelopePayload(body, bob, alice.publicKey);
-    expect(bytesToUtf8(decrypted)).toBe('{"hello":"world"}');
+    expect(bytesToUtf8(decrypted)).toBe('{"body":"world"}');
   });
 
   it("fixes body JSON key order at create time: v, id, from, to, type, thread, seq, ttl, payload", () => {
@@ -54,11 +54,11 @@ describe("outer envelope v1 sign-the-blob", () => {
     const outer = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread,
       seq: 2,
       ttl: 3600,
-      payload: utf8ToBytes("key-order"),
+      payload: utf8ToBytes(JSON.stringify({ body: "key-order" })),
     });
 
     const body = parseEnvelopeBody(outer);
@@ -85,11 +85,11 @@ describe("outer envelope v1 sign-the-blob", () => {
     const outer = createOuterEnvelope({
       sender: alice,
       recipientAgentId: publicKeyToAgentId(bob.publicKey),
-      type: "chat.message",
+      type: "core.msg",
       thread,
       seq: 3,
       ttl: 3600,
-      payload: utf8ToBytes("tamper blob"),
+      payload: utf8ToBytes(JSON.stringify({ body: "tamper blob" })),
     });
 
     const blobBytes = decodeBase64UrlStrict(outer.blob);
@@ -106,11 +106,11 @@ describe("outer envelope v1 sign-the-blob", () => {
     const outer = createOuterEnvelope({
       sender: alice,
       recipientAgentId: publicKeyToAgentId(bob.publicKey),
-      type: "chat.message",
+      type: "core.msg",
       thread,
       seq: 4,
       ttl: 3600,
-      payload: utf8ToBytes("tamper sig"),
+      payload: utf8ToBytes(JSON.stringify({ body: "tamper sig" })),
     });
 
     const tampered = { ...outer, sig: `${outer.sig.slice(0, -2)}XX` };
@@ -124,11 +124,11 @@ describe("outer envelope v1 sign-the-blob", () => {
     const outer = createOuterEnvelope({
       sender: alice,
       recipientAgentId: publicKeyToAgentId(bob.publicKey),
-      type: "chat.message",
+      type: "core.msg",
       thread,
       seq: 5,
       ttl: 3600,
-      payload: utf8ToBytes("round-trip"),
+      payload: utf8ToBytes(JSON.stringify({ body: "round-trip" })),
     });
 
     const wire = serializeOuterEnvelope(outer);
@@ -151,7 +151,7 @@ describe("outer envelope v1 sign-the-blob", () => {
       id: crypto.randomUUID(),
       from: publicKeyToAgentId(alice.publicKey),
       to: publicKeyToAgentId(bob.publicKey),
-      type: "chat.message",
+      type: "core.msg",
       thread,
       seq: 1,
       ttl: 3600,
