@@ -7,7 +7,7 @@ import {
   syncInboxes,
 } from "../e2e/dual-server.js";
 import { handleHumanApprove } from "./human-approve.js";
-import { handleInbox, handleSend } from "./inbox.js";
+import { handleClose, handleInbox, handleSend } from "./inbox.js";
 import {
   handleSessionMsg,
   handleSessionOpen,
@@ -607,5 +607,73 @@ describe("inbox production path", () => {
     }
     expect(bobInbox.gap_warnings).toBeUndefined();
     expect(bobInbox.envelopes.map((envelope) => envelope.seq)).toEqual([4]);
+  }, 15_000);
+
+  it("handleClose on live nego thread uses seq after session traffic and peer accepts", async () => {
+    const alice = await createDualAgent(env, "close-nego-alice");
+    const bob = await createDualAgent(env, "close-nego-bob");
+    await runPairingFlow(alice, bob);
+
+    const opened = structured(
+      await handleSessionOpen(alice.ctx, {
+        to: bob.agentId,
+        goal: "Close after nego traffic",
+        ...SESSION_OPEN_INPUT,
+      }),
+    );
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) {
+      return;
+    }
+
+    await syncInboxes([alice.ctx, bob.ctx]);
+
+    const bobStatus = structured(await handleSessionStatus(bob.ctx, { thread: opened.thread }));
+    expect(bobStatus.pending_id).toBeTypeOf("string");
+    if (!bobStatus.pending_id) {
+      return;
+    }
+
+    structured(
+      await handleHumanApprove(bob.ctx, {
+        pending_id: bobStatus.pending_id,
+        decision: "approve",
+        via_human: true,
+      }),
+    );
+    await syncInboxes([alice.ctx, bob.ctx]);
+
+    await handleSessionMsg(alice.ctx, {
+      thread: opened.thread,
+      type: "propose",
+      body: JSON.stringify({ diff: "v1" }),
+    });
+    await syncInboxes([alice.ctx, bob.ctx]);
+
+    const closed = structured(
+      await handleClose(alice.ctx, {
+        thread: opened.thread,
+        to: bob.agentId,
+        reason: "done",
+      }),
+    );
+    expect(closed.ok).toBe(true);
+    if (!closed.ok) {
+      return;
+    }
+    expect(closed.seq).toBeGreaterThan(1);
+
+    const bobInbox = structured(await handleInbox(bob.ctx, {}));
+    expect(bobInbox.ok).toBe(true);
+    if (!bobInbox.ok) {
+      return;
+    }
+    expect(bobInbox.rejected?.some((entry) => entry.error === "stale_seq") ?? false).toBe(false);
+    expect(bob.ctx.closedThreads.isClosed(opened.thread)).toBe(true);
+
+    const bobStatusAfter = structured(
+      await handleSessionStatus(bob.ctx, { thread: opened.thread }),
+    );
+    expect(bobStatusAfter.status).toBe("closed");
   }, 15_000);
 });

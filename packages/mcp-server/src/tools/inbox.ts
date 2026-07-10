@@ -24,7 +24,7 @@ import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const processedEnvelopeIds = new WeakMap<AgentContext, Set<string>>();
 
-function formatPayloadForInbox(type: string, rawPayload: string): unknown {
+function parseStructuredInboxPayload(type: string, rawPayload: string): unknown {
   try {
     const parsed = JSON.parse(rawPayload);
     if (type === "core.msg" || type === "core.close" || type === "core.ack") {
@@ -34,6 +34,14 @@ function formatPayloadForInbox(type: string, rawPayload: string): unknown {
     // fall through
   }
   return rawPayload;
+}
+
+function closeReasonFromPayload(inboxPayload: unknown): string | undefined {
+  if (typeof inboxPayload !== "object" || inboxPayload === null || Array.isArray(inboxPayload)) {
+    return undefined;
+  }
+  const reason = (inboxPayload as { reason?: unknown }).reason;
+  return typeof reason === "string" ? reason : undefined;
 }
 
 function resolveAllowedPeers(
@@ -176,6 +184,7 @@ export async function handleInbox(
     // envelope won't be redelivered (stale_seq would reject if it were). Session
     // side effects may still fail after commit — in-process `seen` dedupes by body.id.
     const payload = new TextDecoder().decode(plaintext);
+    const inboxPayload = parseStructuredInboxPayload(body.type, payload);
 
     let pendingId: string | undefined;
     let sessionStatus: string | undefined;
@@ -209,13 +218,7 @@ export async function handleInbox(
     }
 
     if (body.type === "core.close" && !ctx.closedThreads.isClosed(body.thread)) {
-      let reason: string | undefined;
-      try {
-        const parsed = JSON.parse(payload) as { reason?: string };
-        reason = parsed.reason;
-      } catch {
-        reason = undefined;
-      }
+      const reason = closeReasonFromPayload(inboxPayload);
       ctx.closedThreads.markClosed(body.thread, {
         closed_at: Math.floor(Date.now() / 1000),
         reason,
@@ -233,7 +236,7 @@ export async function handleInbox(
       thread: body.thread,
       seq: body.seq,
       ttl: body.ttl,
-      payload: formatPayloadForInbox(body.type, payload),
+      payload: inboxPayload,
       sig: outer.sig,
       verified: true,
       ...(pendingId ? { pending_id: pendingId } : {}),
@@ -334,16 +337,12 @@ export async function handleClose(
 
   const keyPair = await ctx.keyStore.loadOrCreate();
   const senderId = publicKeyToAgentId(keyPair.publicKey);
-  const bonds = ctx.bonds.get(senderId);
   let to = input.to;
   if (!to) {
     const session = ctx.sessionStore.get(input.thread);
     if (session) {
       to = session.initiator === senderId ? session.recipient : session.initiator;
     }
-  }
-  if (!to && bonds.length === 1) {
-    to = bonds[0]?.peer;
   }
   if (!to) {
     return toolTextResult({ ok: false, error: "recipient_not_allowed" });

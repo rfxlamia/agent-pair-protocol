@@ -17,6 +17,7 @@ import { createKeyStore } from "../store/keys.js";
 import { createPendingQueue } from "../store/pending.js";
 import { filterBondedWires, handleClose, handleInbox, handleSend } from "./inbox.js";
 import { createAgentContext } from "./pair.js";
+import { handleSessionStatus } from "./session.js";
 import { detectClientThreadGaps } from "./thread-seq.js";
 
 function structured<T>(result: { structuredContent: T }): T {
@@ -1018,11 +1019,66 @@ describe("M1.4 envelope types", () => {
     expect(second).toEqual({ ok: false, error: "thread_closed" });
   });
 
-  it("handleClose infers peer from sole bond when to omitted", async () => {
-    const { bobId, aliceCtx } = await makeBondedInboxPair();
+  it("handleClose infers peer from session when to omitted", async () => {
+    const { aliceId, bobId, aliceCtx } = await makeBondedInboxPair();
     const thread = crypto.randomUUID();
-    const closed = structured(await handleClose(aliceCtx, { thread, reason: "sole bond" }));
+    aliceCtx.sessionStore.upsert({
+      thread,
+      initiator: aliceId,
+      recipient: bobId,
+      role: "initiator",
+      status: "live",
+      goal: "probe",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      turnCount: 1,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+    const closed = structured(await handleClose(aliceCtx, { thread, reason: "done" }));
     expect(closed.ok).toBe(true);
+  });
+
+  it("core.close receive transitions persisted session on cold process", async () => {
+    const { aliceKeys, aliceId, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    bobCtx.sessionStore.upsert({
+      thread,
+      initiator: aliceId,
+      recipient: bobId,
+      role: "recipient",
+      status: "live",
+      goal: "probe",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.close",
+      payload: { reason: "shutdown" },
+      thread,
+      seq: 1,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    await handleInbox(bobCtx, {});
+    const status = structured(await handleSessionStatus(bobCtx, { thread }));
+    expect(status.status).toBe("closed");
   });
 
   it("send after peer core.close receive is rejected", async () => {
