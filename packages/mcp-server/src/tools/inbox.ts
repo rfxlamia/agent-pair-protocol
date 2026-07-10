@@ -274,32 +274,39 @@ export async function handleSend(
   ctx: AgentContext,
   input: {
     to: string;
-    type: string;
-    payload: string;
+    body: string;
+    kind?: string;
     thread?: string;
     seq?: number;
     ttl?: number;
   },
 ) {
+  const thread = input.thread ?? crypto.randomUUID();
+  if (ctx.closedThreads.isClosed(thread)) {
+    return toolTextResult({ ok: false, error: "thread_closed" });
+  }
+
+  const payloadObj: { body: string; kind?: string } = { body: input.body };
+  if (input.kind !== undefined) {
+    payloadObj.kind = input.kind;
+  }
+
   const keyPair = await ctx.keyStore.loadOrCreate();
   const senderId = publicKeyToAgentId(keyPair.publicKey);
   const allowed = ctx.allowlist.get(senderId);
   if (!allowed.includes(input.to)) {
-    const result = { ok: false, error: "recipient_not_allowed" };
-    assertNoSecrets(result);
-    return toolTextResult(result);
+    return toolTextResult({ ok: false, error: "recipient_not_allowed" });
   }
 
-  const thread = input.thread ?? crypto.randomUUID();
   const seq = input.seq ?? nextThreadSeq(ctx, thread);
   const outer = createOuterEnvelope({
     sender: keyPair,
     recipientAgentId: input.to,
-    type: input.type,
+    type: "core.msg",
     thread,
     seq,
     ttl: defaultEnvelopeTtl(input.ttl),
-    payload: utf8ToBytes(input.payload),
+    payload: utf8ToBytes(JSON.stringify(payloadObj)),
   });
 
   const body = parseEnvelopeBody(outer);
@@ -315,4 +322,64 @@ export async function handleSend(
   };
   assertNoSecrets(result);
   return toolTextResult(result);
+}
+
+export async function handleClose(
+  ctx: AgentContext,
+  input: { thread: string; to?: string; reason?: string },
+) {
+  if (ctx.closedThreads.isClosed(input.thread)) {
+    return toolTextResult({ ok: false, error: "thread_closed" });
+  }
+
+  const keyPair = await ctx.keyStore.loadOrCreate();
+  const senderId = publicKeyToAgentId(keyPair.publicKey);
+  const bonds = ctx.bonds.get(senderId);
+  let to = input.to;
+  if (!to) {
+    const session = ctx.sessionStore.get(input.thread);
+    if (session) {
+      to = session.initiator === senderId ? session.recipient : session.initiator;
+    }
+  }
+  if (!to && bonds.length === 1) {
+    to = bonds[0]?.peer;
+  }
+  if (!to) {
+    return toolTextResult({ ok: false, error: "recipient_not_allowed" });
+  }
+
+  const allowed = ctx.allowlist.get(senderId);
+  if (!allowed.includes(to)) {
+    return toolTextResult({ ok: false, error: "recipient_not_allowed" });
+  }
+
+  const payloadObj = input.reason !== undefined ? { reason: input.reason } : {};
+  const seq = nextThreadSeq(ctx, input.thread);
+  const outer = createOuterEnvelope({
+    sender: keyPair,
+    recipientAgentId: to,
+    type: "core.close",
+    thread: input.thread,
+    seq,
+    ttl: defaultEnvelopeTtl(),
+    payload: utf8ToBytes(JSON.stringify(payloadObj)),
+  });
+
+  await ctx.relay.sendEnvelope(to, outer);
+  recordSentSeq(ctx, input.thread, parseEnvelopeBody(outer).seq);
+
+  ctx.closedThreads.markClosed(input.thread, {
+    closed_at: Math.floor(Date.now() / 1000),
+    reason: input.reason,
+    by: senderId,
+  });
+  await ctx.closedThreads.flush();
+  await processThreadClose(ctx, input.thread, input.reason);
+
+  return toolTextResult({
+    ok: true,
+    thread: input.thread,
+    seq: parseEnvelopeBody(outer).seq,
+  });
 }
