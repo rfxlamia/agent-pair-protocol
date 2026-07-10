@@ -1,5 +1,6 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { describe, expect, it, vi } from "vitest";
+import { decodeBase64UrlStrict, encodeBase64Url } from "./crypto/base64url.js";
 import {
   type EnvelopeBody,
   type OuterEnvelope,
@@ -85,8 +86,8 @@ function tamperOuter(wire: string, patch: (outer: Record<string, unknown>) => vo
 
 function resignBody(wire: string, sender: KeyPair, patch: (body: EnvelopeBody) => void): string {
   const outer = JSON.parse(wire) as OuterEnvelope;
-  const blobBytes = Buffer.from(outer.blob, "base64url");
-  const body = JSON.parse(blobBytes.toString("utf8")) as EnvelopeBody;
+  const blobBytes = decodeBase64UrlStrict(outer.blob);
+  const body = JSON.parse(new TextDecoder().decode(blobBytes)) as EnvelopeBody;
   patch(body);
   const bodyBytes = serializeBodyBytes(body);
   const signature = sign(bodyBytes, sender.secretKey);
@@ -94,17 +95,17 @@ function resignBody(wire: string, sender: KeyPair, patch: (body: EnvelopeBody) =
     v: 1,
     from: body.from,
     to: body.to,
-    blob: Buffer.from(bodyBytes).toString("base64url"),
-    sig: Buffer.from(signature).toString("base64url"),
+    blob: encodeBase64Url(bodyBytes),
+    sig: encodeBase64Url(signature),
   });
 }
 
 function tamperBody(wire: string, patch: (body: EnvelopeBody) => void): string {
   const outer = JSON.parse(wire) as OuterEnvelope;
-  const blobBytes = Buffer.from(outer.blob, "base64url");
-  const body = JSON.parse(blobBytes.toString("utf8")) as EnvelopeBody;
+  const blobBytes = decodeBase64UrlStrict(outer.blob);
+  const body = JSON.parse(new TextDecoder().decode(blobBytes)) as EnvelopeBody;
   patch(body);
-  const tampered = { ...outer, blob: Buffer.from(serializeBodyBytes(body)).toString("base64url") };
+  const tampered = { ...outer, blob: encodeBase64Url(serializeBodyBytes(body)) };
   return serializeOuterEnvelope(tampered);
 }
 
@@ -184,7 +185,7 @@ describe("receiveEnvelope steps 0–6 (§4.3)", () => {
     const { wire, bob, bobId } = makeValidWire();
     const deps = makeDeps(bob);
     const outer = JSON.parse(wire) as OuterEnvelope;
-    const badBlob = Buffer.from("{not-json", "utf8").toString("base64url");
+    const badBlob = encodeBase64Url(utf8ToBytes("{not-json"));
     const badWire = serializeOuterEnvelope({ ...outer, blob: badBlob });
 
     const result = await receiveEnvelope(badWire, bobId, deps);
@@ -458,7 +459,7 @@ describe("receiveEnvelope steps 7–8 (§4.3)", () => {
   it("step 8: decrypt failure → invalid_payload", async () => {
     const { wire, alice, bob, bobId } = makeValidWire();
     const badWire = resignBody(wire, alice, (body) => {
-      body.payload = Buffer.from(new Uint8Array(40).fill(0xab)).toString("base64url");
+      body.payload = encodeBase64Url(new Uint8Array(40).fill(0xab));
     });
     const deps = makeDeps(bob);
 

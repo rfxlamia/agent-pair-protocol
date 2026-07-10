@@ -71,6 +71,7 @@ packages/runner-esp32/.build/
 ROADMAP.md
 CLAUDE.md
 .worktree/
+.worktrees/
 
 # Internal planning, private deploy, local tooling (not for public repo)
 docs/pocket/

@@ -1,5 +1,6 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { describe, expect, it } from "vitest";
+import { encodeBase64Url } from "./base64url.js";
 import { decryptPayload, encryptPayload } from "./encrypt.js";
 import { randomNonce } from "./envelope.js";
 import { generateKeyPair } from "./keys.js";
@@ -10,7 +11,7 @@ describe("encrypt", () => {
   it("rejects payloads shorter than nonce plus Poly1305 tag", () => {
     const alice = generateKeyPair();
     const bob = generateKeyPair();
-    const short = Buffer.alloc(XCHACHA_NONCE_LENGTH + 15).toString("base64url");
+    const short = encodeBase64Url(Buffer.alloc(XCHACHA_NONCE_LENGTH + 15));
 
     expect(() => decryptPayload(short, bob.secretKey, alice.publicKey)).toThrow(/too short/i);
   });

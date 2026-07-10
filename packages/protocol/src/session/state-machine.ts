@@ -1,4 +1,5 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import { encodeBase64Url } from "../crypto/base64url.js";
 import { sign } from "../crypto/sign.js";
 import { isEphemeralBond } from "./bond.js";
 import type { SessionStateMachineDeps } from "./deps.js";
@@ -196,7 +197,7 @@ export function createSessionStateMachine(
   async function finalizeSession(session: SessionRecord, artifactHash: string) {
     const peer = peerFor(session, deps.agentId);
     const message = utf8ToBytes(artifactHash);
-    const signature = Buffer.from(sign(message, deps.keyPair.secretKey)).toString("base64url");
+    const signature = encodeBase64Url(sign(message, deps.keyPair.secretKey));
     const signatures = {
       ...(session.signatures ?? {}),
       [deps.agentId]: signature,

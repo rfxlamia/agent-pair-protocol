@@ -1,5 +1,6 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeBase64Url } from "../crypto/base64url.js";
 import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
 import { sign } from "../crypto/sign.js";
 import {
@@ -29,7 +30,7 @@ function signAllowlist(
   return {
     agent_id: agentId,
     allowed: [...allowed].sort(),
-    sig: Buffer.from(signature).toString("base64url"),
+    sig: encodeBase64Url(signature),
   };
 }
 
@@ -146,6 +147,36 @@ describe("pairing flow", () => {
     initiatorAllowlist = new MemoryAllowlistStore();
     joinerAllowlist = new MemoryAllowlistStore();
   });
+
+  it("fails pairing when relay delivers non-canonical PAKE payload", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+    });
+
+    const raw = await relay.pollPakeMessage(pending.sessionId);
+    expect(raw).not.toBeNull();
+    if (raw === null) {
+      return;
+    }
+    const wire = JSON.parse(raw) as { phase: string; payload: string; role: string };
+    wire.payload = "_8"; // non-canonical; loose decode accepts, strict rejects
+    await relay.postPakeMessage(pending.sessionId, JSON.stringify(wire));
+
+    const joinResult = await pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+    });
+
+    expect(joinResult.status).toBe("pake_failed");
+  }, 15000);
 
   function assertNoPlaintextCodeOnRelay(code: string): void {
     for (const body of relay.postedPakeBodies) {

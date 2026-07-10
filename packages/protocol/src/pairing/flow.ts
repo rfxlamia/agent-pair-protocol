@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { decodeBase64UrlStrict, encodeBase64Url } from "../crypto/base64url.js";
 import { type KeyPair, publicKeyToAgentId } from "../crypto/keys.js";
 import { generatePairingCode } from "./pairing-words.js";
 import { type PakeSessionHandle, finish, init, respond, start } from "./pake-adapter.js";
@@ -103,11 +104,11 @@ function decodeWireMessage(raw: string): PairWireMessage {
 }
 
 function encodePakePayload(message: Uint8Array): string {
-  return Buffer.from(message).toString("base64url");
+  return encodeBase64Url(message);
 }
 
 function decodePakePayload(payload: string): Uint8Array {
-  return new Uint8Array(Buffer.from(payload, "base64url"));
+  return decodeBase64UrlStrict(payload);
 }
 
 function keyFingerprint(sharedKey: Uint8Array): string {
@@ -299,7 +300,12 @@ export async function pairJoin(input: {
     return { status: "pake_failed" };
   }
 
-  const initiatorMessage = decodePakePayload(initiatorWire.payload);
+  let initiatorMessage: Uint8Array;
+  try {
+    initiatorMessage = decodePakePayload(initiatorWire.payload);
+  } catch {
+    return { status: "pake_failed" };
+  }
   const joiner = respond(pakeCode, pending.sessionId, initiatorMessage);
   await input.relay.postPakeMessage(
     pending.sessionId,
@@ -421,7 +427,12 @@ export async function pairInitComplete(input: {
     return { status: "pake_failed" };
   }
 
-  const joinerMessage = decodePakePayload(joinerWire.payload);
+  let joinerMessage: Uint8Array;
+  try {
+    joinerMessage = decodePakePayload(joinerWire.payload);
+  } catch {
+    return { status: "pake_failed" };
+  }
   const sharedKey = finish(pending.initiatorSession, joinerMessage);
   const fingerprint = keyFingerprint(sharedKey);
 
