@@ -81,12 +81,22 @@ export {
 } from "./session/types.js";
 export { createSessionStore, type SessionStore } from "./session/store.js";
 export {
+  ENVELOPE_TYPES,
+  isKnownEnvelopeType,
+  isSessionDispatchType,
+  parseEnvelopePayload,
+  parseNegoOpenPayload,
+  parseNegoOpenRejectPayload,
+  parseNegoTurnPayload,
+  parseNegoSignedPayload,
+  parseAtestReportPayload,
+} from "./envelope/schema.js";
+export {
   parseOpenEnvelopePayload,
   parseOpenRejectEnvelopePayload,
   parsePeerSignedEnvelopePayload,
   parsePeerTestReportEnvelopePayload,
   parsePeerTurnEnvelopePayload,
-  parseSignalEnvelopePayload,
 } from "./session/validate.js";
 export {
   createSessionStateMachine,
