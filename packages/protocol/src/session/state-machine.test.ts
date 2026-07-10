@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { decodeBase64UrlStrict } from "../crypto/base64url.js";
 import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
 import type { Bond, LocalAllowlistStore } from "../pairing/flow.js";
 import type {
@@ -590,6 +591,12 @@ describe("session state machine", () => {
     expect(bobApproved.status).toBe("closed");
     expect(bobApproved.co_signed_hash).toBe(artifactHash);
     expect(bobApproved.signatures).toBeDefined();
+    if (!bobApproved.signatures) {
+      return;
+    }
+    const bobSig = bobApproved.signatures[bobId];
+    expect(bobSig).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(() => decodeBase64UrlStrict(bobSig)).not.toThrow();
     expect(bobPending.list().filter((item) => item.kind === "ratify")).toHaveLength(0);
 
     const aliceFinal = await aliceMachine.handleStatus({ thread });
