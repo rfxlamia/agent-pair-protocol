@@ -5,6 +5,7 @@ export {
   publicKeyToAgentId,
   type KeyPair,
 } from "./crypto/keys.js";
+export { decodeBase64UrlStrict, encodeBase64Url } from "./crypto/base64url.js";
 export { decryptPayload, encryptPayload } from "./crypto/encrypt.js";
 export { sign, verify } from "./crypto/sign.js";
 export {
