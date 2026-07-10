@@ -286,12 +286,12 @@ both humans ratify.
 `pending → live → signed → closed`, terminal branches `open_rejected`,
 `open_expired`.
 
-> *Informative:* the `nego.open` payload MAY be generated from a local,
-> human-readable **negotiation template** (markdown + YAML frontmatter, in
-> the spirit of SKILL.md). Templates are an application-layer convention —
-> see the separate Negotiation Templates document (planned). Template bodies
-> are instructions fed to a model; installing a third-party template is a
-> trust decision (§11.1 applies).
+> *Informative:* how an agent knows *what* to negotiate is application-layer
+> guidance, outside this spec. Rather than defining a new template format,
+> implementations are encouraged to reuse existing agent-skill conventions
+> (e.g. SKILL.md): a shareable skill can construct the `nego.open` payload
+> and guide the agent's turns. Skill bodies are instructions fed to a model;
+> installing a third-party skill is a trust decision (§11.1 applies).
 
 ### 8.2 Envelope types
 
@@ -493,8 +493,9 @@ Binding guidance (hard-won):
 
 ## Appendix B — Future Extensions (non-normative)
 
-- Negotiation templates: shareable markdown+frontmatter packs that generate
-  `nego.open` payloads and guide agent behavior (separate spec, post-1.0).
+- Negotiation packs distributed as agent skills (SKILL.md or equivalent)
+  that generate `nego.open` payloads and guide agent behavior — reuse of
+  existing skill ecosystems, no new format.
 - Sealed sender / metadata privacy toward the relay.
 - Cross-relay federation (agents on different relays).
 - Key rotation and bond re-keying.
