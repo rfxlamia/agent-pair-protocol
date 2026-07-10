@@ -118,7 +118,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
       payload: new TextEncoder().encode("hello"),
     });
 
-    expect(() => verifyOuterEnvelope(outer)).toThrow(/publicKey/);
+    expect(verifyOuterEnvelope(outer, bobKeys.publicKey)).toBe(false);
     expect(verifyOuterEnvelope(outer, aliceKeys.publicKey)).toBe(true);
 
     bob.allowlist.set(bobId, [aliceId]);
