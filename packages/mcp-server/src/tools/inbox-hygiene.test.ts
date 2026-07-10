@@ -130,6 +130,10 @@ function makeWireEnvelope(
 }
 
 async function makeBondedInboxPair() {
+  const [aliceDir, bobDir] = await Promise.all([
+    mkdtemp(join(tmpdir(), "agentpair-alice-keys-")),
+    mkdtemp(join(tmpdir(), "agentpair-bob-keys-")),
+  ]);
   const allowlistAlice = new MemoryAllowlistStore();
   const allowlistBob = new MemoryAllowlistStore();
   const bondsAlice = new MemoryBondStore();
@@ -137,13 +141,13 @@ async function makeBondedInboxPair() {
   const relay = new StubInboxRelayWithRowids([]);
 
   const aliceCtx = createAgentContext({
-    keyStore: createKeyStore({ keyPath: ":memory:alice" }),
+    keyStore: createKeyStore({ keyPath: join(aliceDir, "keys.json") }),
     relay: relay as unknown as HttpRelayClient,
     allowlist: allowlistAlice,
     bonds: bondsAlice,
   });
   const bobCtx = createAgentContext({
-    keyStore: createKeyStore({ keyPath: ":memory:bob" }),
+    keyStore: createKeyStore({ keyPath: join(bobDir, "keys.json") }),
     relay: relay as unknown as HttpRelayClient,
     allowlist: allowlistBob,
     bonds: bondsBob,
