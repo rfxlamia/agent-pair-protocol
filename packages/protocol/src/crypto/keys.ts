@@ -1,6 +1,8 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { decodeBase64UrlStrict, encodeBase64Url } from "./base64url.js";
 
 const AGENT_ID_PREFIX = "ed25519:";
+const ED25519_PUBLIC_KEY_LENGTH = 32;
 
 export interface KeyPair {
   secretKey: Uint8Array;
@@ -12,14 +14,18 @@ export function generateKeyPair(): KeyPair {
 }
 
 export function publicKeyToAgentId(publicKey: Uint8Array): string {
-  return `${AGENT_ID_PREFIX}${Buffer.from(publicKey).toString("base64url")}`;
+  return `${AGENT_ID_PREFIX}${encodeBase64Url(publicKey)}`;
 }
 
 export function agentIdToPublicKey(agentId: string): Uint8Array {
   if (!agentId.startsWith(AGENT_ID_PREFIX)) {
     throw new Error(`Invalid agent id prefix: ${agentId}`);
   }
-  return new Uint8Array(Buffer.from(agentId.slice(AGENT_ID_PREFIX.length), "base64url"));
+  const bytes = decodeBase64UrlStrict(agentId.slice(AGENT_ID_PREFIX.length));
+  if (bytes.length !== ED25519_PUBLIC_KEY_LENGTH) {
+    throw new Error("Invalid Ed25519 public key length");
+  }
+  return bytes;
 }
 
 export function getPublicKey(secretKey: Uint8Array): Uint8Array {
