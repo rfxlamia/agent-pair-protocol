@@ -42,7 +42,7 @@ export type ReceiveEnvelopeResult =
   | { ok: false; error: string; body?: EnvelopeBody }
   | { ok: true; body: EnvelopeBody; outer: OuterEnvelope; plaintext: Uint8Array };
 
-function parseOuterVersion(wire: string): number | null {
+export function parseOuterVersion(wire: string): number | null {
   try {
     const parsed = JSON.parse(wire) as unknown;
     if (typeof parsed !== "object" || parsed === null) {
@@ -55,7 +55,7 @@ function parseOuterVersion(wire: string): number | null {
   }
 }
 
-function tryParseEnvelopeBody(outer: OuterEnvelope): EnvelopeBody | null {
+export function tryParseEnvelopeBody(outer: OuterEnvelope): EnvelopeBody | null {
   try {
     const blobBytes = decodeBase64UrlStrict(outer.blob);
     const parsed = JSON.parse(new TextDecoder().decode(blobBytes)) as unknown;

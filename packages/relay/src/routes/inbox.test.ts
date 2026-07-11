@@ -56,6 +56,23 @@ function tamperBodyFrom(outer: OuterEnvelope, from: string): string {
   return JSON.stringify(parsed);
 }
 
+function tamperBodyV(outer: OuterEnvelope, bodyVersion: number): string {
+  const parsed = JSON.parse(serializeOuterEnvelope(outer)) as {
+    v: number;
+    from: string;
+    to: string;
+    blob: string;
+    sig: string;
+  };
+  const bodyObj = JSON.parse(Buffer.from(parsed.blob, "base64url").toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+  bodyObj.v = bodyVersion;
+  parsed.blob = Buffer.from(JSON.stringify(bodyObj)).toString("base64url");
+  return JSON.stringify(parsed);
+}
+
 describe("inbox relay routes", () => {
   let server: ServerType;
   let db: ReturnType<typeof createRelayApp>["db"];
@@ -127,7 +144,7 @@ describe("inbox relay routes", () => {
     const res = await postEnvelope(bobId, stranger, 1);
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("sender_not_allowed");
+    expect(body.error).toBe("recipient_not_allowed");
   });
 
   it("rejects spoofed envelope with invalid signature", async () => {
@@ -168,7 +185,7 @@ describe("inbox relay routes", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("invalid_envelope");
+    expect(body.error).toBe("invalid_json");
   });
 
   it("returns 400 for non-positive ttl on POST", async () => {
@@ -190,10 +207,10 @@ describe("inbox relay routes", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("invalid_envelope");
+    expect(body.error).toBe("envelope_expired");
   });
 
-  it("returns 400 for malformed from agent id on POST", async () => {
+  it("returns 403 for malformed from agent id on POST", async () => {
     const envelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
@@ -210,9 +227,9 @@ describe("inbox relay routes", () => {
       headers: { "Content-Type": "application/json" },
       body: tamperBodyFrom(envelope, "not-a-valid-agent-id"),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("invalid_envelope");
+    expect(body.error).toBe("invalid_signature");
   });
 
   it("returns 400 for malformed envelope JSON on POST", async () => {
@@ -223,7 +240,7 @@ describe("inbox relay routes", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("invalid_envelope");
+    expect(body.error).toBe("invalid_json");
   });
 
   it("round-trips a legit signed envelope via POST then GET", async () => {
@@ -679,7 +696,7 @@ describe("inbox relay routes", () => {
       expect(delivered).toEqual(JSON.parse(wire));
     });
 
-    it("returns 400 invalid_envelope for invalid blob JSON and inserts no row", async () => {
+    it("returns 400 invalid_json for invalid blob JSON and inserts no row", async () => {
       const beforeCount = (
         db
           .prepare("SELECT COUNT(*) AS count FROM inbox WHERE sender_agent_id = ?")
@@ -699,7 +716,7 @@ describe("inbox relay routes", () => {
       const res = await postV1Wire(wire);
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toBe("invalid_envelope");
+      expect(body.error).toBe("invalid_json");
 
       const afterCount = (
         db
@@ -735,7 +752,7 @@ describe("inbox relay routes", () => {
       expect(count).toBe(0);
     });
 
-    it("returns 400 invalid_envelope for v0 flat envelope", async () => {
+    it("returns 400 invalid_json for v0 flat envelope", async () => {
       const flatId = crypto.randomUUID();
       const flat = JSON.stringify({
         id: flatId,
@@ -752,10 +769,10 @@ describe("inbox relay routes", () => {
       const res = await postV1Wire(flat);
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toBe("invalid_envelope");
+      expect(body.error).toBe("invalid_json");
     });
 
-    it("returns 400 invalid_envelope when outer.v !== 1", async () => {
+    it("returns 400 unsupported_version when outer.v !== 1", async () => {
       const outer = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
@@ -772,10 +789,10 @@ describe("inbox relay routes", () => {
       const res = await postV1Wire(wire);
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toBe("invalid_envelope");
+      expect(body.error).toBe("unsupported_version");
     });
 
-    it("returns 400 recipient_mismatch when body.to !== path agentId", async () => {
+    it("returns 400 routing_mismatch when body.to !== path agentId", async () => {
       const outer = createOuterEnvelope({
         sender: alice,
         recipientAgentId: aliceId,
@@ -790,7 +807,7 @@ describe("inbox relay routes", () => {
       const res = await postV1Wire(wire);
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toBe("recipient_mismatch");
+      expect(body.error).toBe("routing_mismatch");
     });
   });
 
@@ -2145,5 +2162,124 @@ describe("inbox purge rate limit (isolated db)", () => {
       method: "DELETE",
     });
     expect(blocked.status).toBe(429);
+  });
+});
+
+const M15_PORT = 13011;
+const M15_BASE = `http://127.0.0.1:${M15_PORT}`;
+
+describe("POST /inbox §10 error alignment (M1.5)", () => {
+  let server: ServerType;
+  const alice = generateKeyPair();
+  const bob = generateKeyPair();
+  const carol = generateKeyPair();
+  const aliceId = publicKeyToAgentId(alice.publicKey);
+  const bobId = publicKeyToAgentId(bob.publicKey);
+  const carolId = publicKeyToAgentId(carol.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 100,
+    });
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: M15_PORT }, resolve);
+    });
+
+    const bobAllowlist = signedAllowlist(bob, [aliceId]);
+    const res = await fetch(`${M15_BASE}/allowlist/${bobId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bobAllowlist),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  async function postWire(recipientId: string, wire: string) {
+    return fetch(`${M15_BASE}/inbox/${recipientId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: wire,
+    });
+  }
+
+  it("returns 400 version_mismatch when body.v !== outer.v", async () => {
+    const outer = createOuterEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "core.msg",
+      thread: "550e8400-e29b-41d4-a716-446655440000",
+      seq: 200,
+      ttl: futureTtl(),
+      payload: utf8ToBytes("version-mismatch"),
+    });
+    const wire = tamperBodyV(outer, 2);
+
+    const res = await postWire(bobId, wire);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("version_mismatch");
+  });
+
+  it("accepts wall-clock expired ttl on POST with 204", async () => {
+    const expiredTtl = Math.floor(Date.now() / 1000) - 100;
+    const envelope = createOuterEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "core.msg",
+      thread: "550e8400-e29b-41d4-a716-446655440000",
+      seq: 201,
+      ttl: expiredTtl,
+      payload: utf8ToBytes("wall-expired"),
+      id: crypto.randomUUID(),
+    });
+
+    const res = await postWire(bobId, serializeOuterEnvelope(envelope));
+    expect(res.status).toBe(204);
+  });
+
+  it("returns identical recipient_not_allowed for no-row vs empty allowlist", async () => {
+    const envelope = createOuterEnvelope({
+      sender: alice,
+      recipientAgentId: carolId,
+      type: "core.msg",
+      thread: "550e8400-e29b-41d4-a716-446655440000",
+      seq: 1,
+      ttl: futureTtl(),
+      payload: utf8ToBytes("privacy"),
+      id: crypto.randomUUID(),
+    });
+    const wire = serializeOuterEnvelope(envelope);
+
+    const noRowRes = await postWire(carolId, wire);
+
+    const emptyAllowlistRes = await fetch(`${M15_BASE}/allowlist/${carolId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(signedAllowlist(carol, [])),
+    });
+    expect(emptyAllowlistRes.status).toBe(204);
+
+    const emptyRes = await postWire(carolId, wire);
+
+    expect(noRowRes.status).toBe(emptyRes.status);
+    expect(noRowRes.status).toBe(403);
+    const noRowBody = (await noRowRes.json()) as { error: string };
+    const emptyBody = (await emptyRes.json()) as { error: string };
+    expect(noRowBody).toEqual(emptyBody);
+    expect(noRowBody.error).toBe("recipient_not_allowed");
   });
 });

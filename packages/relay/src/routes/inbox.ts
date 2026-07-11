@@ -5,6 +5,8 @@ import {
   agentIdToPublicKey,
   deserializeOuterEnvelope,
   parseEnvelopeBody,
+  parseOuterVersion,
+  tryParseEnvelopeBody,
   verify,
   verifyOuterEnvelope,
 } from "@agentpair/protocol";
@@ -294,37 +296,41 @@ export function createInboxRoutes(
     const recipientAgentId = c.req.param("agentId");
     const wireText = await c.req.text();
 
+    const outerVersion = parseOuterVersion(wireText);
+    if (outerVersion !== null && outerVersion !== 1) {
+      return c.json({ error: "unsupported_version" }, 400);
+    }
+
     let outer: OuterEnvelope;
     try {
       outer = deserializeOuterEnvelope(wireText);
     } catch {
-      return c.json({ error: "invalid_envelope" }, 400);
+      return c.json({ error: "invalid_json" }, 400);
     }
 
-    if (outer.v !== 1) {
-      return c.json({ error: "invalid_envelope" }, 400);
+    const parsedBody = tryParseEnvelopeBody(outer);
+    if (parsedBody === null) {
+      return c.json({ error: "invalid_json" }, 400);
     }
+    const body = parsedBody;
 
-    let body: EnvelopeBody;
-    try {
-      body = parseEnvelopeBody(outer);
-    } catch {
-      return c.json({ error: "invalid_envelope" }, 400);
+    if (body.v !== outer.v) {
+      return c.json({ error: "version_mismatch" }, 400);
     }
 
     if (body.to !== recipientAgentId) {
-      return c.json({ error: "recipient_mismatch" }, 400);
+      return c.json({ error: "routing_mismatch" }, 400);
     }
 
     if (!Number.isFinite(body.ttl) || body.ttl <= 0) {
-      return c.json({ error: "invalid_envelope" }, 400);
+      return c.json({ error: "envelope_expired" }, 400);
     }
 
     let senderPublicKey: Uint8Array;
     try {
       senderPublicKey = agentIdToPublicKey(body.from);
     } catch {
-      return c.json({ error: "invalid_envelope" }, 400);
+      return c.json({ error: "invalid_signature" }, 403);
     }
 
     if (!verifyOuterEnvelope(outer, senderPublicKey)) {
@@ -332,7 +338,7 @@ export function createInboxRoutes(
     }
 
     if (!isSenderAllowed(db, recipientAgentId, body.from)) {
-      return c.json({ error: "sender_not_allowed" }, 403);
+      return c.json({ error: "recipient_not_allowed" }, 403);
     }
 
     const now = Date.now();
