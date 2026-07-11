@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import {
-  type EnvelopeBody,
   type OuterEnvelope,
   agentIdToPublicKey,
   deserializeOuterEnvelope,
