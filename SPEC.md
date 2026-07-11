@@ -485,6 +485,11 @@ this.** Therefore:
   fingerprint, `agent_id` mismatch, malformed confirm) MUST surface as
   `pake_failed` and MUST NOT modify either side's allowlist. Only successful
   bond-phase coordination (§6.2 step 4) may push allowlist updates.
+- **Two-generals bond asymmetry:** perfect two-sided atomicity over an
+  untrusted relay is impossible. If the relay drops the initiator's `bond_ok`
+  reply (§6.2 step 4), the initiator may remain bonded while the joiner rolls
+  back. This is an accepted two-generals outcome, not a verification bug;
+  implementations SHOULD surface the asymmetry to the human operator.
 - **Relay compromise:** worst case = drop/delay/reorder messages and learn
   metadata (who talks to whom, when, sizes). It can never read or forge
   content. Metadata privacy (sealed sender) is a future extension
