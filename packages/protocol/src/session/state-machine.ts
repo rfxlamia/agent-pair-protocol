@@ -146,6 +146,13 @@ export function createSessionStateMachine(
     }
   }
 
+  function removeSessionOpenPendingForThread(thread: string) {
+    const pending = findSessionOpenPending(thread);
+    if (pending) {
+      deps.pending.remove(pending.id);
+    }
+  }
+
   function ensureRatifyPending(session: SessionRecord) {
     if (session.status !== "signed" && session.status !== "closed") {
       return undefined;
@@ -981,6 +988,12 @@ export function createSessionStateMachine(
       const terminal: SessionStatus[] = ["open_rejected", "open_expired"];
       if (terminal.includes(found.status)) {
         return { ok: true as const, thread, status: found.status };
+      }
+      if (found.status === "pending") {
+        removeSessionOpenPendingForThread(thread);
+      }
+      if (found.status === "signed") {
+        removeRatifyPendingForThread(thread);
       }
       const updated = upsert({
         ...found,

@@ -228,7 +228,11 @@ export async function handleInbox(
       sessionStatus = peekSessionOpenStatus(ctx, body.thread);
     }
 
-    if (body.type === "core.close" && !ctx.closedThreads.isClosed(body.thread)) {
+    if (
+      body.type === "core.close" &&
+      !ctx.closedThreads.isClosed(body.thread) &&
+      isThreadCloseAuthorized(ctx, body.thread, body.from)
+    ) {
       const reason = closeReasonFromPayload(inboxPayload);
       ctx.closedThreads.markClosed(body.thread, {
         closed_at: Math.floor(Date.now() / 1000),
@@ -379,10 +383,8 @@ export async function handleClose(
     ttl: defaultEnvelopeTtl(),
     payload: utf8ToBytes(JSON.stringify(payloadObj)),
   });
-  const closeBody = parseEnvelopeBody(outer);
-
   await ctx.relay.sendEnvelope(to, outer);
-  recordSentSeq(ctx, input.thread, closeBody.seq);
+  recordSentSeq(ctx, input.thread, seq);
 
   ctx.closedThreads.markClosed(input.thread, {
     closed_at: Math.floor(Date.now() / 1000),
@@ -392,9 +394,11 @@ export async function handleClose(
   await ctx.closedThreads.flush();
   await processThreadClose(ctx, input.thread, input.reason);
 
-  return toolTextResult({
+  const result = {
     ok: true,
     thread: input.thread,
-    seq: closeBody.seq,
-  });
+    seq,
+  };
+  assertNoSecrets(result);
+  return toolTextResult(result);
 }

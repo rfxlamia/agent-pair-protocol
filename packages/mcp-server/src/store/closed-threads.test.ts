@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,6 +44,25 @@ describe("ClosedThreadStore", () => {
       const raw = JSON.parse(await readFile(store2.filePath, "utf8"));
       expect(raw.v).toBe(1);
       expect(raw.threads[thread].closed_at).toBe(42);
+    });
+
+    it("rejects corrupt thread entries on load", async () => {
+      dir = await mkdtemp(join(tmpdir(), "agentpair-closed-"));
+      const filePath = join(dir, "closed-threads.json");
+      await writeFile(
+        filePath,
+        JSON.stringify({
+          v: 1,
+          threads: {
+            [thread]: { closed_at: "not-a-number", by },
+          },
+        }),
+        "utf8",
+      );
+
+      const store = createFileClosedThreadStore({ filePath });
+      await store.init(by);
+      expect(store.isClosed(thread)).toBe(false);
     });
   });
 });

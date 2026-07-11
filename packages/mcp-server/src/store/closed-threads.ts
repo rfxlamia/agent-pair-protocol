@@ -22,13 +22,38 @@ export interface ClosedThreadStore {
   filePath?: string;
 }
 
+function isValidClosedThreadEntry(value: unknown): value is ClosedThreadEntry {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const entry = value as Record<string, unknown>;
+  if (typeof entry.by !== "string" || typeof entry.closed_at !== "number") {
+    return false;
+  }
+  if (entry.reason !== undefined && typeof entry.reason !== "string") {
+    return false;
+  }
+  return true;
+}
+
 function validateFile(parsed: unknown): ClosedThreadsFile | undefined {
   if (typeof parsed !== "object" || parsed === null) return undefined;
   const record = parsed as ClosedThreadsFile;
   if (record.v !== 1 || typeof record.threads !== "object" || record.threads === null) {
     return undefined;
   }
-  return { v: 1, threads: { ...record.threads } };
+  const threads: Record<string, ClosedThreadEntry> = {};
+  for (const [threadId, entry] of Object.entries(record.threads)) {
+    if (!isValidClosedThreadEntry(entry)) {
+      return undefined;
+    }
+    threads[threadId] = {
+      closed_at: entry.closed_at,
+      by: entry.by,
+      ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+    };
+  }
+  return { v: 1, threads };
 }
 
 export function resolveClosedThreadsPath(dataDir?: string): string {
@@ -41,15 +66,15 @@ export class MemoryClosedThreadStore implements ClosedThreadStore {
   async init(_forAgentId: string): Promise<void> {}
 
   isClosed(thread: string): boolean {
-    return thread in this.threads;
+    return Object.hasOwn(this.threads, thread);
   }
 
   get(thread: string): ClosedThreadEntry | undefined {
-    return this.threads[thread];
+    return Object.hasOwn(this.threads, thread) ? this.threads[thread] : undefined;
   }
 
   markClosed(thread: string, entry: ClosedThreadEntry): void {
-    if (!this.threads[thread]) {
+    if (!Object.hasOwn(this.threads, thread)) {
       this.threads[thread] = entry;
     }
   }
@@ -71,14 +96,15 @@ export function createFileClosedThreadStore(
     filePath,
     async init(_forAgentId: string): Promise<void> {},
     isClosed(thread: string) {
-      return thread in backing.read().threads;
+      return Object.hasOwn(backing.read().threads, thread);
     },
     get(thread: string) {
-      return backing.read().threads[thread];
+      const threads = backing.read().threads;
+      return Object.hasOwn(threads, thread) ? threads[thread] : undefined;
     },
     markClosed(thread: string, entry: ClosedThreadEntry) {
       backing.mutate((data) => {
-        if (!data.threads[thread]) {
+        if (!Object.hasOwn(data.threads, thread)) {
           data.threads[thread] = entry;
         }
       });
