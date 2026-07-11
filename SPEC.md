@@ -397,6 +397,8 @@ Negotiation: `session_not_found`, `session_not_live`, `session_not_signed`,
 `initiator_mismatch`, `budget_exhausted`, `human_required`,
 `self_approval_forbidden`, `pending_not_found`, `challenges_incomplete`.
 
+Core messaging: `thread_closed` — operation attempted on a thread that has been closed (§7).
+
 Errors MUST NOT leak whether an unbonded recipient exists (§4.3 step 4).
 
 ---
