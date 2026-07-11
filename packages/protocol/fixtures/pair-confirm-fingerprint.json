@@ -1,0 +1,9 @@
+{
+  "golden": {
+    "sharedKeyHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "initiatorId": "ed25519:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+    "joinerId": "ed25519:u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s",
+    "fingerprint": "12e616c65b5f0ddab5b755b20b19c3ffe868b67927d77e50cde036e04ddd3c68",
+    "reversedFingerprint": "122ee6cc12b9c83752374ff6cb278050bd5ed2e44ababbbfecc4076aa0baef57"
+  }
+}

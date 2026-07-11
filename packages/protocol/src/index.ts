@@ -58,6 +58,7 @@ export {
   type PendingPair,
 } from "./pairing/flow.js";
 export { isEphemeralBond } from "./session/bond.js";
+export { pairConfirmFingerprint } from "./pairing/pair-confirm-fingerprint.js";
 export type {
   BudgetExtendPendingInput,
   BudgetExtendPendingItem,
