@@ -1234,6 +1234,64 @@ describe("session state machine", () => {
     });
   });
 
+  describe("§10 invalid_payload collapse (M1.5)", () => {
+    it("maps unknown handleMsg type to invalid_payload", async () => {
+      const thread = await openAndApprove();
+
+      const rejected = await aliceMachine.handleMsg({
+        thread,
+        type: "bogus",
+        body: "{}",
+      });
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
+
+    it("maps invalid accept body to invalid_payload", async () => {
+      const thread = await openAndApprove();
+
+      const rejected = await aliceMachine.handleMsg({
+        thread,
+        type: "accept",
+        body: JSON.stringify({ not_section_id: "A1" }),
+      });
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
+
+    it("maps handleRatify without thread or pending_id to invalid_payload", async () => {
+      const rejected = await aliceMachine.handleRatify({ via_human: true });
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
+
+    it("maps handleRatify with empty artifact_hash on signed session to invalid_payload", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:empty-hash-ratify";
+      await signFlowToSigned(thread, artifactHash);
+
+      const rejected = await aliceMachine.handleRatify({
+        thread,
+        artifact_hash: "",
+        via_human: true,
+      });
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
+  });
+
   describe("wrong-role envelope rejection", () => {
     it("rejects open_approved from the initiator without going live", async () => {
       const opened = await aliceMachine.handleOpen({
