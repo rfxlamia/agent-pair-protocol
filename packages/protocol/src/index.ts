@@ -9,6 +9,7 @@ export { decodeBase64UrlStrict, encodeBase64Url } from "./crypto/base64url.js";
 export { decryptPayload, encryptPayload } from "./crypto/encrypt.js";
 export { sign, verify } from "./crypto/sign.js";
 export {
+  coerceEnvelopeBody,
   createOuterEnvelope,
   decryptEnvelopePayload,
   deserializeOuterEnvelope,
@@ -24,7 +25,9 @@ export {
 export {
   defaultEnvelopeTtl,
   MAX_ENVELOPE_WIRE_BYTES,
+  parseOuterVersion,
   receiveEnvelope,
+  tryParseEnvelopeBody,
   type ReceiveEnvelopeDeps,
   type ReceiveEnvelopeResult,
   type SeqStore,
