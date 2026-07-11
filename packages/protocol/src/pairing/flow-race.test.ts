@@ -11,17 +11,30 @@ import { init as initPake } from "./pake-adapter.js";
 import { MemoryAllowlistStore, signAllowlist } from "./test-helpers.js";
 
 class SlowInitiatorRelay implements PairingRelayClient {
-  private pakeMessages = new Map<string, string>();
+  private pakeQueues = new Map<string, string[]>();
   private allowlists = new Map<string, string[]>();
   allowlistDelayMs = 2000;
   failAllowlistFor: string | null = null;
 
   async postPakeMessage(sessionId: string, body: string): Promise<void> {
-    this.pakeMessages.set(sessionId, body);
+    const queue = this.pakeQueues.get(sessionId) ?? [];
+    queue.push(body);
+    this.pakeQueues.set(sessionId, queue);
   }
 
   async pollPakeMessage(sessionId: string): Promise<string | null> {
-    return this.pakeMessages.get(sessionId) ?? null;
+    const queue = this.pakeQueues.get(sessionId);
+    if (!queue || queue.length === 0) {
+      return null;
+    }
+    return queue[0] ?? null;
+  }
+
+  consumePakeMessage(sessionId: string): void {
+    const queue = this.pakeQueues.get(sessionId);
+    if (queue && queue.length > 0) {
+      queue.shift();
+    }
   }
 
   async putAllowlist(

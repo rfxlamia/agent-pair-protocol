@@ -16,7 +16,7 @@ import { MemoryAllowlistStore } from "./test-helpers.js";
  * rolled_back — identity/fingerprint failures should surface as pake_failed instead.
  */
 
-describe("pairing flow adversarial (RED on current flow.ts)", () => {
+describe("pairing flow adversarial (identity-bound confirm)", () => {
   let initiatorKeys: KeyPair;
   let joinerKeys: KeyPair;
   let attackerKeys: KeyPair;
@@ -86,36 +86,31 @@ describe("pairing flow adversarial (RED on current flow.ts)", () => {
     expect(relay.getAllowlist(joinerId)).toEqual([]);
   }
 
-  it("case 1: swap joiner agentId — initiator bonds to attacker peer (RED)", async () => {
+  it("case 1: swap joiner agentId — both sides reject with pake_failed", async () => {
     relay.swapJoinerAgentId = attackerId;
 
     const { initResult, joinResult } = await runPairing();
 
-    expect(initResult.status).toBe("bonded");
-    if (initResult.status === "bonded") {
-      expect(initResult.bond.peer).toBe(attackerId);
-      expect(initResult.bond.peer).not.toBe(joinerId);
-    }
-
-    // Joiner may still bond using registry peer; vulnerability is on initiator side.
-    expect(joinResult.status).not.toBe("pake_failed");
+    expect(initResult.status).toBe("pake_failed");
+    expect(joinResult.status).toBe("pake_failed");
+    expect(initResult.status).not.toBe("rolled_back");
+    expect(joinResult.status).not.toBe("rolled_back");
+    expectZeroAllowlist();
   }, 20000);
 
-  it("case 2: swap initiator agentId — initiator mis-binds via swapped self-echo (RED)", async () => {
+  it("case 2: swap initiator agentId — both sides reject with pake_failed", async () => {
     relay.swapInitiatorAgentId = attackerId;
 
     const { initResult, joinResult } = await runPairing();
 
-    // RED: inbound swap on initiator's own confirm lets initiator accept it as joiner confirm.
-    expect(initResult.status).toBe("bonded");
-    if (initResult.status === "bonded") {
-      expect(initResult.bond.peer).toBe(attackerId);
-      expect(initResult.bond.peer).not.toBe(joinerId);
-    }
+    expect(initResult.status).toBe("pake_failed");
     expect(joinResult.status).toBe("pake_failed");
+    expect(initResult.status).not.toBe("rolled_back");
+    expect(joinResult.status).not.toBe("rolled_back");
+    expectZeroAllowlist();
   }, 35000);
 
-  it("case 3: tampered registry proposal — joiner bonds to attacker from registry (RED)", async () => {
+  it("case 3: tampered registry proposal — both sides reject with pake_failed", async () => {
     const pending = await pairInit({
       scope: ["session.negotiate"],
       mode: "ephemeral_until_session_closes",
@@ -145,12 +140,11 @@ describe("pairing flow adversarial (RED on current flow.ts)", () => {
 
     const joinResult = await joinPromise;
 
-    expect(joinResult.status).toBe("bonded");
-    if (joinResult.status === "bonded") {
-      expect(joinResult.bond.peer).toBe(attackerId);
-      expect(joinResult.bond.peer).not.toBe(initiatorId);
-    }
-    expect(initResult.status).toBe("bonded");
+    expect(initResult.status).toBe("pake_failed");
+    expect(joinResult.status).toBe("pake_failed");
+    expect(initResult.status).not.toBe("rolled_back");
+    expect(joinResult.status).not.toBe("rolled_back");
+    expectZeroAllowlist();
   }, 20000);
 
   it("case 4: drop bond_fail — peer eventually pake_failed, zero allowlist", async () => {
@@ -189,7 +183,7 @@ describe("pairing flow adversarial (RED on current flow.ts)", () => {
     expect(joinResult.status).toBe("pake_failed");
     expect(initResult.status).toBe("pake_failed");
     expectZeroAllowlist();
-  }, 20000);
+  }, 35000);
 
   it("case 5: inject bond_fail during confirm — pake_failed, zero allowlist", async () => {
     relay.injectBondFailDuringConfirm = true;
@@ -233,17 +227,17 @@ describe("pairing flow adversarial (RED on current flow.ts)", () => {
     expect(initResult.status).toBe("rolled_back");
     expect(joinResult.status).toBe("rolled_back");
     expectZeroAllowlist();
-  }, 20000);
+  }, 35000);
 
-  it("case 9: malformed confirm — may throw or pake_failed inconsistently", async () => {
+  it("case 9: malformed confirm — pake_failed, zero allowlist", async () => {
     relay.malformConfirm = "omit_fingerprint";
 
     const { initResult, joinResult } = await runPairing();
 
-    const statuses = [initResult.status, joinResult.status];
-    expect(statuses.some((s) => s === "pake_failed" || s === "rolled_back")).toBe(true);
-    expect(statuses.every((s) => s === "bonded")).toBe(false);
-  }, 20000);
+    expect(initResult.status).toBe("pake_failed");
+    expect(joinResult.status).toBe("pake_failed");
+    expectZeroAllowlist();
+  }, 35000);
 
   it("case 10: drop initiator bond_ok — initiator bonded, joiner rolled_back (two-generals)", async () => {
     relay.dropInitiatorBondOkReply = true;

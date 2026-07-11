@@ -93,6 +93,7 @@ describe("pairing flow", () => {
     if (raw === null) {
       return;
     }
+    relay.consumePakeMessage(pending.sessionId);
     const wire = JSON.parse(raw) as { phase: string; payload: string; role: string };
     wire.payload = "_8"; // non-canonical; loose decode accepts, strict rejects
     await relay.postPakeMessage(pending.sessionId, JSON.stringify(wire));
@@ -292,6 +293,60 @@ describe("pairing flow", () => {
     assertNoPlaintextCodeOnRelay(pending.code);
   });
 
+  it("does not push initiator allowlist before joiner bond_ok", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+    });
+
+    let initiatorPutBeforeJoinerBondOk = false;
+    const putAllowlistSpy = vi.spyOn(relay, "putAllowlist");
+    let joinerBondOkSeen = false;
+
+    putAllowlistSpy.mockImplementation(async (agentId, allowed, secretKey) => {
+      if (agentId === initiatorId && !joinerBondOkSeen) {
+        initiatorPutBeforeJoinerBondOk = true;
+      }
+      putAllowlistSpy.mockRestore();
+      return relay.putAllowlist(agentId, allowed, secretKey);
+    });
+
+    const originalPost = relay.postPakeMessage.bind(relay);
+    vi.spyOn(relay, "postPakeMessage").mockImplementation(async (sessionId, body) => {
+      const wire = JSON.parse(body) as { phase: string };
+      if (wire.phase === "bond_ok") {
+        joinerBondOkSeen = true;
+      }
+      return originalPost(sessionId, body);
+    });
+
+    const joinPromise = pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+    });
+
+    const initResult = await pairInitComplete({
+      code: pending.code,
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      localAllowlist: initiatorAllowlist,
+    });
+
+    const joinResult = await joinPromise;
+
+    expect(joinResult.status).toBe("bonded");
+    expect(initResult.status).toBe("bonded");
+    expect(initiatorPutBeforeJoinerBondOk).toBe(false);
+  }, 15000);
+
   it("rolls back allowlists on partial failure and allows retry with new session_id", async () => {
     const pending = await pairInit({
       scope: ["session.negotiate"],
@@ -301,7 +356,7 @@ describe("pairing flow", () => {
       registry,
     });
 
-    relay.failAllowlistFor = joinerId;
+    relay.failAllowlistFor = initiatorId;
 
     const joinPromise = pairJoin({
       code: pending.code,

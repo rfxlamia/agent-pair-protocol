@@ -22,18 +22,31 @@ export function signAllowlist(
 }
 
 export class MockRelayClient implements PairingRelayClient {
-  private pakeMessages = new Map<string, string>();
+  private pakeQueues = new Map<string, string[]>();
   private allowlists = new Map<string, string[]>();
   failAllowlistFor: string | null = null;
   postedPakeBodies: string[] = [];
 
   async postPakeMessage(sessionId: string, body: string): Promise<void> {
     this.postedPakeBodies.push(body);
-    this.pakeMessages.set(sessionId, body);
+    const queue = this.pakeQueues.get(sessionId) ?? [];
+    queue.push(body);
+    this.pakeQueues.set(sessionId, queue);
   }
 
   async pollPakeMessage(sessionId: string, _timeoutMs = 5000): Promise<string | null> {
-    return this.pakeMessages.get(sessionId) ?? null;
+    const queue = this.pakeQueues.get(sessionId);
+    if (!queue || queue.length === 0) {
+      return null;
+    }
+    return queue[0] ?? null;
+  }
+
+  consumePakeMessage(sessionId: string): void {
+    const queue = this.pakeQueues.get(sessionId);
+    if (queue && queue.length > 0) {
+      queue.shift();
+    }
   }
 
   async putAllowlist(

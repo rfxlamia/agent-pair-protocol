@@ -52,7 +52,11 @@ export class TamperingRelay extends MockRelayClient {
       stored = JSON.stringify({ phase: "bond_fail" });
     } else if (wire.phase === "confirm" && this.malformConfirm !== null) {
       stored = this.malformConfirmBody(wire);
-    } else if (wire.phase === "bond_ok" && this.injectBondFailDuringBondOk) {
+    } else if (
+      wire.phase === "bond_ok" &&
+      this.injectBondFailDuringBondOk &&
+      wire.agentId === this.realInitiatorId
+    ) {
       stored = JSON.stringify({ phase: "bond_fail" });
     }
 
@@ -71,7 +75,11 @@ export class TamperingRelay extends MockRelayClient {
       return null;
     }
 
-    if (wire.phase === "bond_ok" && this.dropInitiatorBondOkReply) {
+    if (
+      wire.phase === "bond_ok" &&
+      this.dropInitiatorBondOkReply &&
+      wire.agentId === this.realInitiatorId
+    ) {
       return null;
     }
 

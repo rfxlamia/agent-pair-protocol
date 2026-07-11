@@ -1,7 +1,6 @@
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
 import { decodeBase64UrlStrict, encodeBase64Url } from "../crypto/base64url.js";
 import { type KeyPair, publicKeyToAgentId } from "../crypto/keys.js";
+import { pairConfirmFingerprint } from "./pair-confirm-fingerprint.js";
 import { generatePairingCode } from "./pairing-words.js";
 import { type PakeSessionHandle, finish, init, respond, start } from "./pake-adapter.js";
 
@@ -35,6 +34,7 @@ export interface PendingPair {
 export interface PairingRelayClient {
   postPakeMessage(sessionId: string, body: string): Promise<void>;
   pollPakeMessage(sessionId: string, timeoutMs?: number): Promise<string | null>;
+  consumePakeMessage?(sessionId: string): void;
   putAllowlist(agentId: string, allowed: string[], secretKey: Uint8Array): Promise<{ ok: boolean }>;
 }
 
@@ -73,7 +73,7 @@ type PairWireMessage =
   | { phase: "pake"; payload: string; role: "initiator" | "joiner" }
   | { phase: "confirm"; fingerprint: string; agentId: string }
   | { phase: "reject"; reason: string }
-  | { phase: "bond_ok" }
+  | { phase: "bond_ok"; agentId: string }
   | { phase: "bond_fail" };
 
 export type PairFlowResult =
@@ -111,8 +111,19 @@ function decodePakePayload(payload: string): Uint8Array {
   return decodeBase64UrlStrict(payload);
 }
 
-function keyFingerprint(sharedKey: Uint8Array): string {
-  return bytesToHex(sha256(sharedKey));
+function parseConfirmMessage(
+  wire: PairWireMessage,
+): { fingerprint: string; agentId: string } | null {
+  if (wire.phase !== "confirm") {
+    return null;
+  }
+  if (typeof wire.fingerprint !== "string" || wire.fingerprint.length === 0) {
+    return null;
+  }
+  if (typeof wire.agentId !== "string" || wire.agentId.length === 0) {
+    return null;
+  }
+  return { fingerprint: wire.fingerprint, agentId: wire.agentId };
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -136,6 +147,7 @@ async function pollWireMessage(
     if (raw) {
       const message = decodeWireMessage(raw);
       if (predicate(message)) {
+        relay.consumePakeMessage?.(sessionId);
         return message;
       }
     }
@@ -317,30 +329,51 @@ export async function pairJoin(input: {
   );
 
   const sharedKey = finish(joiner.session, initiatorMessage);
-  const fingerprint = keyFingerprint(sharedKey);
-
-  const peerConfirm = await pollWireMessage(
-    input.relay,
-    pending.sessionId,
-    (message) => message.phase === "confirm" && message.agentId !== joinerAgentId,
-    BOND_COORDINATION_TIMEOUT_MS,
-  );
-  if (!peerConfirm || peerConfirm.phase !== "confirm") {
-    return { status: "pake_failed" };
-  }
-  if (peerConfirm.fingerprint !== fingerprint) {
-    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
-  }
 
   await input.relay.postPakeMessage(
     pending.sessionId,
     encodeWireMessage({
       phase: "confirm",
-      fingerprint,
+      fingerprint: pairConfirmFingerprint(
+        sharedKey,
+        pending.proposal.initiatorAgentId,
+        joinerAgentId,
+      ),
       agentId: joinerAgentId,
     }),
   );
+
+  const initiatorWireConfirm = await pollWireMessage(
+    input.relay,
+    pending.sessionId,
+    (message) =>
+      message.phase === "bond_fail" ||
+      (message.phase === "confirm" && message.agentId !== joinerAgentId),
+    BOND_COORDINATION_TIMEOUT_MS,
+  );
+  if (!initiatorWireConfirm || initiatorWireConfirm.phase === "bond_fail") {
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
+    return { status: "pake_failed" };
+  }
+
+  const initiatorConfirm = parseConfirmMessage(initiatorWireConfirm);
+  if (!initiatorConfirm) {
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
+    return { status: "pake_failed" };
+  }
+
+  const expectedInitiatorFingerprint = pairConfirmFingerprint(
+    sharedKey,
+    pending.proposal.initiatorAgentId,
+    joinerAgentId,
+  );
+  if (
+    initiatorConfirm.fingerprint !== expectedInitiatorFingerprint ||
+    initiatorConfirm.agentId !== pending.proposal.initiatorAgentId
+  ) {
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
+    return { status: "pake_failed" };
+  }
 
   const bond: Bond = {
     peer: pending.proposal.initiatorAgentId,
@@ -348,13 +381,20 @@ export async function pairJoin(input: {
     mode: pending.proposal.mode,
   };
 
-  const bondOk = await pollWireMessage(
+  await input.relay.postPakeMessage(
+    pending.sessionId,
+    encodeWireMessage({ phase: "bond_ok", agentId: joinerAgentId }),
+  );
+
+  const peerBond = await pollWireMessage(
     input.relay,
     pending.sessionId,
-    (message) => message.phase === "bond_ok" || message.phase === "bond_fail",
+    (message) =>
+      message.phase === "bond_fail" ||
+      (message.phase === "bond_ok" && message.agentId !== joinerAgentId),
     BOND_COORDINATION_TIMEOUT_MS,
   );
-  if (!bondOk || bondOk.phase === "bond_fail") {
+  if (!peerBond || peerBond.phase === "bond_fail") {
     return { status: "rolled_back" };
   }
 
@@ -376,7 +416,6 @@ export async function pairJoin(input: {
       input.keyPair.secretKey,
     );
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    input.registry.update(input.code, { rolledBack: true });
     return { status: "rolled_back" };
   }
 
@@ -397,15 +436,6 @@ export async function pairInitComplete(input: {
 
   const pending = pendingResult;
   const initiatorAgentId = publicKeyToAgentId(input.keyPair.publicKey);
-
-  const latestWire = await input.relay.pollPakeMessage(pending.sessionId);
-  if (latestWire) {
-    const wire = decodeWireMessage(latestWire);
-    if (wire.phase === "reject") {
-      input.registry.update(input.code, { rejectReason: wire.reason });
-      return { status: "rejected", reason: wire.reason };
-    }
-  }
 
   if (pending.rejectReason) {
     return { status: "rejected", reason: pending.rejectReason };
@@ -434,34 +464,65 @@ export async function pairInitComplete(input: {
     return { status: "pake_failed" };
   }
   const sharedKey = finish(pending.initiatorSession, joinerMessage);
-  const fingerprint = keyFingerprint(sharedKey);
+
+  const joinerWireConfirm = await pollWireMessage(
+    input.relay,
+    pending.sessionId,
+    (message) =>
+      message.phase === "bond_fail" ||
+      (message.phase === "confirm" && message.agentId !== initiatorAgentId),
+    BOND_COORDINATION_TIMEOUT_MS,
+  );
+  if (!joinerWireConfirm || joinerWireConfirm.phase === "bond_fail") {
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
+    return { status: "pake_failed" };
+  }
+
+  const joinerConfirm = parseConfirmMessage(joinerWireConfirm);
+  if (!joinerConfirm) {
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
+    return { status: "pake_failed" };
+  }
+
+  const expectedJoinerFingerprint = pairConfirmFingerprint(
+    sharedKey,
+    initiatorAgentId,
+    joinerConfirm.agentId,
+  );
+  if (joinerConfirm.fingerprint !== expectedJoinerFingerprint) {
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
+    return { status: "pake_failed" };
+  }
 
   await input.relay.postPakeMessage(
     pending.sessionId,
     encodeWireMessage({
       phase: "confirm",
-      fingerprint,
+      fingerprint: pairConfirmFingerprint(sharedKey, initiatorAgentId, joinerConfirm.agentId),
       agentId: initiatorAgentId,
     }),
   );
-
-  const joinerConfirm = await pollWireMessage(
-    input.relay,
-    pending.sessionId,
-    (message) => message.phase === "confirm" && message.agentId !== initiatorAgentId,
-  );
-  if (!joinerConfirm || joinerConfirm.phase !== "confirm") {
-    return { status: "pake_failed" };
-  }
-  if (joinerConfirm.fingerprint !== fingerprint) {
-    return { status: "pake_failed" };
-  }
 
   const bond: Bond = {
     peer: joinerConfirm.agentId,
     scope: [...pending.proposal.scope],
     mode: pending.proposal.mode,
   };
+
+  const joinerBondOk = await pollWireMessage(
+    input.relay,
+    pending.sessionId,
+    (message) =>
+      message.phase === "bond_fail" ||
+      (message.phase === "bond_ok" && message.agentId !== initiatorAgentId),
+    BOND_COORDINATION_TIMEOUT_MS,
+  );
+  if (!joinerBondOk) {
+    return { status: "pake_failed" };
+  }
+  if (joinerBondOk.phase === "bond_fail") {
+    return { status: "pake_failed" };
+  }
 
   const previousAllowed = input.localAllowlist.get(initiatorAgentId);
   const nextAllowed = [...new Set([...previousAllowed, bond.peer])];
@@ -486,7 +547,26 @@ export async function pairInitComplete(input: {
     return { status: "rolled_back" };
   }
 
-  await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_ok" }));
+  await input.relay.postPakeMessage(
+    pending.sessionId,
+    encodeWireMessage({ phase: "bond_ok", agentId: initiatorAgentId }),
+  );
+
+  const postedReply = await input.relay.pollPakeMessage(pending.sessionId);
+  if (postedReply) {
+    const postedWire = decodeWireMessage(postedReply);
+    if (postedWire.phase === "bond_fail") {
+      await rollbackAllowlist(
+        input.relay,
+        input.localAllowlist,
+        initiatorAgentId,
+        previousAllowed,
+        input.keyPair.secretKey,
+      );
+      input.registry.update(input.code, { rolledBack: true });
+      return { status: "rolled_back" };
+    }
+  }
 
   const bondFail = await pollWireMessage(
     input.relay,
