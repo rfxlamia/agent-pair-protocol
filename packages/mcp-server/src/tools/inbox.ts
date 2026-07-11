@@ -175,7 +175,7 @@ export async function handleInbox(
           return payloadResult;
         }
         if (body.type === "core.close" && !isThreadCloseAuthorized(ctx, body.thread, body.from)) {
-          return { ok: false as const, error: "close_not_allowed" };
+          return { ok: false as const, error: "not_a_participant" };
         }
         return payloadResult;
       },
@@ -354,7 +354,7 @@ export async function handleClose(
   const senderId = publicKeyToAgentId(keyPair.publicKey);
   const session = ctx.sessionStore.get(input.thread);
   if (session && session.initiator !== senderId && session.recipient !== senderId) {
-    return toolTextResult({ ok: false, error: "close_not_allowed" });
+    return toolTextResult({ ok: false, error: "not_a_participant" });
   }
 
   let to = input.to;

@@ -25,7 +25,7 @@ export interface SeqStore {
 export type ReceiveDispatchError =
   | "unsupported_envelope_type"
   | "invalid_payload"
-  | "close_not_allowed";
+  | "not_a_participant";
 
 export interface ReceiveEnvelopeDeps {
   isBonded(from: string): boolean;

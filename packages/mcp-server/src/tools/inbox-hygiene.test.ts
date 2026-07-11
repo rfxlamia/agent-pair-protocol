@@ -168,6 +168,28 @@ async function makeBondedInboxPair() {
   return { aliceKeys, bobKeys, aliceId, bobId, aliceCtx, bobCtx, relay };
 }
 
+async function makeAliceBobCarolTriple() {
+  const pair = await makeBondedInboxPair();
+  const { aliceId, aliceCtx, relay } = pair;
+  const carolDir = await mkdtemp(join(tmpdir(), "agentpair-carol-keys-"));
+  const carolCtx = createAgentContext({
+    keyStore: createKeyStore({ keyPath: join(carolDir, "keys.json") }),
+    relay: relay as unknown as HttpRelayClient,
+    allowlist: new MemoryAllowlistStore(),
+    bonds: new MemoryBondStore(),
+  });
+  const carolKeys = await carolCtx.keyStore.loadOrCreate();
+  const carolId = publicKeyToAgentId(carolKeys.publicKey);
+
+  aliceCtx.allowlist.set(aliceId, [...aliceCtx.allowlist.get(aliceId), carolId]);
+  aliceCtx.bonds.add(aliceId, { peer: carolId, scope: ["msg"], mode: "bonded_contact" });
+  carolCtx.allowlist.set(carolId, [aliceId]);
+  carolCtx.bonds.add(carolId, { peer: aliceId, scope: ["msg"], mode: "bonded_contact" });
+  await carolCtx.envelopeSeq.init(carolId);
+
+  return { ...pair, carolKeys, carolId, carolCtx, carolDir };
+}
+
 function wireOver65536Bytes(sender: KeyPair, recipientId: string): string {
   const base = wireFromEnvelope(
     createOuterEnvelope({
@@ -1143,10 +1165,75 @@ describe("M1.4 envelope types", () => {
     });
     relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
     const result = structured(await handleInbox(bobCtx, {}));
-    expect(result.rejected).toEqual([expect.objectContaining({ error: "close_not_allowed" })]);
+    expect(result.rejected).toEqual([expect.objectContaining({ error: "not_a_participant" })]);
     expect(result.envelopes).toHaveLength(0);
     expect(bobCtx.closedThreads.isClosed(thread)).toBe(false);
     expect(bobCtx.envelopeSeq.getLastAccepted(thread, charlieId)).toBe(0);
+  });
+
+  it("rejects core.close from bonded peer who is not a session participant (alice host)", async () => {
+    const { aliceId, bobId, aliceCtx, carolKeys, carolId, relay } = await makeAliceBobCarolTriple();
+    const thread = crypto.randomUUID();
+    aliceCtx.sessionStore.upsert({
+      thread,
+      initiator: aliceId,
+      recipient: bobId,
+      role: "initiator",
+      status: "live",
+      goal: "probe",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+
+    const wire = makeWireEnvelope(carolKeys, aliceId, {
+      type: "core.close",
+      payload: { reason: "intruder" },
+      thread,
+      seq: 1,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(aliceCtx, {}));
+    expect(result.rejected).toEqual([expect.objectContaining({ error: "not_a_participant" })]);
+    expect(result.envelopes).toHaveLength(0);
+    expect(aliceCtx.closedThreads.isClosed(thread)).toBe(false);
+    expect(aliceCtx.envelopeSeq.getLastAccepted(thread, carolId)).toBe(0);
+  });
+
+  it("handleClose rejects non-participant sender (not_a_participant)", async () => {
+    const { aliceId, bobId, carolCtx } = await makeAliceBobCarolTriple();
+    const thread = crypto.randomUUID();
+    carolCtx.sessionStore.upsert({
+      thread,
+      initiator: aliceId,
+      recipient: bobId,
+      role: "recipient",
+      status: "live",
+      goal: "probe",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+    const blocked = structured(await handleClose(carolCtx, { thread, to: aliceId }));
+    expect(blocked).toEqual({ ok: false, error: "not_a_participant" });
   });
 
   it("renders nego.open payload as structured object", async () => {
