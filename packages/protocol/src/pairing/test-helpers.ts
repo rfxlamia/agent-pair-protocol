@@ -21,32 +21,24 @@ export function signAllowlist(
   };
 }
 
+/** In-memory relay with single-slot overwrite semantics (matches HTTP relay). */
 export class MockRelayClient implements PairingRelayClient {
-  private pakeQueues = new Map<string, string[]>();
+  private pakeSlots = new Map<string, string>();
   private allowlists = new Map<string, string[]>();
   failAllowlistFor: string | null = null;
   postedPakeBodies: string[] = [];
 
   async postPakeMessage(sessionId: string, body: string): Promise<void> {
     this.postedPakeBodies.push(body);
-    const queue = this.pakeQueues.get(sessionId) ?? [];
-    queue.push(body);
-    this.pakeQueues.set(sessionId, queue);
+    this.pakeSlots.set(sessionId, body);
   }
 
   async pollPakeMessage(sessionId: string, _timeoutMs = 5000): Promise<string | null> {
-    const queue = this.pakeQueues.get(sessionId);
-    if (!queue || queue.length === 0) {
-      return null;
-    }
-    return queue[0] ?? null;
+    return this.pakeSlots.get(sessionId) ?? null;
   }
 
   consumePakeMessage(sessionId: string): void {
-    const queue = this.pakeQueues.get(sessionId);
-    if (queue && queue.length > 0) {
-      queue.shift();
-    }
+    this.pakeSlots.delete(sessionId);
   }
 
   async putAllowlist(

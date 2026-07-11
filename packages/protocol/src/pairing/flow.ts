@@ -1,5 +1,6 @@
 import { decodeBase64UrlStrict, encodeBase64Url } from "../crypto/base64url.js";
 import { type KeyPair, publicKeyToAgentId } from "../crypto/keys.js";
+import { pairBondOkTag } from "./pair-bond-ok-tag.js";
 import { pairConfirmFingerprint } from "./pair-confirm-fingerprint.js";
 import { generatePairingCode } from "./pairing-words.js";
 import { type PakeSessionHandle, finish, init, respond, start } from "./pake-adapter.js";
@@ -70,10 +71,11 @@ export class InMemoryPairingRegistry implements PairingRegistry {
 }
 
 type PairWireMessage =
-  | { phase: "pake"; payload: string; role: "initiator" | "joiner" }
+  | { phase: "pake"; payload: string; role: "initiator" }
+  | { phase: "pake"; payload: string; role: "joiner"; fingerprint: string; agentId: string }
   | { phase: "confirm"; fingerprint: string; agentId: string }
   | { phase: "reject"; reason: string }
-  | { phase: "bond_ok"; agentId: string }
+  | { phase: "bond_ok"; agentId: string; tag: string }
   | { phase: "bond_fail" };
 
 export type PairFlowResult =
@@ -124,6 +126,41 @@ function parseConfirmMessage(
     return null;
   }
   return { fingerprint: wire.fingerprint, agentId: wire.agentId };
+}
+
+function parseJoinerPakeWithConfirm(
+  wire: PairWireMessage,
+): { payload: string; fingerprint: string; agentId: string } | null {
+  if (wire.phase !== "pake" || wire.role !== "joiner") {
+    return null;
+  }
+  if (typeof wire.payload !== "string" || wire.payload.length === 0) {
+    return null;
+  }
+  if (typeof wire.fingerprint !== "string" || wire.fingerprint.length === 0) {
+    return null;
+  }
+  if (typeof wire.agentId !== "string" || wire.agentId.length === 0) {
+    return null;
+  }
+  return { payload: wire.payload, fingerprint: wire.fingerprint, agentId: wire.agentId };
+}
+
+function parseBondOkMessage(wire: PairWireMessage): { agentId: string; tag: string } | null {
+  if (wire.phase !== "bond_ok") {
+    return null;
+  }
+  if (typeof wire.agentId !== "string" || wire.agentId.length === 0) {
+    return null;
+  }
+  if (typeof wire.tag !== "string" || wire.tag.length === 0) {
+    return null;
+  }
+  return { agentId: wire.agentId, tag: wire.tag };
+}
+
+function bondOkTagMatches(sharedKey: Uint8Array, agentId: string, tag: string): boolean {
+  return pairBondOkTag(sharedKey, agentId) === tag;
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -319,21 +356,14 @@ export async function pairJoin(input: {
     return { status: "pake_failed" };
   }
   const joiner = respond(pakeCode, pending.sessionId, initiatorMessage);
+  const sharedKey = finish(joiner.session, initiatorMessage);
+
   await input.relay.postPakeMessage(
     pending.sessionId,
     encodeWireMessage({
       phase: "pake",
       payload: encodePakePayload(joiner.message),
       role: "joiner",
-    }),
-  );
-
-  const sharedKey = finish(joiner.session, initiatorMessage);
-
-  await input.relay.postPakeMessage(
-    pending.sessionId,
-    encodeWireMessage({
-      phase: "confirm",
       fingerprint: pairConfirmFingerprint(
         sharedKey,
         pending.proposal.initiatorAgentId,
@@ -383,10 +413,14 @@ export async function pairJoin(input: {
 
   await input.relay.postPakeMessage(
     pending.sessionId,
-    encodeWireMessage({ phase: "bond_ok", agentId: joinerAgentId }),
+    encodeWireMessage({
+      phase: "bond_ok",
+      agentId: joinerAgentId,
+      tag: pairBondOkTag(sharedKey, joinerAgentId),
+    }),
   );
 
-  const peerBond = await pollWireMessage(
+  const peerBondWire = await pollWireMessage(
     input.relay,
     pending.sessionId,
     (message) =>
@@ -394,7 +428,15 @@ export async function pairJoin(input: {
       (message.phase === "bond_ok" && message.agentId !== joinerAgentId),
     BOND_COORDINATION_TIMEOUT_MS,
   );
-  if (!peerBond || peerBond.phase === "bond_fail") {
+  if (!peerBondWire || peerBondWire.phase === "bond_fail") {
+    return { status: "rolled_back" };
+  }
+  const peerBond = parseBondOkMessage(peerBondWire);
+  if (
+    !peerBond ||
+    peerBond.agentId !== pending.proposal.initiatorAgentId ||
+    !bondOkTagMatches(sharedKey, peerBond.agentId, peerBond.tag)
+  ) {
     return { status: "rolled_back" };
   }
 
@@ -446,10 +488,16 @@ export async function pairInitComplete(input: {
   const joinerWire = await pollWireMessage(
     input.relay,
     pending.sessionId,
-    (message) => message.phase === "pake" && message.role === "joiner",
+    (message) =>
+      message.phase === "bond_fail" || (message.phase === "pake" && message.role === "joiner"),
     PAKE_HANDSHAKE_TIMEOUT_MS,
   );
-  if (!joinerWire || joinerWire.phase !== "pake") {
+  if (!joinerWire || joinerWire.phase === "bond_fail") {
+    return { status: "pake_failed" };
+  }
+  const joinerPake = parseJoinerPakeWithConfirm(joinerWire);
+  if (!joinerPake) {
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
     return { status: "pake_failed" };
   }
 
@@ -459,30 +507,17 @@ export async function pairInitComplete(input: {
 
   let joinerMessage: Uint8Array;
   try {
-    joinerMessage = decodePakePayload(joinerWire.payload);
+    joinerMessage = decodePakePayload(joinerPake.payload);
   } catch {
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
     return { status: "pake_failed" };
   }
   const sharedKey = finish(pending.initiatorSession, joinerMessage);
 
-  const joinerWireConfirm = await pollWireMessage(
-    input.relay,
-    pending.sessionId,
-    (message) =>
-      message.phase === "bond_fail" ||
-      (message.phase === "confirm" && message.agentId !== initiatorAgentId),
-    BOND_COORDINATION_TIMEOUT_MS,
-  );
-  if (!joinerWireConfirm || joinerWireConfirm.phase === "bond_fail") {
-    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
-  }
-
-  const joinerConfirm = parseConfirmMessage(joinerWireConfirm);
-  if (!joinerConfirm) {
-    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
-  }
+  const joinerConfirm = {
+    fingerprint: joinerPake.fingerprint,
+    agentId: joinerPake.agentId,
+  };
 
   const expectedJoinerFingerprint = pairConfirmFingerprint(
     sharedKey,
@@ -509,7 +544,7 @@ export async function pairInitComplete(input: {
     mode: pending.proposal.mode,
   };
 
-  const joinerBondOk = await pollWireMessage(
+  const joinerBondWire = await pollWireMessage(
     input.relay,
     pending.sessionId,
     (message) =>
@@ -517,11 +552,16 @@ export async function pairInitComplete(input: {
       (message.phase === "bond_ok" && message.agentId !== initiatorAgentId),
     BOND_COORDINATION_TIMEOUT_MS,
   );
-  if (!joinerBondOk) {
-    return { status: "pake_failed" };
+  if (!joinerBondWire || joinerBondWire.phase === "bond_fail") {
+    return { status: "rolled_back" };
   }
-  if (joinerBondOk.phase === "bond_fail") {
-    return { status: "pake_failed" };
+  const joinerBond = parseBondOkMessage(joinerBondWire);
+  if (
+    !joinerBond ||
+    joinerBond.agentId !== joinerConfirm.agentId ||
+    !bondOkTagMatches(sharedKey, joinerBond.agentId, joinerBond.tag)
+  ) {
+    return { status: "rolled_back" };
   }
 
   const previousAllowed = input.localAllowlist.get(initiatorAgentId);
@@ -549,7 +589,11 @@ export async function pairInitComplete(input: {
 
   await input.relay.postPakeMessage(
     pending.sessionId,
-    encodeWireMessage({ phase: "bond_ok", agentId: initiatorAgentId }),
+    encodeWireMessage({
+      phase: "bond_ok",
+      agentId: initiatorAgentId,
+      tag: pairBondOkTag(sharedKey, initiatorAgentId),
+    }),
   );
 
   const postedReply = await input.relay.pollPakeMessage(pending.sessionId);

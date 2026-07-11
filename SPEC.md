@@ -225,10 +225,17 @@ The two hosts run **SPAKE2** over the relay's `/pair/{session_id}` channel,
 with the code as the low-entropy secret. Pairing sessions expire after
 **5 minutes** (relay-enforced TTL).
 
-1. `pake` messages: both sides exchange SPAKE2 messages, derive a shared key.
-2. `confirm` (joiner-first, identity-bound): the **joiner** sends `confirm`
-   first, carrying its `agent_id` and a 64-character lowercase-hex fingerprint.
-   The fingerprint MUST be:
+**Relay channel invariant:** the `/pair/{session_id}` channel stores **at most
+one message** (single-slot overwrite). A party MUST NOT post a new message until
+it has consumed the peer's previous message (strict ping-pong). Violating this
+invariant drops messages on the relay and breaks pairing.
+
+1. `pake` messages: both sides exchange SPAKE2 messages and derive a shared key.
+   The joiner sends a single `pake` message with `role: "joiner"` that also
+   carries its identity-bound `confirm` fields (`fingerprint`, `agentId`) — one
+   wire post after reading the initiator's `pake`, preserving ping-pong.
+2. `confirm` (joiner-first, identity-bound): the joiner's `fingerprint` and
+   `agent_id` are sent in its `pake` message (step 1). The fingerprint MUST be:
 
    ```
    hex(SHA-256(domain ‖ u16_be(len(sk)) ‖ sk
@@ -260,11 +267,20 @@ with the code as the low-entropy secret. Pairing sessions expire after
    Self-approval by the model is forbidden (§8.4 mechanism applies).
 4. `bond_ok` / `bond_fail` (joiner-first commit):
 
-   1. The joiner sends `bond_ok` first.
-   2. The initiator, on receiving `bond_ok`, pushes its updated signed
-      allowlist to the relay, then replies `bond_ok`.
-   3. The joiner, on receiving the initiator's `bond_ok`, pushes its updated
-      signed allowlist to the relay.
+   1. The joiner sends `bond_ok` first, with `agent_id` and a 64-character
+      lowercase-hex `tag`:
+
+      ```
+      hex(SHA-256(domain ‖ u16_be(len(sk)) ‖ sk ‖ u16_be(len(agent_id)) ‖ agent_id))
+      ```
+
+      where `domain` = `"agentpair-pair-bondok-v1"` (UTF-8), `sk` is the SPAKE2
+      shared key, and `agent_id` is the sender's `agent_id`.
+
+   2. The initiator, on receiving `bond_ok`, verifies the tag, pushes its updated
+      signed allowlist to the relay, then replies `bond_ok` (with its own tag).
+   3. The joiner, on receiving the initiator's `bond_ok`, verifies the tag, then
+      pushes its updated signed allowlist to the relay.
 
    `bond_fail` is a courtesy signal only — it carries no cryptographic proof
    and MUST NOT be treated as a security mechanism (§11.2). Hosts MAY send it
@@ -483,8 +499,9 @@ this.** Therefore:
   verification and signed allowlist pushes.
 - **Class 1 invariant:** verification failures in the confirm phase (bad
   fingerprint, `agent_id` mismatch, malformed confirm) MUST surface as
-  `pake_failed` and MUST NOT modify either side's allowlist. Only successful
-  bond-phase coordination (§6.2 step 4) may push allowlist updates.
+  `pake_failed` and MUST NOT modify either side's allowlist. No party MUST
+  return `rolled_back` before its own local verification has passed. Only
+  successful bond-phase coordination (§6.2 step 4) may push allowlist updates.
 - **Two-generals bond asymmetry:** perfect two-sided atomicity over an
   untrusted relay is impossible. If the relay drops the initiator's `bond_ok`
   reply (§6.2 step 4), the initiator may remain bonded while the joiner rolls

@@ -20,7 +20,7 @@
     "build": "tsc -p tsconfig.build.json && cp src/runners/spectral-ruleset.yaml dist/runners/",
     "prepublishOnly": "pnpm build",
     "pretest": "pnpm --filter @agentpair/protocol build",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --config vitest.config.ts --passWithNoTests"
   },
   "dependencies": {
     "@agentpair/protocol": "workspace:^0.3.0",

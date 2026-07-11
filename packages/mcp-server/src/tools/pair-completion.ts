@@ -1,25 +1,58 @@
-import { type PairFlowResult, publicKeyToAgentId } from "@agentpair/protocol";
+import {
+  type PairFlowResult,
+  type PairingRelayClient,
+  publicKeyToAgentId,
+} from "@agentpair/protocol";
 import { pairInitComplete } from "@agentpair/protocol";
 import { scheduleAgentContextFlush } from "../store/flush-context.js";
 import { type AgentContext, ensureAllowlistReady } from "./pair.js";
 
 const inFlight = new Map<string, Promise<PairFlowResult>>();
 const completed = new Map<string, PairFlowResult>();
+let pairingGeneration = 0;
 
 function logCompletionEvent(code: string, event: Record<string, unknown>): void {
   console.error("[agentpair] initiator_pairing", { code, ...event });
 }
 
+function wrapRelayForCancellation(
+  relay: PairingRelayClient,
+  generation: number,
+): PairingRelayClient {
+  return {
+    postPakeMessage: async (sessionId, body) => {
+      if (generation !== pairingGeneration) {
+        throw new Error("pairing_cancelled");
+      }
+      return relay.postPakeMessage(sessionId, body);
+    },
+    pollPakeMessage: async (sessionId, timeoutMs) => {
+      if (generation !== pairingGeneration) {
+        return null;
+      }
+      return relay.pollPakeMessage(sessionId, timeoutMs);
+    },
+    consumePakeMessage: (sessionId) => {
+      relay.consumePakeMessage?.(sessionId);
+    },
+    putAllowlist: (agentId, allowed, secretKey) => relay.putAllowlist(agentId, allowed, secretKey),
+  };
+}
+
 async function runInitiatorCompletion(ctx: AgentContext, code: string): Promise<PairFlowResult> {
+  const generation = pairingGeneration;
   await ensureAllowlistReady(ctx);
   const keyPair = await ctx.keyStore.loadOrCreate();
   const flow = await pairInitComplete({
     code,
     keyPair,
-    relay: ctx.relay,
+    relay: wrapRelayForCancellation(ctx.relay, generation),
     registry: ctx.registry,
     localAllowlist: ctx.allowlist,
   });
+  if (generation !== pairingGeneration) {
+    return { status: "pake_failed" };
+  }
   if (flow.status === "bonded") {
     const agentId = publicKeyToAgentId(keyPair.publicKey);
     ctx.bonds.add(agentId, flow.bond);
@@ -76,7 +109,9 @@ export function getInitiatorCompletionTask(code: string): Promise<PairFlowResult
   return inFlight.get(code);
 }
 
+/** Cancel in-flight initiator polls (vitest teardown). */
 export function resetInitiatorCompletionsForTests(): void {
+  pairingGeneration++;
   inFlight.clear();
   completed.clear();
 }

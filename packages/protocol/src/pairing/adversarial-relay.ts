@@ -7,6 +7,7 @@ interface WireMessage {
   phase: WirePhase;
   fingerprint?: string;
   agentId?: string;
+  tag?: string;
   payload?: string;
   role?: string;
   reason?: string;
@@ -48,7 +49,13 @@ export class TamperingRelay extends MockRelayClient {
     let stored = body;
     const wire = JSON.parse(body) as WireMessage;
 
-    if (wire.phase === "confirm" && this.injectBondFailDuringConfirm) {
+    if (wire.phase === "pake" && wire.role === "joiner") {
+      if (this.injectBondFailDuringConfirm) {
+        stored = JSON.stringify({ phase: "bond_fail" });
+      } else if (this.malformConfirm !== null) {
+        stored = this.malformJoinerPakeBody(wire);
+      }
+    } else if (wire.phase === "confirm" && this.injectBondFailDuringConfirm) {
       stored = JSON.stringify({ phase: "bond_fail" });
     } else if (wire.phase === "confirm" && this.malformConfirm !== null) {
       stored = this.malformConfirmBody(wire);
@@ -83,11 +90,41 @@ export class TamperingRelay extends MockRelayClient {
       return null;
     }
 
+    if (wire.phase === "pake" && wire.role === "joiner") {
+      return this.swapJoinerPakeAgentId(raw);
+    }
+
     if (wire.phase === "confirm") {
       return this.swapConfirmAgentIds(raw);
     }
 
     return raw;
+  }
+
+  private swapJoinerPakeAgentId(body: string): string {
+    if (this.swapJoinerAgentId === null) {
+      return body;
+    }
+    const wire = JSON.parse(body) as WireMessage;
+    if (wire.phase !== "pake" || wire.role !== "joiner" || wire.agentId === undefined) {
+      return body;
+    }
+    if (wire.agentId === this.realJoinerId) {
+      wire.agentId = this.swapJoinerAgentId;
+    }
+    return JSON.stringify(wire);
+  }
+
+  private malformJoinerPakeBody(wire: WireMessage): string {
+    if (this.malformConfirm === "omit_fingerprint") {
+      const { fingerprint: _fp, ...rest } = wire;
+      return JSON.stringify(rest);
+    }
+    if (this.malformConfirm === "omit_agentId") {
+      const { agentId: _id, ...rest } = wire;
+      return JSON.stringify(rest);
+    }
+    return JSON.stringify(wire);
   }
 
   private malformConfirmBody(wire: WireMessage): string {

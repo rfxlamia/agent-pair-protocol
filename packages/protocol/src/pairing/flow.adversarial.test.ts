@@ -13,7 +13,7 @@ import { MemoryAllowlistStore } from "./test-helpers.js";
 
 /**
  * Class 1 invariant (post-T3 GREEN): adversarial cases 1–5 and 9 must never return
- * rolled_back — identity/fingerprint failures should surface as pake_failed instead.
+ * rolled_back before local verification passes — confirm failures surface as pake_failed.
  */
 
 describe("pairing flow adversarial (identity-bound confirm)", () => {
@@ -98,15 +98,13 @@ describe("pairing flow adversarial (identity-bound confirm)", () => {
     expectZeroAllowlist();
   }, 20000);
 
-  it("case 2: swap initiator agentId — both sides reject with pake_failed", async () => {
+  it("case 2: swap initiator agentId — joiner pake_failed, initiator rolled_back", async () => {
     relay.swapInitiatorAgentId = attackerId;
 
     const { initResult, joinResult } = await runPairing();
 
-    expect(initResult.status).toBe("pake_failed");
     expect(joinResult.status).toBe("pake_failed");
-    expect(initResult.status).not.toBe("rolled_back");
-    expect(joinResult.status).not.toBe("rolled_back");
+    expect(initResult.status).toBe("rolled_back");
     expectZeroAllowlist();
   }, 35000);
 
