@@ -754,7 +754,7 @@ export function createSessionStateMachine(
       }
 
       if (!["propose", "counter", "accept"].includes(input.type)) {
-        return { ok: false, error: "invalid_msg_type" };
+        return { ok: false, error: "invalid_payload" };
       }
 
       if (session.turnCount >= session.budget.max_turns) {
@@ -774,7 +774,7 @@ export function createSessionStateMachine(
       if (input.type === "accept") {
         const body = parseJsonBody<{ section_id?: string }>(input.body);
         if ("error" in body || !body.section_id) {
-          return { ok: false, error: "invalid_accept_body" };
+          return { ok: false, error: "invalid_payload" };
         }
         const lockedSections = [...new Set([...session.lockedSections, body.section_id])];
         const updated = upsert({
@@ -871,7 +871,7 @@ export function createSessionStateMachine(
       }
 
       if (!thread) {
-        return { ok: false, error: "thread_required" };
+        return { ok: false, error: "invalid_payload" };
       }
 
       const found = getOrError(thread);
@@ -885,7 +885,7 @@ export function createSessionStateMachine(
 
       const hash = artifactHash ?? session.artifactHash;
       if (!hash) {
-        return { ok: false, error: "artifact_hash_required" };
+        return { ok: false, error: "invalid_payload" };
       }
 
       const role = roleFor(session, deps.agentId);
