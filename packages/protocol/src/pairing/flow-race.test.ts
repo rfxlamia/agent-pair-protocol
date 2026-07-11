@@ -1,35 +1,14 @@
-import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { encodeBase64Url } from "../crypto/base64url.js";
 import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
-import { sign } from "../crypto/sign.js";
 import {
   InMemoryPairingRegistry,
-  type LocalAllowlistStore,
   type PairingRelayClient,
   pairInit,
   pairInitComplete,
   pairJoin,
 } from "./flow.js";
 import { init as initPake } from "./pake-adapter.js";
-
-function canonicalAllowlistBytes(agentId: string, allowed: string[]): Uint8Array {
-  const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
-  return utf8ToBytes(JSON.stringify(ordered));
-}
-
-function signAllowlist(
-  agentId: string,
-  allowed: string[],
-  secretKey: Uint8Array,
-): { agent_id: string; allowed: string[]; sig: string } {
-  const signature = sign(canonicalAllowlistBytes(agentId, allowed), secretKey);
-  return {
-    agent_id: agentId,
-    allowed: [...allowed].sort(),
-    sig: encodeBase64Url(signature),
-  };
-}
+import { MemoryAllowlistStore, signAllowlist } from "./test-helpers.js";
 
 class SlowInitiatorRelay implements PairingRelayClient {
   private pakeMessages = new Map<string, string>();
@@ -57,18 +36,6 @@ class SlowInitiatorRelay implements PairingRelayClient {
     const body = signAllowlist(agentId, allowed, secretKey);
     this.allowlists.set(agentId, body.allowed);
     return { ok: true };
-  }
-}
-
-class MemoryAllowlistStore implements LocalAllowlistStore {
-  private store = new Map<string, string[]>();
-
-  get(agentId: string): string[] {
-    return [...(this.store.get(agentId) ?? [])];
-  }
-
-  set(agentId: string, allowed: string[]): void {
-    this.store.set(agentId, [...allowed]);
   }
 }
 
