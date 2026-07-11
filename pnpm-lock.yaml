@@ -27,7 +27,7 @@ importers:
   packages/mcp-server:
     dependencies:
       '@agentpair/protocol':
-        specifier: workspace:^0.2.1
+        specifier: workspace:^0.3.0
         version: link:../protocol
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.1
