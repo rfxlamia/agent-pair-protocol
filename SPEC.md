@@ -226,13 +226,56 @@ with the code as the low-entropy secret. Pairing sessions expire after
 **5 minutes** (relay-enforced TTL).
 
 1. `pake` messages: both sides exchange SPAKE2 messages, derive a shared key.
-2. `confirm`: each side sends `SHA-256(shared_key)` as fingerprint plus its
-   `agent_id`. Mismatched fingerprints → abort `pake_failed`.
+2. `confirm` (joiner-first, identity-bound): the **joiner** sends `confirm`
+   first, carrying its `agent_id` and a 64-character lowercase-hex fingerprint.
+   The fingerprint MUST be:
+
+   ```
+   hex(SHA-256(domain ‖ u16_be(len(sk)) ‖ sk
+              ‖ u16_be(len(id_init)) ‖ id_init
+              ‖ u16_be(len(id_join))  ‖ id_join))
+   ```
+
+   where `domain` = `"agentpair-pair-confirm-v1"` (UTF-8), `sk` is the SPAKE2
+   shared key, `id_init` is the initiator's `agent_id`, and `id_join` is the
+   joiner's `agent_id`. Length prefixes are big-endian 16-bit unsigned integers.
+   `‖` denotes byte concatenation.
+
+   Golden vector (MUST match for conformance testing):
+
+   - `sk` = `0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20`
+     (hex)
+   - `id_init` = `ed25519:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo`
+   - `id_join` = `ed25519:u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s`
+   - fingerprint =
+     `12e616c65b5f0ddab5b755b20b19c3ffe868b67927d77e50cde036e04ddd3c68`
+
+   The initiator verifies the joiner's fingerprint, then replies with its own
+   `confirm`. The joiner verifies the initiator's fingerprint **and** that the
+   initiator's `agent_id` equals the `initiatorAgentId` from the pairing
+   proposal. Any verification failure MUST abort with `pake_failed`; the
+   failing side SHOULD also send `bond_fail` as a courtesy fast-fail (see §11.2).
 3. Human gate: the *joiner's* human MUST approve the proposal
    (scope + mode + initiator identity) before `bond_ok` is sent.
    Self-approval by the model is forbidden (§8.4 mechanism applies).
-4. `bond_ok` / `bond_fail`: both sides commit or roll back atomically. On
-   commit, each host pushes its updated signed allowlist to the relay.
+4. `bond_ok` / `bond_fail` (joiner-first commit):
+
+   1. The joiner sends `bond_ok` first.
+   2. The initiator, on receiving `bond_ok`, pushes its updated signed
+      allowlist to the relay, then replies `bond_ok`.
+   3. The joiner, on receiving the initiator's `bond_ok`, pushes its updated
+      signed allowlist to the relay.
+
+   `bond_fail` is a courtesy signal only — it carries no cryptographic proof
+   and MUST NOT be treated as a security mechanism (§11.2). Hosts MAY send it
+   to accelerate abort after a verification failure in the confirm phase
+   (Class 1); during the bond phase it coordinates rollback when allowlist
+   push fails.
+
+   If the initiator's `bond_ok` reply is dropped by the relay, the initiator
+   remains bonded while the joiner rolls back — the classic two-generals
+   acknowledgment problem. Implementations SHOULD surface this asymmetry to
+   the human operator.
 
 ### 6.3 Bond record
 
@@ -427,6 +470,21 @@ this.** Therefore:
   cross-check (§4.3 step 6).
 - **Decode DoS:** size limit before decode (§4.3 step 1).
 - **Replay:** monotonic `seq` per (thread, sender) + `ttl` (§4.3 step 7).
+- **Relay identity-swap during confirm:** a malicious relay can rewrite the
+  `agent_id` in a `confirm` message while leaving the SPAKE2 shared key
+  intact. A fingerprint that hashes only the shared key would still match,
+  letting the relay substitute its own identity. The identity-bound fingerprint
+  (§6.2 step 2) binds `id_init` and `id_join` into the hash, so any swap
+  changes the expected fingerprint and both sides abort with `pake_failed`.
+- **bond_fail is courtesy-only:** `bond_fail` has no signature and no binding
+  to the shared key. A relay can inject or drop it freely. Hosts MUST NOT
+  treat receipt of `bond_fail` as proof of a peer's intent; it exists only to
+  accelerate coordination abort. Security decisions rest on fingerprint
+  verification and signed allowlist pushes.
+- **Class 1 invariant:** verification failures in the confirm phase (bad
+  fingerprint, `agent_id` mismatch, malformed confirm) MUST surface as
+  `pake_failed` and MUST NOT modify either side's allowlist. Only successful
+  bond-phase coordination (§6.2 step 4) may push allowlist updates.
 - **Relay compromise:** worst case = drop/delay/reorder messages and learn
   metadata (who talks to whom, when, sizes). It can never read or forge
   content. Metadata privacy (sealed sender) is a future extension
