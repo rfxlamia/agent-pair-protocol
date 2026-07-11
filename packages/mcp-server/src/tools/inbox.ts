@@ -1,7 +1,10 @@
 import {
   createOuterEnvelope,
   defaultEnvelopeTtl,
+  isKnownEnvelopeType,
+  isSessionDispatchType,
   parseEnvelopeBody,
+  parseEnvelopePayload,
   publicKeyToAgentId,
   receiveEnvelope,
 } from "@agentpair/protocol";
@@ -12,6 +15,7 @@ import {
   expirePendingSessions,
   peekSessionOpenStatus,
   processSessionInboxEnvelope,
+  processThreadClose,
   resolveRatifyPendingId,
   resolveSessionOpenPendingId,
 } from "./session.js";
@@ -20,8 +24,28 @@ import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const processedEnvelopeIds = new WeakMap<AgentContext, Set<string>>();
 
-function isSupportedEnvelopeType(type: string): boolean {
-  return type === "chat.message" || type.startsWith("session.");
+function parseStructuredInboxPayload(rawPayload: string): unknown {
+  try {
+    return JSON.parse(rawPayload);
+  } catch {
+    return rawPayload;
+  }
+}
+
+function isThreadCloseAuthorized(ctx: AgentContext, thread: string, senderId: string): boolean {
+  const session = ctx.sessionStore.get(thread);
+  if (!session) {
+    return true;
+  }
+  return session.initiator === senderId || session.recipient === senderId;
+}
+
+function closeReasonFromPayload(inboxPayload: unknown): string | undefined {
+  if (typeof inboxPayload !== "object" || inboxPayload === null || Array.isArray(inboxPayload)) {
+    return undefined;
+  }
+  const reason = (inboxPayload as { reason?: unknown }).reason;
+  return typeof reason === "string" ? reason : undefined;
 }
 
 function resolveAllowedPeers(
@@ -136,11 +160,24 @@ export async function handleInbox(
       isBonded: (from) => bondedPeerSet.has(from),
       selfKeyPair: keyPair,
       seqStore: ctx.envelopeSeq,
-      dispatch: async (type) => {
-        if (!isSupportedEnvelopeType(type)) {
+      dispatch: async (body, plaintext) => {
+        if (!isKnownEnvelopeType(body.type)) {
           return { ok: false as const, error: "unsupported_envelope_type" };
         }
-        return { ok: true as const };
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(new TextDecoder().decode(plaintext));
+        } catch {
+          return { ok: false as const, error: "invalid_payload" };
+        }
+        const payloadResult = parseEnvelopePayload(body.type, parsed);
+        if (!payloadResult.ok) {
+          return payloadResult;
+        }
+        if (body.type === "core.close" && !isThreadCloseAuthorized(ctx, body.thread, body.from)) {
+          return { ok: false as const, error: "close_not_allowed" };
+        }
+        return payloadResult;
       },
     });
 
@@ -158,11 +195,12 @@ export async function handleInbox(
     // envelope won't be redelivered (stale_seq would reject if it were). Session
     // side effects may still fail after commit — in-process `seen` dedupes by body.id.
     const payload = new TextDecoder().decode(plaintext);
+    const inboxPayload = parseStructuredInboxPayload(payload);
 
     let pendingId: string | undefined;
     let sessionStatus: string | undefined;
 
-    if (body.type.startsWith("session.") && !seen.has(body.id)) {
+    if (isSessionDispatchType(body.type) && !seen.has(body.id)) {
       const processed = await processSessionInboxEnvelope(ctx, {
         from: body.from,
         type: body.type,
@@ -178,16 +216,31 @@ export async function handleInbox(
       }
     }
 
-    if (body.type === "session.open" && !pendingId) {
+    if (body.type === "nego.open" && !pendingId) {
       pendingId = await resolveSessionOpenPendingId(ctx, body.thread);
     }
 
-    if (body.type === "session.peer_signed" && !pendingId) {
+    if (body.type === "nego.signed" && !pendingId) {
       pendingId = await resolveRatifyPendingId(ctx, body.thread);
     }
 
-    if (body.type === "session.open") {
+    if (body.type === "nego.open") {
       sessionStatus = peekSessionOpenStatus(ctx, body.thread);
+    }
+
+    if (
+      body.type === "core.close" &&
+      !ctx.closedThreads.isClosed(body.thread) &&
+      isThreadCloseAuthorized(ctx, body.thread, body.from)
+    ) {
+      const reason = closeReasonFromPayload(inboxPayload);
+      ctx.closedThreads.markClosed(body.thread, {
+        closed_at: Math.floor(Date.now() / 1000),
+        reason,
+        by: body.from,
+      });
+      await ctx.closedThreads.flush();
+      await processThreadClose(ctx, body.thread, reason);
     }
 
     envelopes.push({
@@ -198,7 +251,7 @@ export async function handleInbox(
       thread: body.thread,
       seq: body.seq,
       ttl: body.ttl,
-      payload,
+      payload: inboxPayload,
       sig: outer.sig,
       verified: true,
       ...(pendingId ? { pending_id: pendingId } : {}),
@@ -239,32 +292,39 @@ export async function handleSend(
   ctx: AgentContext,
   input: {
     to: string;
-    type: string;
-    payload: string;
+    body: string;
+    kind?: string;
     thread?: string;
     seq?: number;
     ttl?: number;
   },
 ) {
+  const thread = input.thread ?? crypto.randomUUID();
+  if (ctx.closedThreads.isClosed(thread)) {
+    return toolTextResult({ ok: false, error: "thread_closed" });
+  }
+
+  const payloadObj: { body: string; kind?: string } = { body: input.body };
+  if (input.kind !== undefined) {
+    payloadObj.kind = input.kind;
+  }
+
   const keyPair = await ctx.keyStore.loadOrCreate();
   const senderId = publicKeyToAgentId(keyPair.publicKey);
   const allowed = ctx.allowlist.get(senderId);
   if (!allowed.includes(input.to)) {
-    const result = { ok: false, error: "recipient_not_allowed" };
-    assertNoSecrets(result);
-    return toolTextResult(result);
+    return toolTextResult({ ok: false, error: "recipient_not_allowed" });
   }
 
-  const thread = input.thread ?? crypto.randomUUID();
   const seq = input.seq ?? nextThreadSeq(ctx, thread);
   const outer = createOuterEnvelope({
     sender: keyPair,
     recipientAgentId: input.to,
-    type: input.type,
+    type: "core.msg",
     thread,
     seq,
     ttl: defaultEnvelopeTtl(input.ttl),
-    payload: utf8ToBytes(input.payload),
+    payload: utf8ToBytes(JSON.stringify(payloadObj)),
   });
 
   const body = parseEnvelopeBody(outer);
@@ -277,6 +337,67 @@ export async function handleSend(
     id: body.id,
     thread: body.thread,
     seq: body.seq,
+  };
+  assertNoSecrets(result);
+  return toolTextResult(result);
+}
+
+export async function handleClose(
+  ctx: AgentContext,
+  input: { thread: string; to?: string; reason?: string },
+) {
+  if (ctx.closedThreads.isClosed(input.thread)) {
+    return toolTextResult({ ok: false, error: "thread_closed" });
+  }
+
+  const keyPair = await ctx.keyStore.loadOrCreate();
+  const senderId = publicKeyToAgentId(keyPair.publicKey);
+  const session = ctx.sessionStore.get(input.thread);
+  if (session && session.initiator !== senderId && session.recipient !== senderId) {
+    return toolTextResult({ ok: false, error: "close_not_allowed" });
+  }
+
+  let to = input.to;
+  if (!to) {
+    if (session) {
+      to = session.initiator === senderId ? session.recipient : session.initiator;
+    }
+  }
+  if (!to) {
+    return toolTextResult({ ok: false, error: "recipient_not_allowed" });
+  }
+
+  const allowed = ctx.allowlist.get(senderId);
+  if (!allowed.includes(to)) {
+    return toolTextResult({ ok: false, error: "recipient_not_allowed" });
+  }
+
+  const payloadObj = input.reason !== undefined ? { reason: input.reason } : {};
+  const seq = nextThreadSeq(ctx, input.thread);
+  const outer = createOuterEnvelope({
+    sender: keyPair,
+    recipientAgentId: to,
+    type: "core.close",
+    thread: input.thread,
+    seq,
+    ttl: defaultEnvelopeTtl(),
+    payload: utf8ToBytes(JSON.stringify(payloadObj)),
+  });
+  await ctx.relay.sendEnvelope(to, outer);
+  recordSentSeq(ctx, input.thread, seq);
+
+  ctx.closedThreads.markClosed(input.thread, {
+    closed_at: Math.floor(Date.now() / 1000),
+    reason: input.reason,
+    by: senderId,
+  });
+  await ctx.closedThreads.flush();
+  await processThreadClose(ctx, input.thread, input.reason);
+
+  const result = {
+    ok: true,
+    thread: input.thread,
+    seq,
   };
   assertNoSecrets(result);
   return toolTextResult(result);

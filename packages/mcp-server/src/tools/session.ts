@@ -8,18 +8,10 @@ import {
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { type AgentContext, ensureAllowlistReady } from "./pair.js";
+import { nextThreadSeq, recordSentSeq } from "./thread-seq.js";
 import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const sessionMachines = new WeakMap<AgentContext, SessionStateMachine>();
-const sessionThreadSeq = new WeakMap<AgentContext, Map<string, number>>();
-
-function nextSessionSeq(ctx: AgentContext, thread: string): number {
-  const counters = sessionThreadSeq.get(ctx) ?? new Map<string, number>();
-  sessionThreadSeq.set(ctx, counters);
-  const next = (counters.get(thread) ?? 0) + 1;
-  counters.set(thread, next);
-  return next;
-}
 
 export async function expirePendingSessions(ctx: AgentContext): Promise<void> {
   const machine = sessionMachines.get(ctx);
@@ -79,7 +71,10 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
       bonds: ctx.bonds,
       relay: {
         async send(input) {
-          const seq = input.seq ?? nextSessionSeq(ctx, input.thread);
+          if (ctx.closedThreads.isClosed(input.thread)) {
+            return { ok: false, error: "thread_closed" };
+          }
+          const seq = input.seq ?? nextThreadSeq(ctx, input.thread);
           const outer = createOuterEnvelope({
             sender: keyPair,
             recipientAgentId: input.to,
@@ -90,6 +85,7 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
             payload: utf8ToBytes(input.payload),
           });
           await ctx.relay.sendEnvelope(input.to, outer);
+          recordSentSeq(ctx, input.thread, seq);
           return { ok: true };
         },
       },
@@ -182,4 +178,13 @@ export async function processSessionInboxEnvelope(
   input: { from: string; type: string; thread: string; payload: string },
 ) {
   return withSessionMachine(ctx, (machine) => machine.handleIncomingEnvelope(input));
+}
+
+export async function processThreadClose(
+  ctx: AgentContext,
+  thread: string,
+  reason?: string,
+): Promise<void> {
+  const machine = await getSessionMachine(ctx);
+  await machine.handleThreadClose(thread, reason);
 }

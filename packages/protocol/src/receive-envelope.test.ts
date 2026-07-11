@@ -68,11 +68,11 @@ function makeValidWire(options?: {
   const outer = createOuterEnvelope({
     sender: alice,
     recipientAgentId: bobId,
-    type: "chat.message",
+    type: "core.msg",
     thread: options?.thread ?? thread,
     seq: options?.seq ?? 1,
     ttl: options?.ttl ?? 9_999_999_999,
-    payload: utf8ToBytes('{"hello":"world"}'),
+    payload: utf8ToBytes('{"body":"world"}'),
   });
 
   return { wire: serializeOuterEnvelope(outer), alice, bob, aliceId, bobId };
@@ -388,7 +388,7 @@ describe("receiveEnvelope steps 7–8 (§4.3)", () => {
       createOuterEnvelope({
         sender: alice1,
         recipientAgentId: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread,
         seq: 1,
         ttl: 9_999_999_999,
@@ -399,7 +399,7 @@ describe("receiveEnvelope steps 7–8 (§4.3)", () => {
       createOuterEnvelope({
         sender: alice2,
         recipientAgentId: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread,
         seq: 1,
         ttl: 9_999_999_999,
@@ -453,7 +453,10 @@ describe("receiveEnvelope steps 7–8 (§4.3)", () => {
 
     expect(result.ok).toBe(true);
     expect(commitAccepted).toHaveBeenCalledWith(thread, aliceId, 3);
-    expect(deps.dispatch).toHaveBeenCalledWith("chat.message", expect.any(Uint8Array));
+    expect(deps.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "core.msg", seq: 3, thread }),
+      expect.any(Uint8Array),
+    );
   });
 
   it("step 8: decrypt failure → invalid_payload", async () => {

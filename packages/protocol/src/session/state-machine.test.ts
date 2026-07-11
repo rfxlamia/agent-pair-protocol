@@ -247,6 +247,102 @@ describe("session state machine", () => {
     return opened.thread as string;
   }
 
+  async function signFlowToSigned(thread: string, artifactHash: string): Promise<void> {
+    await aliceMachine.handleMsg({ thread, type: "challenge", body: "{}" });
+    await bobMachine.handleMsg({ thread, type: "challenge", body: "{}" });
+    await aliceMachine.handleMsg({
+      thread,
+      type: "test_report",
+      body: JSON.stringify({ artifact_hash: artifactHash, passed: true, runner: "payload-size" }),
+    });
+    await bobMachine.handleMsg({
+      thread,
+      type: "test_report",
+      body: JSON.stringify({ artifact_hash: artifactHash, passed: true, runner: "payload-size" }),
+    });
+    await aliceMachine.handleSign({ thread, artifact_hash: artifactHash });
+    await bobMachine.handleSign({ thread, artifact_hash: artifactHash });
+    expect((await aliceMachine.handleStatus({ thread })).status).toBe("signed");
+  }
+
+  describe("handleThreadClose", () => {
+    it("transitions live session to closed (§8.3 any → core.close → closed)", async () => {
+      const thread = await openAndApprove();
+      const result = await aliceMachine.handleThreadClose(thread, "user done");
+      expect(result).toEqual({ ok: true, thread, status: "closed" });
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) return;
+      expect(status.status).toBe("closed");
+    });
+
+    it("transitions signed session to closed", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:close-from-signed";
+      await signFlowToSigned(thread, artifactHash);
+
+      const result = await aliceMachine.handleThreadClose(thread, "abort ratify");
+      expect(result.status).toBe("closed");
+    });
+
+    it("is no-op when no session exists", async () => {
+      const thread = crypto.randomUUID();
+      expect(await aliceMachine.handleThreadClose(thread)).toEqual({ ok: true, thread });
+    });
+
+    it("is idempotent when session already closed", async () => {
+      const thread = await openAndApprove();
+      await aliceMachine.handleThreadClose(thread, "first");
+      const again = await aliceMachine.handleThreadClose(thread, "second");
+      expect(again).toEqual({ ok: true, thread, status: "closed" });
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.status).toBe("closed");
+    });
+
+    it("default close reason is thread_closed when reason omitted", async () => {
+      const thread = await openAndApprove();
+      await aliceMachine.handleThreadClose(thread);
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.reject_reason).toBe("thread_closed");
+    });
+
+    it("removes session_open pending when closing a pending session", async () => {
+      const opened = await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+      });
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        return;
+      }
+
+      expect(bobPending.list().some((item) => item.kind === "session_open")).toBe(true);
+      await bobMachine.handleThreadClose(opened.thread, "abort");
+      expect(bobPending.list().some((item) => item.kind === "session_open")).toBe(false);
+    });
+
+    it("removes ratify pending when closing a signed session", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:close-clears-ratify";
+      await signFlowToSigned(thread, artifactHash);
+      expect(alicePending.list().some((item) => item.kind === "ratify")).toBe(true);
+
+      await aliceMachine.handleThreadClose(thread, "abort ratify");
+      expect(alicePending.list().some((item) => item.kind === "ratify")).toBe(false);
+    });
+  });
+
+  it("handleIncomingEnvelope accepts nego.open", async () => {
+    const thread = crypto.randomUUID();
+    const result = await bobMachine.handleIncomingEnvelope({
+      from: aliceId,
+      type: "nego.open",
+      thread,
+      payload: JSON.stringify({ ...openPayload, expires_at: Date.now() + SESSION_OPEN_TTL_MS }),
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("session_open queues pending and becomes live after human_approve", async () => {
     const opened = await aliceMachine.handleOpen({
       to: bobId,
@@ -381,7 +477,7 @@ describe("session state machine", () => {
     };
     const redelivered = await bobMachine.handleIncomingEnvelope({
       from: aliceId,
-      type: "session.open",
+      type: "nego.open",
       thread,
       payload: JSON.stringify(payloadObj),
     });
@@ -843,7 +939,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: carolId,
-        type: "session.peer_ratified",
+        type: "nego.ratified",
         thread,
         payload: "{}",
       });
@@ -867,7 +963,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: carolId,
-        type: "session.peer_signed",
+        type: "nego.signed",
         thread,
         payload: JSON.stringify({ artifact_hash: artifactHash }),
       });
@@ -886,6 +982,29 @@ describe("session state machine", () => {
       expect(status.artifact_hash).toBeUndefined();
     });
 
+    it("rejects atest.challenge from a non-participant without filing challenges", async () => {
+      const thread = await openAndApprove();
+
+      const rejected = await aliceMachine.handleIncomingEnvelope({
+        from: carolId,
+        type: "atest.challenge",
+        thread,
+        payload: "{}",
+      });
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("not_a_participant");
+
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.tests_legal).toBe(false);
+    });
+
     it("rejects open_approved from a non-participant without going live", async () => {
       const opened = await aliceMachine.handleOpen({
         to: bobId,
@@ -898,7 +1017,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: carolId,
-        type: "session.open_approved",
+        type: "nego.open_approved",
         thread: opened.thread,
         payload: JSON.stringify({ thread: opened.thread }),
       });
@@ -928,7 +1047,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: carolId,
-        type: "session.open_reject",
+        type: "nego.open_reject",
         thread: opened.thread,
         payload: JSON.stringify({ reason: "blocked by carol" }),
       });
@@ -957,7 +1076,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: carolId,
-        type: "session.peer_turn",
+        type: "nego.turn",
         thread,
         payload: JSON.stringify({
           turn_count: turnBefore + 10,
@@ -985,7 +1104,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: bobId,
-        type: "session.peer_test_report",
+        type: "atest.report",
         thread,
         payload: JSON.stringify({
           artifact_hash: artifactHash,
@@ -1007,6 +1126,41 @@ describe("session state machine", () => {
       expect(status.tests_legal).toBe(false);
     });
 
+    it("accepts atest.challenge from a participant via handleIncomingEnvelope", async () => {
+      const thread = await openAndApprove();
+
+      const accepted = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "atest.challenge",
+        thread,
+        payload: "{}",
+      });
+      expect(accepted).toEqual({ ok: true, thread, type: "challenge" });
+
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.tests_legal).toBe(false);
+    });
+
+    it("rejects malformed atest.challenge payloads", async () => {
+      const thread = await openAndApprove();
+
+      const rejected = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "atest.challenge",
+        thread,
+        payload: "[]",
+      });
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) {
+        return;
+      }
+      expect(rejected.error).toBe("invalid_payload");
+    });
+
     it("rejects malformed peer_turn payloads", async () => {
       const thread = await openAndApprove();
       const before = await aliceMachine.handleStatus({ thread });
@@ -1018,7 +1172,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: bobId,
-        type: "session.peer_turn",
+        type: "nego.turn",
         thread,
         payload: JSON.stringify({
           turn_count: "abc",
@@ -1052,7 +1206,7 @@ describe("session state machine", () => {
 
       const rejected = await bobMachine.handleIncomingEnvelope({
         from: aliceId,
-        type: "session.open",
+        type: "nego.open",
         thread: opened.thread,
         payload: JSON.stringify({ goal: "only goal, no budget" }),
       });
@@ -1068,7 +1222,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: bobId,
-        type: "session.peer_turn",
+        type: "nego.turn",
         thread,
         payload: "null",
       });
@@ -1093,7 +1247,7 @@ describe("session state machine", () => {
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: aliceId,
-        type: "session.open_approved",
+        type: "nego.open_approved",
         thread: opened.thread,
         payload: JSON.stringify({ thread: opened.thread }),
       });
@@ -1123,7 +1277,7 @@ describe("session state machine", () => {
 
       const rejected = await bobMachine.handleIncomingEnvelope({
         from: aliceId,
-        type: "session.open_reject",
+        type: "nego.open_reject",
         thread: opened.thread,
         payload: JSON.stringify({ reason: "forced by initiator" }),
       });
@@ -1153,7 +1307,7 @@ describe("session state machine", () => {
 
       const rejected = await bobMachine.handleIncomingEnvelope({
         from: aliceId,
-        type: "session.open_expired",
+        type: "nego.open_expired",
         thread: opened.thread,
         payload: JSON.stringify({ thread: opened.thread }),
       });
@@ -1185,7 +1339,7 @@ describe("session state machine", () => {
 
       const rejected = await bobMachine.handleIncomingEnvelope({
         from: carolId,
-        type: "session.open",
+        type: "nego.open",
         thread: opened.thread,
         payload: JSON.stringify({
           goal: "hijacked goal",

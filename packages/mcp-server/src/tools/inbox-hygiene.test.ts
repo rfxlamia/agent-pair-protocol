@@ -15,8 +15,9 @@ import { MemoryBondStore } from "../store/bonds.js";
 import { MemoryInboxCursorStore } from "../store/inbox-cursor.js";
 import { createKeyStore } from "../store/keys.js";
 import { createPendingQueue } from "../store/pending.js";
-import { filterBondedWires, handleInbox, handleSend } from "./inbox.js";
+import { filterBondedWires, handleClose, handleInbox, handleSend } from "./inbox.js";
 import { createAgentContext } from "./pair.js";
+import { handleSessionStatus } from "./session.js";
 import { detectClientThreadGaps } from "./thread-seq.js";
 
 function structured<T>(result: { structuredContent: T }): T {
@@ -44,6 +45,8 @@ class StubInboxRelayWithRowids {
       cursor: response.cursor ?? 0,
     }));
   }
+
+  async sendEnvelope(_to: string, _outer: OuterEnvelope): Promise<void> {}
 
   async pullInbox(
     _keyPair: KeyPair,
@@ -96,16 +99,73 @@ function makeOuterEnvelope(
   recipientId: string,
   body: string,
   seq: number,
+  thread = `thread-${seq}`,
 ): OuterEnvelope {
   return createOuterEnvelope({
     sender,
     recipientAgentId: recipientId,
-    type: "chat.message",
-    thread: `thread-${seq}`,
+    type: "core.msg",
+    thread,
     seq,
     ttl: futureTtl(),
-    payload: new TextEncoder().encode(body),
+    payload: new TextEncoder().encode(JSON.stringify({ body })),
   });
+}
+
+function makeWireEnvelope(
+  sender: KeyPair,
+  recipientId: string,
+  input: { type: string; payload: unknown; thread?: string; seq?: number },
+): string {
+  const outer = createOuterEnvelope({
+    sender,
+    recipientAgentId: recipientId,
+    type: input.type,
+    thread: input.thread ?? crypto.randomUUID(),
+    seq: input.seq ?? 1,
+    ttl: futureTtl(),
+    payload: new TextEncoder().encode(JSON.stringify(input.payload)),
+  });
+  return wireFromEnvelope(outer);
+}
+
+async function makeBondedInboxPair() {
+  const [aliceDir, bobDir] = await Promise.all([
+    mkdtemp(join(tmpdir(), "agentpair-alice-keys-")),
+    mkdtemp(join(tmpdir(), "agentpair-bob-keys-")),
+  ]);
+  const allowlistAlice = new MemoryAllowlistStore();
+  const allowlistBob = new MemoryAllowlistStore();
+  const bondsAlice = new MemoryBondStore();
+  const bondsBob = new MemoryBondStore();
+  const relay = new StubInboxRelayWithRowids([]);
+
+  const aliceCtx = createAgentContext({
+    keyStore: createKeyStore({ keyPath: join(aliceDir, "keys.json") }),
+    relay: relay as unknown as HttpRelayClient,
+    allowlist: allowlistAlice,
+    bonds: bondsAlice,
+  });
+  const bobCtx = createAgentContext({
+    keyStore: createKeyStore({ keyPath: join(bobDir, "keys.json") }),
+    relay: relay as unknown as HttpRelayClient,
+    allowlist: allowlistBob,
+    bonds: bondsBob,
+  });
+
+  const aliceKeys = await aliceCtx.keyStore.loadOrCreate();
+  const bobKeys = await bobCtx.keyStore.loadOrCreate();
+  const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+  const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+  allowlistAlice.set(aliceId, [bobId]);
+  allowlistBob.set(bobId, [aliceId]);
+  bondsAlice.add(aliceId, { peer: bobId, scope: ["msg"], mode: "bonded_contact" });
+  bondsBob.add(bobId, { peer: aliceId, scope: ["msg"], mode: "bonded_contact" });
+
+  await aliceCtx.envelopeSeq.init(aliceId);
+  await bobCtx.envelopeSeq.init(bobId);
+  return { aliceKeys, bobKeys, aliceId, bobId, aliceCtx, bobCtx, relay };
 }
 
 function wireOver65536Bytes(sender: KeyPair, recipientId: string): string {
@@ -113,11 +173,11 @@ function wireOver65536Bytes(sender: KeyPair, recipientId: string): string {
     createOuterEnvelope({
       sender,
       recipientAgentId: recipientId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "thread-big",
       seq: 1,
       ttl: futureTtl(),
-      payload: new TextEncoder().encode("x"),
+      payload: new TextEncoder().encode(JSON.stringify({ body: "x" })),
     }),
   );
   const obj = JSON.parse(base) as Record<string, unknown>;
@@ -226,7 +286,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       return;
     }
     expect(first.envelopes).toHaveLength(1);
-    expect(first.envelopes[0]?.payload).toBe("first");
+    expect(first.envelopes[0]?.payload).toEqual({ body: "first" });
 
     const second = structured(await handleInbox(ctx, {}));
     expect(second.ok).toBe(true);
@@ -234,7 +294,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       return;
     }
     expect(second.envelopes).toHaveLength(1);
-    expect(second.envelopes[0]?.payload).toBe("second");
+    expect(second.envelopes[0]?.payload).toEqual({ body: "second" });
     expect(relay.pulls).toEqual([0, 10]);
   });
 
@@ -410,7 +470,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     }
     expect(relay.pullSenders[0]).toEqual([bondedPeerId]);
     expect(result.envelopes).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toBe("bonded");
+    expect(result.envelopes[0]?.payload).toEqual({ body: "bonded" });
     expect(result.filtered_count).toBe(0);
     expect(result.relay_filtered_count).toBeUndefined();
   });
@@ -449,7 +509,7 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     }
     expect(result.bonds_empty).toBe(true);
     expect(result.envelopes).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toBe("allowed");
+    expect(result.envelopes[0]?.payload).toEqual({ body: "allowed" });
   });
 
   it("reports cursor_reset when cursor file is corrupt", async () => {
@@ -544,7 +604,7 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     }
     expect(result.envelopes).toHaveLength(1);
     const item = result.envelopes[0];
-    expect(item?.payload).toBe("hello-v1");
+    expect(item?.payload).toEqual({ body: "hello-v1" });
     expect(item?.verified).toBe(true);
     expect(item?.sig).toBe(outer.sig);
     expect(item?.from).toBe(peerId);
@@ -652,7 +712,7 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     }
     expect(result.envelopes).toHaveLength(1);
     expect(result.rejected).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toBe("still-here");
+    expect(result.envelopes[0]?.payload).toEqual({ body: "still-here" });
     expect(result).not.toHaveProperty("skipped_unsupported");
   });
 });
@@ -866,6 +926,249 @@ describe("inbox receiveEnvelope wiring (M1.2 §4.3)", () => {
   });
 });
 
+describe("M1.4 envelope types", () => {
+  it("rejects v0 chat.message with unsupported_envelope_type", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "chat.message",
+      payload: { body: "legacy" },
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    expect(result.rejected).toEqual([
+      expect.objectContaining({ error: "unsupported_envelope_type" }),
+    ]);
+  });
+
+  it("renders core.ack payload as structured ack_seq", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.ack",
+      payload: { ack_seq: 7 },
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    const ack = result.envelopes.find((e) => e.type === "core.ack");
+    expect(ack?.payload).toEqual({ ack_seq: 7 });
+  });
+
+  it("core.close receive marks closedThreads idempotently", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    const wire1 = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.close",
+      payload: { reason: "done" },
+      thread,
+      seq: 1,
+    });
+    const wire2 = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.close",
+      payload: { reason: "again" },
+      thread,
+      seq: 2,
+    });
+    relay.responses = [
+      { rows: [{ rowid: 1, wire: wire1 }], cursor: 1 },
+      { rows: [{ rowid: 2, wire: wire2 }], cursor: 2 },
+    ];
+    await handleInbox(bobCtx, {});
+    const first = bobCtx.closedThreads.get(thread);
+    expect(first?.closed_at).toBeTypeOf("number");
+    expect(first?.reason).toBe("done");
+
+    await handleInbox(bobCtx, {});
+    const second = bobCtx.closedThreads.get(thread);
+    expect(second?.closed_at).toBe(first?.closed_at);
+    expect(second?.reason).toBe("done");
+  });
+
+  it("rejects core.msg with invalid_payload and does not commit seq", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.msg",
+      payload: { kind: "text" },
+      thread,
+      seq: 1,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    expect(result.rejected).toEqual([expect.objectContaining({ error: "invalid_payload" })]);
+    expect(result.envelopes).toHaveLength(0);
+    expect(
+      bobCtx.envelopeSeq.getLastAccepted(thread, publicKeyToAgentId(aliceKeys.publicKey)),
+    ).toBe(0);
+  });
+
+  it("handleSend wraps core.msg and rejects closed thread", async () => {
+    const { aliceId, bobId, aliceCtx } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    aliceCtx.closedThreads.markClosed(thread, { closed_at: 1, by: aliceId });
+    const blocked = structured(await handleSend(aliceCtx, { to: bobId, body: "nope", thread }));
+    expect(blocked).toEqual({ ok: false, error: "thread_closed" });
+
+    const openThread = crypto.randomUUID();
+    const sent = structured(
+      await handleSend(aliceCtx, { to: bobId, body: "hi", kind: "text", thread: openThread }),
+    );
+    expect(sent.ok).toBe(true);
+  });
+
+  it("handleClose rejects re-close on sender (thread_closed) — asymmetric vs idempotent receive", async () => {
+    const { bobId, aliceCtx } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    const first = structured(await handleClose(aliceCtx, { thread, to: bobId, reason: "done" }));
+    expect(first.ok).toBe(true);
+    const second = structured(await handleClose(aliceCtx, { thread, to: bobId }));
+    expect(second).toEqual({ ok: false, error: "thread_closed" });
+  });
+
+  it("handleClose infers peer from session when to omitted", async () => {
+    const { aliceId, bobId, aliceCtx } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    aliceCtx.sessionStore.upsert({
+      thread,
+      initiator: aliceId,
+      recipient: bobId,
+      role: "initiator",
+      status: "live",
+      goal: "probe",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      turnCount: 1,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+    const closed = structured(await handleClose(aliceCtx, { thread, reason: "done" }));
+    expect(closed.ok).toBe(true);
+  });
+
+  it("core.close receive transitions persisted session on cold process", async () => {
+    const { aliceKeys, aliceId, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    bobCtx.sessionStore.upsert({
+      thread,
+      initiator: aliceId,
+      recipient: bobId,
+      role: "recipient",
+      status: "live",
+      goal: "probe",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.close",
+      payload: { reason: "shutdown" },
+      thread,
+      seq: 1,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    await handleInbox(bobCtx, {});
+    const status = structured(await handleSessionStatus(bobCtx, { thread }));
+    expect(status.status).toBe("closed");
+  });
+
+  it("send after peer core.close receive is rejected", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const thread = crypto.randomUUID();
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "core.close",
+      payload: {},
+      thread,
+      seq: 1,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    await handleInbox(bobCtx, {});
+    const blocked = structured(
+      await handleSend(bobCtx, {
+        to: publicKeyToAgentId(aliceKeys.publicKey),
+        body: "late",
+        thread,
+      }),
+    );
+    expect(blocked).toEqual({ ok: false, error: "thread_closed" });
+  });
+
+  it("rejects core.close from bonded peer who is not a session participant", async () => {
+    const { aliceId, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const charlieKeys = generateKeyPair();
+    const charlieId = publicKeyToAgentId(charlieKeys.publicKey);
+    bobCtx.allowlist.set(bobId, [aliceId, charlieId]);
+    bobCtx.bonds.add(bobId, { peer: charlieId, scope: ["msg"], mode: "bonded_contact" });
+
+    const thread = crypto.randomUUID();
+    bobCtx.sessionStore.upsert({
+      thread,
+      initiator: aliceId,
+      recipient: bobId,
+      role: "recipient",
+      status: "live",
+      goal: "probe",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+
+    const wire = makeWireEnvelope(charlieKeys, bobId, {
+      type: "core.close",
+      payload: { reason: "intruder" },
+      thread,
+      seq: 1,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    expect(result.rejected).toEqual([expect.objectContaining({ error: "close_not_allowed" })]);
+    expect(result.envelopes).toHaveLength(0);
+    expect(bobCtx.closedThreads.isClosed(thread)).toBe(false);
+    expect(bobCtx.envelopeSeq.getLastAccepted(thread, charlieId)).toBe(0);
+  });
+
+  it("renders nego.open payload as structured object", async () => {
+    const { aliceKeys, bobId, bobCtx, relay } = await makeBondedInboxPair();
+    const openPayload = {
+      goal: "test",
+      acceptance: [{ id: "a1", test: "judgment" as const, desc: "d" }],
+      budget: { max_turns: 3 },
+      mandate: { agent_may: ["propose"], human_required: ["sign"] },
+      expires_at: Date.now() + 3_600_000,
+    };
+    const wire = makeWireEnvelope(aliceKeys, bobId, {
+      type: "nego.open",
+      payload: openPayload,
+    });
+    relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
+    const result = structured(await handleInbox(bobCtx, {}));
+    const open = result.envelopes.find((e) => e.type === "nego.open");
+    expect(open?.payload).toEqual(openPayload);
+  });
+});
+
 describe("inbox send absolute ttl (M1.2 §4.2)", () => {
   it("handleSend without explicit ttl uses absolute unix body.ttl", async () => {
     const peer = generateKeyPair();
@@ -888,9 +1191,7 @@ describe("inbox send absolute ttl (M1.2 §4.2)", () => {
     const protocol = await import("@agentpair/protocol");
     const createSpy = vi.spyOn(protocol, "createOuterEnvelope");
 
-    const result = structured(
-      await handleSend(ctx, { to: peerId, type: "chat.message", payload: "ttl-check" }),
-    );
+    const result = structured(await handleSend(ctx, { to: peerId, body: "ttl-check" }));
     expect(result.ok).toBe(true);
 
     expect(createSpy).toHaveBeenCalledTimes(1);

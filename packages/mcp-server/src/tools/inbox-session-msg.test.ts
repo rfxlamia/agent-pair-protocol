@@ -70,12 +70,12 @@ describe("inbox session negotiation fixes", () => {
     if (!bobInbox.ok) return;
 
     const peerTurn = bobInbox.envelopes.find(
-      (envelope) => envelope.type === "session.peer_turn" && envelope.thread === opened.thread,
+      (envelope) => envelope.type === "nego.turn" && envelope.thread === opened.thread,
     );
     expect(peerTurn).toBeDefined();
     if (!peerTurn) return;
 
-    const payload = JSON.parse(peerTurn.payload);
+    const payload = peerTurn.payload as { msg_type?: string; body?: string };
     expect(payload.msg_type).toBe("propose");
     expect(payload.body).toBe(proposalBody);
 
@@ -232,7 +232,7 @@ describe("inbox session negotiation fixes", () => {
     const legacyTurn = structured(
       await processSessionInboxEnvelope(bob.ctx, {
         from: alice.agentId,
-        type: "session.peer_turn",
+        type: "nego.turn",
         thread: opened.thread,
         payload: JSON.stringify({
           thread: opened.thread,

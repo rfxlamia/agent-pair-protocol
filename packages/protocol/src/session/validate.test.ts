@@ -4,7 +4,6 @@ import {
   parsePeerSignedEnvelopePayload,
   parsePeerTestReportEnvelopePayload,
   parsePeerTurnEnvelopePayload,
-  parseSignalEnvelopePayload,
 } from "./validate.js";
 
 const validOpenPayload = {
@@ -75,17 +74,5 @@ describe("parsePeerSignedEnvelopePayload", () => {
   it("rejects payloads missing artifact_hash", () => {
     const result = parsePeerSignedEnvelopePayload({});
     expect(result).toEqual({ ok: false, error: "invalid_payload" });
-  });
-});
-
-describe("parseSignalEnvelopePayload", () => {
-  it("accepts empty object payloads", () => {
-    const result = parseSignalEnvelopePayload({});
-    expect(result).toEqual({ ok: true, data: {} });
-  });
-
-  it("strips unknown keys from signal payloads", () => {
-    const result = parseSignalEnvelopePayload({ extra: 1 });
-    expect(result).toEqual({ ok: true, data: {} });
   });
 });

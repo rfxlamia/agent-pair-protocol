@@ -7,7 +7,7 @@ import {
   syncInboxes,
 } from "../e2e/dual-server.js";
 import { handleHumanApprove } from "./human-approve.js";
-import { handleInbox, handleSend } from "./inbox.js";
+import { handleClose, handleInbox, handleSend } from "./inbox.js";
 import {
   handleSessionMsg,
   handleSessionOpen,
@@ -137,7 +137,7 @@ describe("inbox production path", () => {
     await env.cleanup();
   });
 
-  it("handleInbox routes session.open envelopes into session state", async () => {
+  it("handleInbox routes nego.open envelopes into session state", async () => {
     const alice = await createDualAgent(env, "inbox-alice");
     const bob = await createDualAgent(env, "inbox-bob");
     await runPairingFlow(alice, bob);
@@ -180,7 +180,7 @@ describe("inbox production path", () => {
     if (!inboxResult.ok) {
       return;
     }
-    expect(inboxResult.envelopes.some((envelope) => envelope.type === "session.open")).toBe(true);
+    expect(inboxResult.envelopes.some((envelope) => envelope.type === "nego.open")).toBe(true);
 
     const bobPendingAfter = bob.ctx.pending.list().filter((item) => item.kind === "session_open");
     expect(bobPendingAfter).toHaveLength(1);
@@ -195,7 +195,7 @@ describe("inbox production path", () => {
     expect(bobStatusAfter.status).toBe("pending");
   });
 
-  it("exposes pending_id from session.open so MCP clients can human_approve", async () => {
+  it("exposes pending_id from nego.open so MCP clients can human_approve", async () => {
     const alice = await createDualAgent(env, "pending-id-alice");
     const bob = await createDualAgent(env, "pending-id-bob");
     await runPairingFlow(alice, bob);
@@ -230,7 +230,7 @@ describe("inbox production path", () => {
       return;
     }
 
-    const sessionOpen = inboxResult.envelopes.find((envelope) => envelope.type === "session.open");
+    const sessionOpen = inboxResult.envelopes.find((envelope) => envelope.type === "nego.open");
     expect(sessionOpen?.pending_id).toBeTypeOf("string");
     if (!sessionOpen?.pending_id) {
       return;
@@ -301,7 +301,7 @@ describe("inbox production path", () => {
       return;
     }
 
-    const sessionOpen = inboxResult.envelopes.find((envelope) => envelope.type === "session.open");
+    const sessionOpen = inboxResult.envelopes.find((envelope) => envelope.type === "nego.open");
     expect(sessionOpen?.pending_id).toBeTypeOf("string");
     if (!sessionOpen?.pending_id) {
       return;
@@ -393,7 +393,7 @@ describe("inbox production path", () => {
     expect(statusAfter.pending_id).not.toBe(statusBefore.pending_id);
   });
 
-  it("exposes pending_id from session.peer_signed inbox envelopes", async () => {
+  it("exposes pending_id from nego.signed inbox envelopes", async () => {
     const alice = await createDualAgent(env, "ratify-inbox-alice");
     const bob = await createDualAgent(env, "ratify-inbox-bob");
     await runPairingFlow(alice, bob);
@@ -411,9 +411,7 @@ describe("inbox production path", () => {
       return;
     }
 
-    const peerSigned = inboxResult.envelopes.find(
-      (envelope) => envelope.type === "session.peer_signed",
-    );
+    const peerSigned = inboxResult.envelopes.find((envelope) => envelope.type === "nego.signed");
     expect(peerSigned?.pending_id).toBeTypeOf("string");
 
     const aliceStatus = structured(await handleSessionStatus(alice.ctx, { thread }));
@@ -421,7 +419,7 @@ describe("inbox production path", () => {
     expect(aliceStatus.pending_kind).toBe("ratify");
   });
 
-  it("includes session_status on session.open envelopes", async () => {
+  it("includes session_status on nego.open envelopes", async () => {
     const alice = await createDualAgent(env, "status-alice");
     const bob = await createDualAgent(env, "status-bob");
     await runPairingFlow(alice, bob);
@@ -456,7 +454,7 @@ describe("inbox production path", () => {
       return;
     }
 
-    const sessionOpen = inboxResult.envelopes.find((envelope) => envelope.type === "session.open");
+    const sessionOpen = inboxResult.envelopes.find((envelope) => envelope.type === "nego.open");
     expect(sessionOpen?.session_status).toBe("pending");
   });
 
@@ -469,8 +467,7 @@ describe("inbox production path", () => {
     const opened = structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "chat.message",
-        payload: "Saran 1",
+        body: "Saran 1",
         thread,
         seq: 1,
       }),
@@ -487,8 +484,7 @@ describe("inbox production path", () => {
     const bobReply = structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "chat.message",
-        payload: "Setuju",
+        body: "Setuju",
         thread,
         seq: 2,
       }),
@@ -501,8 +497,7 @@ describe("inbox production path", () => {
     const aliceAgreement = structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "chat.message",
-        payload: "Makasih",
+        body: "Makasih",
         thread,
       }),
     );
@@ -529,8 +524,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "chat.message",
-        payload: "Saran 1",
+        body: "Saran 1",
         thread,
         seq: 1,
       }),
@@ -541,8 +535,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "chat.message",
-        payload: "Setuju",
+        body: "Setuju",
         thread,
         seq: 2,
       }),
@@ -551,8 +544,7 @@ describe("inbox production path", () => {
     const bobFollowUp = structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "chat.message",
-        payload: "Saran dari bob",
+        body: "Saran dari bob",
         thread,
       }),
     );
@@ -572,8 +564,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "chat.message",
-        payload: "Saran 1",
+        body: "Saran 1",
         thread,
         seq: 1,
       }),
@@ -584,8 +575,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "chat.message",
-        payload: "Balas 1",
+        body: "Balas 1",
         thread,
         seq: 2,
       }),
@@ -593,8 +583,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(bob.ctx, {
         to: alice.agentId,
-        type: "chat.message",
-        payload: "Balas 2",
+        body: "Balas 2",
         thread,
         seq: 3,
       }),
@@ -605,8 +594,7 @@ describe("inbox production path", () => {
     structured(
       await handleSend(alice.ctx, {
         to: bob.agentId,
-        type: "chat.message",
-        payload: "Saran 2",
+        body: "Saran 2",
         thread,
         seq: 4,
       }),
@@ -619,5 +607,73 @@ describe("inbox production path", () => {
     }
     expect(bobInbox.gap_warnings).toBeUndefined();
     expect(bobInbox.envelopes.map((envelope) => envelope.seq)).toEqual([4]);
+  }, 15_000);
+
+  it("handleClose on live nego thread uses seq after session traffic and peer accepts", async () => {
+    const alice = await createDualAgent(env, "close-nego-alice");
+    const bob = await createDualAgent(env, "close-nego-bob");
+    await runPairingFlow(alice, bob);
+
+    const opened = structured(
+      await handleSessionOpen(alice.ctx, {
+        to: bob.agentId,
+        goal: "Close after nego traffic",
+        ...SESSION_OPEN_INPUT,
+      }),
+    );
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) {
+      return;
+    }
+
+    await syncInboxes([alice.ctx, bob.ctx]);
+
+    const bobStatus = structured(await handleSessionStatus(bob.ctx, { thread: opened.thread }));
+    expect(bobStatus.pending_id).toBeTypeOf("string");
+    if (!bobStatus.pending_id) {
+      return;
+    }
+
+    structured(
+      await handleHumanApprove(bob.ctx, {
+        pending_id: bobStatus.pending_id,
+        decision: "approve",
+        via_human: true,
+      }),
+    );
+    await syncInboxes([alice.ctx, bob.ctx]);
+
+    await handleSessionMsg(alice.ctx, {
+      thread: opened.thread,
+      type: "propose",
+      body: JSON.stringify({ diff: "v1" }),
+    });
+    await syncInboxes([alice.ctx, bob.ctx]);
+
+    const closed = structured(
+      await handleClose(alice.ctx, {
+        thread: opened.thread,
+        to: bob.agentId,
+        reason: "done",
+      }),
+    );
+    expect(closed.ok).toBe(true);
+    if (!closed.ok) {
+      return;
+    }
+    expect(closed.seq).toBeGreaterThan(1);
+
+    const bobInbox = structured(await handleInbox(bob.ctx, {}));
+    expect(bobInbox.ok).toBe(true);
+    if (!bobInbox.ok) {
+      return;
+    }
+    expect(bobInbox.rejected?.some((entry) => entry.error === "stale_seq") ?? false).toBe(false);
+    expect(bob.ctx.closedThreads.isClosed(opened.thread)).toBe(true);
+
+    const bobStatusAfter = structured(
+      await handleSessionStatus(bob.ctx, { thread: opened.thread }),
+    );
+    expect(bobStatusAfter.status).toBe("closed");
   }, 15_000);
 });

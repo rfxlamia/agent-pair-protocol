@@ -6,7 +6,7 @@ import { createKeyStore } from "./store/keys.js";
 import { createPendingQueue } from "./store/pending.js";
 import { resolveDataDir } from "./store/persistent-store.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
-import { handleInbox, handleSend } from "./tools/inbox.js";
+import { handleClose, handleInbox, handleSend } from "./tools/inbox.js";
 import { handleListBonds } from "./tools/list-bonds.js";
 import type { AgentContext } from "./tools/pair.js";
 import { createAgentContext } from "./tools/pair.js";
@@ -114,18 +114,32 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
   server.registerTool(
     "send",
     {
-      title: "Send envelope",
-      description: "Send a signed encrypted envelope to a bonded peer.",
+      title: "Send message",
+      description: "Send a core.msg envelope to a bonded peer.",
       inputSchema: {
         to: z.string().describe("Recipient agent id"),
-        type: z.string().describe("Envelope type"),
-        payload: z.string().describe("UTF-8 payload"),
+        body: z.string().describe("Message body"),
+        kind: z.string().optional().describe("Optional message kind label"),
         thread: z.string().optional(),
         seq: z.number().optional(),
         ttl: z.number().optional(),
       },
     },
     async (input) => handleSend(context, input),
+  );
+
+  server.registerTool(
+    "close",
+    {
+      title: "Close thread",
+      description: "Send core.close to stop messaging on a thread (unilateral).",
+      inputSchema: {
+        thread: z.string(),
+        to: z.string().optional().describe("Peer agent id; inferred from session when omitted"),
+        reason: z.string().optional(),
+      },
+    },
+    async (input) => handleClose(context, input),
   );
 
   server.registerTool(

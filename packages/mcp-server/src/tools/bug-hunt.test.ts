@@ -111,11 +111,11 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     const outer = createOuterEnvelope({
       sender: aliceKeys,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "thread-verify",
       seq: 1,
       ttl: defaultEnvelopeTtl(),
-      payload: new TextEncoder().encode("hello"),
+      payload: new TextEncoder().encode(JSON.stringify({ body: "hello" })),
     });
 
     expect(verifyOuterEnvelope(outer, bobKeys.publicKey)).toBe(false);
@@ -132,7 +132,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     }
     expect(inboxResult.envelopes).toHaveLength(1);
     expect(inboxResult.envelopes[0]?.verified).toBe(true);
-    expect(inboxResult.envelopes[0]?.payload).toBe("hello");
+    expect(inboxResult.envelopes[0]?.payload).toEqual({ body: "hello" });
   });
 
   it("relay client round-trips v1 outer wire via deserializeOuterEnvelope", async () => {
@@ -143,11 +143,11 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     const outer = createOuterEnvelope({
       sender: aliceKeys,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "thread-wire",
       seq: 1,
       ttl: 3600,
-      payload: new TextEncoder().encode("wire-test"),
+      payload: new TextEncoder().encode(JSON.stringify({ body: "wire-test" })),
     });
     const wire = serializeOuterEnvelope(outer);
 
@@ -208,12 +208,8 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
 
     const thread = "fixed-thread-id";
 
-    const first = structured(
-      await handleSend(alice, { to: bobId, type: "chat.message", payload: "one", thread }),
-    );
-    const second = structured(
-      await handleSend(alice, { to: bobId, type: "chat.message", payload: "two", thread }),
-    );
+    const first = structured(await handleSend(alice, { to: bobId, body: "one", thread }));
+    const second = structured(await handleSend(alice, { to: bobId, body: "two", thread }));
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
@@ -341,8 +337,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     const sent = structured(
       await handleSend(bob, {
         to: aliceId,
-        type: "chat.message",
-        payload: "before revoke",
+        body: "before revoke",
       }),
     );
     expect(sent.ok).toBe(true);
@@ -371,7 +366,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
         inboxBefore.wires.some((wire) => {
           try {
             const body = parseEnvelopeBody(deserializeOuterEnvelope(wire));
-            return body.type === "chat.message" && body.from === aliceId;
+            return body.type === "core.msg" && body.from === aliceId;
           } catch {
             return false;
           }

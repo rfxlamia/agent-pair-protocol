@@ -17,6 +17,11 @@ import type { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
 import { type BondStore, FileBondStore, MemoryBondStore } from "../store/bonds.js";
 import {
+  type ClosedThreadStore,
+  MemoryClosedThreadStore,
+  createFileClosedThreadStore,
+} from "../store/closed-threads.js";
+import {
   type EnvelopeSeqStore,
   MemoryEnvelopeSeqStore,
   createFileEnvelopeSeqStore,
@@ -45,6 +50,7 @@ export interface AgentContext {
   envelopeSeq: EnvelopeSeqStore;
   pending: PendingQueue;
   sessionStore: SessionStore;
+  closedThreads: ClosedThreadStore;
 }
 
 type AllowlistWithInit = LocalAllowlistStore & {
@@ -72,6 +78,7 @@ export function createAgentContext(options: {
   envelopeSeq?: EnvelopeSeqStore;
   pending?: PendingQueue;
   sessionStore?: SessionStore;
+  closedThreads?: ClosedThreadStore;
 }): AgentContext {
   const useFileStores = options.dataDir !== undefined;
 
@@ -103,6 +110,11 @@ export function createAgentContext(options: {
     sessionStore:
       options.sessionStore ??
       (useFileStores ? createFileSessionStore({ dataDir: options.dataDir }) : createSessionStore()),
+    closedThreads:
+      options.closedThreads ??
+      (useFileStores
+        ? createFileClosedThreadStore({ dataDir: options.dataDir })
+        : new MemoryClosedThreadStore()),
   };
 }
 

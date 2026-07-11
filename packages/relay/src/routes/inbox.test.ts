@@ -108,7 +108,7 @@ describe("inbox relay routes", () => {
     const envelope = createOuterEnvelope({
       sender,
       recipientAgentId: recipientId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq,
       ttl: overrides?.ttl ?? futureTtl(),
@@ -135,7 +135,7 @@ describe("inbox relay routes", () => {
     const envelope = createOuterEnvelope({
       sender: stranger,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq: 99,
       ttl: futureTtl(),
@@ -175,7 +175,7 @@ describe("inbox relay routes", () => {
     const envelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq: 1,
       ttl: 0,
@@ -197,7 +197,7 @@ describe("inbox relay routes", () => {
     const envelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq: 1,
       ttl: futureTtl(),
@@ -236,7 +236,7 @@ describe("inbox relay routes", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread,
           seq: 42,
           ttl: futureTtl(),
@@ -296,7 +296,7 @@ describe("inbox relay routes", () => {
       const envelope = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread: gapThread,
         seq,
         ttl: futureTtl(),
@@ -414,7 +414,7 @@ describe("inbox relay routes", () => {
         createOuterEnvelope({
           sender: bob,
           recipientAgentId: aliceId,
-          type: "chat.message",
+          type: "core.msg",
           thread: "purge-thread",
           seq: 1,
           ttl: futureTtl(),
@@ -485,7 +485,7 @@ describe("inbox relay routes", () => {
         createOuterEnvelope({
           sender: bob,
           recipientAgentId: aliceId,
-          type: "chat.message",
+          type: "core.msg",
           thread: "peer-purge-thread",
           seq: 1,
           ttl: futureTtl(),
@@ -642,7 +642,7 @@ describe("inbox relay routes", () => {
       const outer = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread: "cc0e8400-e29b-41d4-a716-446655440011",
         seq: 42,
         ttl: futureTtl(),
@@ -715,7 +715,7 @@ describe("inbox relay routes", () => {
       const outer = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread: "550e8400-e29b-41d4-a716-446655440000",
         seq: 99,
         ttl: futureTtl(),
@@ -741,7 +741,7 @@ describe("inbox relay routes", () => {
         id: flatId,
         from: aliceId,
         to: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread: "550e8400-e29b-41d4-a716-446655440000",
         seq: 100,
         ttl: futureTtl(),
@@ -759,7 +759,7 @@ describe("inbox relay routes", () => {
       const outer = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread: "550e8400-e29b-41d4-a716-446655440000",
         seq: 101,
         ttl: futureTtl(),
@@ -779,7 +779,7 @@ describe("inbox relay routes", () => {
       const outer = createOuterEnvelope({
         sender: alice,
         recipientAgentId: aliceId,
-        type: "chat.message",
+        type: "core.msg",
         thread: "550e8400-e29b-41d4-a716-446655440000",
         seq: 102,
         ttl: futureTtl(),
@@ -892,7 +892,7 @@ describe("inbox relay regressions (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread,
           seq: 1,
           ttl: futureTtl(),
@@ -924,7 +924,7 @@ describe("inbox relay regressions (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread,
           seq: 1,
           ttl: futureTtl(),
@@ -959,7 +959,7 @@ describe("inbox relay regressions (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread,
           seq: 1,
           ttl: futureTtl(),
@@ -998,7 +998,7 @@ describe("inbox relay regressions (isolated db)", () => {
           createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
-            type: "chat.message",
+            type: "core.msg",
             thread,
             seq,
             ttl: futureTtl(),
@@ -1022,7 +1022,7 @@ describe("inbox relay regressions (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread,
           seq: 4,
           ttl: futureTtl(),
@@ -1051,7 +1051,7 @@ describe("inbox relay regressions (isolated db)", () => {
       const envelope = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread,
         seq,
         ttl: futureTtl(),
@@ -1071,7 +1071,7 @@ describe("inbox relay regressions (isolated db)", () => {
         aliceId,
         thread,
         seq,
-        "chat.message",
+        "core.msg",
         receivedAt,
         receivedAt + 3_600_000,
       );
@@ -1089,7 +1089,7 @@ describe("inbox relay regressions (isolated db)", () => {
           createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
-            type: "chat.message",
+            type: "core.msg",
             thread,
             seq,
             ttl: futureTtl(),
@@ -1197,7 +1197,7 @@ describe("inbox gap detection (isolated db)", () => {
           createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
-            type: "chat.message",
+            type: "core.msg",
             thread,
             seq,
             ttl: futureTtl(),
@@ -1221,7 +1221,7 @@ describe("inbox gap detection (isolated db)", () => {
           createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
-            type: "chat.message",
+            type: "core.msg",
             thread,
             seq,
             ttl: futureTtl(),
@@ -1249,7 +1249,7 @@ describe("inbox gap detection (isolated db)", () => {
           createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
-            type: "chat.message",
+            type: "core.msg",
             thread,
             seq,
             ttl: futureTtl(),
@@ -1271,7 +1271,7 @@ describe("inbox gap detection (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread,
           seq: 4,
           ttl: futureTtl(),
@@ -1356,7 +1356,7 @@ describe("inbox rowid cursor (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread,
           seq: 1,
           ttl: futureTtl(),
@@ -1384,7 +1384,7 @@ describe("inbox rowid cursor (isolated db)", () => {
       const envelope = createOuterEnvelope({
         sender: alice,
         recipientAgentId: bobId,
-        type: "chat.message",
+        type: "core.msg",
         thread,
         seq: index + 2,
         ttl: futureTtl(),
@@ -1459,7 +1459,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
     const expiredEnvelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "aa1e8400-e29b-41d4-a716-446655440001",
       seq: 1,
       ttl: futureTtl(),
@@ -1470,7 +1470,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
     const freshEnvelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "aa1e8400-e29b-41d4-a716-446655440002",
       seq: 1,
       ttl: futureTtl(),
@@ -1491,7 +1491,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
       aliceId,
       parseEnvelopeBody(expiredEnvelope).thread,
       1,
-      "chat.message",
+      "core.msg",
       now - 7200_000,
       now - 3600_000,
     );
@@ -1507,7 +1507,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
       aliceId,
       parseEnvelopeBody(freshEnvelope).thread,
       1,
-      "chat.message",
+      "core.msg",
       now,
       now + 3600_000,
     );
@@ -1519,7 +1519,7 @@ describe("inbox ttl garbage collection (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread: "aa1e8400-e29b-41d4-a716-446655440003",
           seq: 1,
           ttl: futureTtl(),
@@ -1605,7 +1605,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
     const expiredEnvelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "bb1e8400-e29b-41d4-a716-446655440001",
       seq: 1,
       ttl: futureTtl(),
@@ -1615,7 +1615,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
     const freshEnvelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "bb1e8400-e29b-41d4-a716-446655440002",
       seq: 1,
       ttl: futureTtl(),
@@ -1635,7 +1635,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
       aliceId,
       parseEnvelopeBody(expiredEnvelope).thread,
       1,
-      "chat.message",
+      "core.msg",
       now - 7200_000,
       now - 3600_000,
     );
@@ -1651,7 +1651,7 @@ describe("inbox ttl gc via GET (isolated db)", () => {
       aliceId,
       parseEnvelopeBody(freshEnvelope).thread,
       1,
-      "chat.message",
+      "core.msg",
       now,
       now + 3600_000,
     );
@@ -1727,7 +1727,7 @@ describe("inbox ttl gc throttle (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread: "cc1e8400-e29b-41d4-a716-446655440001",
           seq: 1,
           ttl: futureTtl(),
@@ -1738,7 +1738,7 @@ describe("inbox ttl gc throttle (isolated db)", () => {
       aliceId,
       "cc1e8400-e29b-41d4-a716-446655440001",
       1,
-      "chat.message",
+      "core.msg",
       now - 7200_000,
       now - 3600_000,
     );
@@ -1751,7 +1751,7 @@ describe("inbox ttl gc throttle (isolated db)", () => {
           createOuterEnvelope({
             sender: alice,
             recipientAgentId: bobId,
-            type: "chat.message",
+            type: "core.msg",
             thread: "cc1e8400-e29b-41d4-a716-446655440099",
             seq: 1,
             ttl: futureTtl(),
@@ -1783,7 +1783,7 @@ describe("inbox ttl gc throttle (isolated db)", () => {
         createOuterEnvelope({
           sender: alice,
           recipientAgentId: bobId,
-          type: "chat.message",
+          type: "core.msg",
           thread: "cc1e8400-e29b-41d4-a716-446655440002",
           seq: 1,
           ttl: futureTtl(),
@@ -1794,7 +1794,7 @@ describe("inbox ttl gc throttle (isolated db)", () => {
       aliceId,
       "cc1e8400-e29b-41d4-a716-446655440002",
       1,
-      "chat.message",
+      "core.msg",
       now - 7200_000,
       now - 3600_000,
     );
@@ -1844,7 +1844,7 @@ describe("inbox absolute unix ttl (M1.2)", () => {
     const envelope = createOuterEnvelope({
       sender,
       recipientAgentId: recipientId,
-      type: "chat.message",
+      type: "core.msg",
       thread: "550e8400-e29b-41d4-a716-446655440000",
       seq,
       ttl: overrides?.ttl ?? futureTtl(),
@@ -1896,7 +1896,7 @@ describe("inbox absolute unix ttl (M1.2)", () => {
     const outer = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
-      type: "chat.message",
+      type: "core.msg",
       thread,
       seq: 1,
       ttl: ABSOLUTE_TTL_SEC,
@@ -1912,7 +1912,7 @@ describe("inbox absolute unix ttl (M1.2)", () => {
            thread_id, seq, msg_type, received_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(rowId, bobId, wire, aliceId, thread, 1, "chat.message", receivedAt);
+      .run(rowId, bobId, wire, aliceId, thread, 1, "core.msg", receivedAt);
 
     const rateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 100 });
     createInboxRoutes(legacyDb, rateLimit);
