@@ -72,7 +72,7 @@ not the whole protocol.*
 | Identity / signatures | Ed25519 |
 | Key agreement | X25519 (birationally mapped from the Ed25519 keys) |
 | Payload encryption | XChaCha20-Poly1305, 24-byte random nonce |
-| KDF | HKDF-SHA-256, info = `"agentpair-envelope-v0"` |
+| KDF | HKDF-SHA-256, info = `"agentpair-envelope-v1"` |
 | Hashing (fingerprints, artifacts) | SHA-256 |
 
 - `agent_id` = `"ed25519:" + base64url(public_key)` (no padding).

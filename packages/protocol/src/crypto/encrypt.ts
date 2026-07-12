@@ -6,7 +6,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { decodeBase64UrlStrict, encodeBase64Url } from "./base64url.js";
 
 const NONCE_LENGTH = 24;
-const HKDF_INFO = new TextEncoder().encode("agentpair-envelope-v0");
+const HKDF_INFO = new TextEncoder().encode("agentpair-envelope-v1");
 
 function deriveEncryptionKey(
   senderSecretKey: Uint8Array,
