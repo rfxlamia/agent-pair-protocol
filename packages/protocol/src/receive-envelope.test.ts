@@ -484,4 +484,15 @@ describe("receiveEnvelope steps 7–8 (§4.3)", () => {
     expect(result).toEqual({ ok: false, error: "stale_seq", body: expect.any(Object) });
     expect(dispatch).not.toHaveBeenCalled();
   });
+
+  it("resolvePayload hook runs after decrypt and before dispatch", async () => {
+    const { wire, bob, bobId } = makeValidWire();
+    const resolved = utf8ToBytes('{"body":"resolved"}');
+    const resolvePayload = vi.fn(async () => resolved);
+    const deps = makeDeps(bob, { resolvePayload });
+    const result = await receiveEnvelope(wire, bobId, deps);
+    expect(result.ok).toBe(true);
+    expect(resolvePayload).toHaveBeenCalledOnce();
+    expect(deps.dispatch).toHaveBeenCalledWith(expect.anything(), resolved);
+  });
 });

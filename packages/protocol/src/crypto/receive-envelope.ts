@@ -35,6 +35,10 @@ export interface ReceiveEnvelopeDeps {
     body: EnvelopeBody,
     plaintext: Uint8Array,
   ): Promise<{ ok: true } | { ok: false; error: ReceiveDispatchError }>;
+  resolvePayload?: (
+    plaintext: Uint8Array,
+    body: EnvelopeBody,
+  ) => Promise<Uint8Array | { error: string }>;
   nowUnix?: () => number;
 }
 
@@ -138,6 +142,14 @@ export async function receiveEnvelope(
     plaintext = decryptEnvelopePayload(body, deps.selfKeyPair, senderPublicKey);
   } catch {
     return { ok: false, error: "invalid_payload", body };
+  }
+
+  if (deps.resolvePayload) {
+    const resolved = await deps.resolvePayload(plaintext, body);
+    if (typeof resolved === "object" && "error" in resolved) {
+      return { ok: false, error: resolved.error, body };
+    }
+    plaintext = resolved;
   }
 
   const dispatchResult = await deps.dispatch(body, plaintext);
