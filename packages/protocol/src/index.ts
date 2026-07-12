@@ -16,6 +16,11 @@ export {
 } from "./artifact/encrypt.js";
 export { deriveContentType, deriveSummary } from "./artifact/fields.js";
 export {
+  resolveSpillover,
+  type ResolveSpilloverDeps,
+  type ResolveSpilloverResult,
+} from "./artifact/resolve.js";
+export {
   hasSpillMarker,
   parseSpillRef,
   spillRefSchema,
