@@ -17,6 +17,7 @@ import {
   receiveEnvelope,
 } from "./crypto/receive-envelope.js";
 import { sign } from "./crypto/sign.js";
+import { padWireToSize, wireUtf8Length } from "./fixtures/wire-padding.js";
 
 const thread = "550e8400-e29b-41d4-a716-446655440000";
 const fixedNow = 1_700_000_000;
@@ -107,39 +108,6 @@ function tamperBody(wire: string, patch: (body: EnvelopeBody) => void): string {
   patch(body);
   const tampered = { ...outer, blob: encodeBase64Url(serializeBodyBytes(body)) };
   return serializeOuterEnvelope(tampered);
-}
-
-function wireUtf8Length(wire: string): number {
-  return utf8ToBytes(wire).length;
-}
-
-function padWireToSize(wire: string, targetBytes: number): string {
-  const current = wireUtf8Length(wire);
-  if (current === targetBytes) {
-    return wire;
-  }
-  if (current > targetBytes) {
-    throw new Error(`wire already exceeds ${targetBytes} bytes`);
-  }
-  const outer = JSON.parse(wire) as Record<string, unknown>;
-  let low = 0;
-  let high = targetBytes;
-  let best = "";
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const candidate = JSON.stringify({ ...outer, _pad: "x".repeat(mid) });
-    const len = wireUtf8Length(candidate);
-    if (len <= targetBytes) {
-      best = candidate;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-  if (!best || wireUtf8Length(best) !== targetBytes) {
-    throw new Error(`could not pad wire to exactly ${targetBytes} bytes`);
-  }
-  return best;
 }
 
 describe("receiveEnvelope steps 0–6 (§4.3)", () => {

@@ -1,0 +1,12 @@
+{
+  "alice": {
+    "secretKeyHex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "publicKeyHex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+    "agentId": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+  },
+  "bob": {
+    "secretKeyHex": "0202020202020202020202020202020202020202020202020202020202020202",
+    "publicKeyHex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+    "agentId": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+  }
+}
