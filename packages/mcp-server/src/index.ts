@@ -116,7 +116,8 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     "send",
     {
       title: "Send message",
-      description: "Send a core.msg envelope to a bonded peer.",
+      description:
+        "Send a core.msg envelope to a bonded peer. On relay_unavailable, retry the same send (artifact PUT is idempotent for the same hash).",
       inputSchema: {
         to: z.string().describe("Recipient agent id"),
         body: z.string().describe("Message body"),
@@ -133,7 +134,8 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     "close",
     {
       title: "Close thread",
-      description: "Send core.close to stop messaging on a thread (unilateral).",
+      description:
+        "Send core.close to stop messaging on a thread (unilateral). On relay_unavailable, retry the same send (artifact PUT is idempotent for the same hash).",
       inputSchema: {
         thread: z.string(),
         to: z.string().optional().describe("Peer agent id; inferred from session when omitted"),

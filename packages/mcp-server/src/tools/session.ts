@@ -1,12 +1,13 @@
 import {
   type SessionStateMachine,
   type SessionStatus,
-  createOuterEnvelope,
   createSessionStateMachine,
   defaultEnvelopeTtl,
+  parseEnvelopeBody,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import { sendEnvelopeWithSpill } from "./inbox-spill.js";
 import { type AgentContext, ensureAllowlistReady } from "./pair.js";
 import { nextThreadSeq, recordSentSeq } from "./thread-seq.js";
 import { assertNoSecrets, toolTextResult } from "./util.js";
@@ -74,18 +75,19 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
           if (ctx.closedThreads.isClosed(input.thread)) {
             return { ok: false, error: "thread_closed" };
           }
-          const seq = input.seq ?? nextThreadSeq(ctx, input.thread);
-          const outer = createOuterEnvelope({
+          const sent = await sendEnvelopeWithSpill(ctx, {
             sender: keyPair,
-            recipientAgentId: input.to,
+            to: input.to,
             type: input.type,
             thread: input.thread,
-            seq,
+            seq: input.seq ?? nextThreadSeq(ctx, input.thread),
             ttl: defaultEnvelopeTtl(),
             payload: utf8ToBytes(input.payload),
           });
-          await ctx.relay.sendEnvelope(input.to, outer);
-          recordSentSeq(ctx, input.thread, seq);
+          if (!sent.ok) {
+            return { ok: false, error: sent.error };
+          }
+          recordSentSeq(ctx, input.thread, parseEnvelopeBody(sent.outer).seq);
           return { ok: true };
         },
       },

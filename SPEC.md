@@ -199,9 +199,15 @@ Normative relay behavior:
   to artifacts, not just envelopes.
 - **Spillover.** When an outgoing payload would exceed the envelope size
   limit (§4.3), the host SHOULD transparently store the content as an
-  artifact and send `{ artifact_hash, size, content_type, summary }` in its
-  place. Envelope size never limits negotiation complexity — a 2 GB video
-  costs a few hundred bytes on the wire.
+  artifact and send a spill ref in its place. Envelope size never limits
+  negotiation complexity — a 2 GB video costs a few hundred bytes on the wire.
+  - **Artifact blob:** `nonce(24) ‖ ciphertext`; AAD `agentpair-artifact-v1`;
+    hash = bare lowercase hex SHA-256 over the full blob.
+  - **Spill ref** replaces envelope plaintext JSON before E2E encrypt; reserved
+    top-level key `spill` (literal `1` for v1).
+  - **Spill ref fields:** `spill`, `artifact_hash`, `size`, `content_type`,
+    `summary`, `artifact_key` (base64url strict, 32-byte raw key).
+  - **Receiver local spillover plaintext cap:** 10 MiB (`size` check before GET).
 - The relay MAY drop messages (queue overflow, TTL). Delivery is at-least-once
   from the sender's perspective; receivers rely on §4.3 idempotency, and
   hosts SHOULD retry sends with backoff.
@@ -457,6 +463,11 @@ Negotiation: `session_not_found`, `session_not_live`, `session_not_signed`,
 `self_approval_forbidden`, `pending_not_found`, `challenges_incomplete`.
 
 Core messaging: `thread_closed` — operation attempted on a thread that has been closed (§7).
+
+Artifacts / spillover: `artifact_upload_failed`, `artifact_not_found`,
+`artifact_fetch_failed`, `artifact_decrypt_failed`, `artifact_too_large`,
+`relay_unavailable`. `relay_unavailable` is send-path only; `artifact_fetch_failed`
+is receive-path retryable (retry with `since = cursor - 1`).
 
 Errors MUST NOT leak whether an unbonded recipient exists (§4.3 step 4).
 
