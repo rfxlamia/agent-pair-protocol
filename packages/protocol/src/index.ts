@@ -22,6 +22,12 @@ export {
   type ParseSpillRefResult,
   type SpillRef,
 } from "./artifact/schema.js";
+export {
+  wrapOrSpill,
+  type WrapOrSpillDeps,
+  type WrapOrSpillInput,
+  type WrapOrSpillResult,
+} from "./artifact/spill.js";
 export { sign, verify } from "./crypto/sign.js";
 export {
   coerceEnvelopeBody,
