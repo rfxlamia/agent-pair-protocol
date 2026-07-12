@@ -14,6 +14,7 @@
  * - envelope-negative.json: hand-assembled wires (version_mismatch, tampered_sig, …)
  * - pair-bond-ok-tag.json: pairBondOkTag for initiator/joiner agent IDs
  * - pair-confirm-fingerprint.json: SPEC §6.2 golden vector (unchanged values)
+ * - artifact-spillover.json: encryptArtifact with fixed key/nonce (§5 spillover)
  */
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -31,6 +32,7 @@ import {
   createOuterEnvelopeWithFixedNonce,
   encryptPayloadWithFixedNonce,
 } from "../src/fixtures/crypto-fixtures.ts";
+import { encryptArtifact } from "../src/artifact/encrypt.ts";
 import { pairBondOkTag } from "../src/pairing/pair-bond-ok-tag.ts";
 import { pairConfirmFingerprint } from "../src/pairing/pair-confirm-fingerprint.ts";
 import { sign } from "../src/crypto/sign.ts";
@@ -50,6 +52,9 @@ const FIXTURE_TTL = FIXTURE_NOW_UNIX + 3600;
 const FIXTURE_SEQ = 1;
 const FIXTURE_NONCE_HEX = "000102030405060708090a0b0c0d0e0f1011121314151617";
 const FIXTURE_PLAINTEXT = '{"body":"hello"}';
+const ARTIFACT_KEY_HEX =
+  "0303030303030303030303030303030303030303030303030303030303030303";
+const ARTIFACT_NONCE_HEX = "000102030405060708090a0b0c0d0e0f1011121314151617";
 
 // SPEC §6.2 golden vector
 const PAIR_SHARED_KEY_HEX =
@@ -318,6 +323,29 @@ function buildPairBondOkTag() {
   };
 }
 
+function buildArtifactSpilloverFixture() {
+  const plaintext = utf8ToBytes(FIXTURE_PLAINTEXT);
+  const key = hexToBytes(ARTIFACT_KEY_HEX);
+  const nonce = hexToBytes(ARTIFACT_NONCE_HEX);
+  const { blob, hash } = encryptArtifact(plaintext, key, { nonce });
+  const spill_ref = {
+    spill: 1,
+    artifact_hash: hash,
+    size: plaintext.length,
+    content_type: "application/json",
+    summary: '{"body":"hello"}',
+    artifact_key: encodeBase64Url(key),
+  };
+  return {
+    plaintext_hex: Buffer.from(plaintext).toString("hex"),
+    key_hex: ARTIFACT_KEY_HEX,
+    nonce_hex: ARTIFACT_NONCE_HEX,
+    blob_hex: Buffer.from(blob).toString("hex"),
+    hash,
+    spill_ref,
+  };
+}
+
 function buildPairConfirmFingerprint() {
   const sharedKey = hexToBytes(PAIR_SHARED_KEY_HEX);
   return {
@@ -340,3 +368,4 @@ writeJson("envelope-core-msg.json", core);
 writeJson("envelope-negative.json", buildEnvelopeNegative(keys, core.expected.wire));
 writeJson("pair-bond-ok-tag.json", buildPairBondOkTag());
 writeJson("pair-confirm-fingerprint.json", buildPairConfirmFingerprint());
+writeJson("artifact-spillover.json", buildArtifactSpilloverFixture());

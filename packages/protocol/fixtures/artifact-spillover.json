@@ -1,0 +1,15 @@
+{
+  "plaintext_hex": "7b22626f6479223a2268656c6c6f227d",
+  "key_hex": "0303030303030303030303030303030303030303030303030303030303030303",
+  "nonce_hex": "000102030405060708090a0b0c0d0e0f1011121314151617",
+  "blob_hex": "000102030405060708090a0b0c0d0e0f101112131415161728742d8af7ee8c32e3f22e81b454b2975dd876c4ac479f7ad6bd6d09d1633a09",
+  "hash": "1c72b2b054cb9973b86f0e5f0a93ba84023e2dd4ccb15941dc47eed9bcd66d3a",
+  "spill_ref": {
+    "spill": 1,
+    "artifact_hash": "1c72b2b054cb9973b86f0e5f0a93ba84023e2dd4ccb15941dc47eed9bcd66d3a",
+    "size": 16,
+    "content_type": "application/json",
+    "summary": "{\"body\":\"hello\"}",
+    "artifact_key": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM"
+  }
+}

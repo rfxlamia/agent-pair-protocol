@@ -24,6 +24,7 @@ committed JSON drifts from the generator without an intentional review.
 | `envelope-negative.json` | §10 error codes via `receiveEnvelope` harness |
 | `pair-confirm-fingerprint.json` | §6.2 pairing fingerprint |
 | `pair-bond-ok-tag.json` | §6.2 bond_ok tag |
+| `artifact-spillover.json` | §5 artifact blob encrypt + spill ref golden vector |
 
 ## Harness contract (`envelope-*.json`)
 

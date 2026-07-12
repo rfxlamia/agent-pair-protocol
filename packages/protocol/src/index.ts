@@ -7,6 +7,13 @@ export {
 } from "./crypto/keys.js";
 export { decodeBase64UrlStrict, encodeBase64Url } from "./crypto/base64url.js";
 export { decryptPayload, encryptPayload } from "./crypto/encrypt.js";
+export {
+  ARTIFACT_AAD,
+  MAX_SPILLOVER_PLAINTEXT_BYTES,
+  decryptArtifact,
+  encryptArtifact,
+  hashArtifactBlob,
+} from "./artifact/encrypt.js";
 export { sign, verify } from "./crypto/sign.js";
 export {
   coerceEnvelopeBody,
