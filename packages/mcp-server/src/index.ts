@@ -96,7 +96,8 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     "inbox",
     {
       title: "Pull inbox",
-      description: "Pull signed envelopes from the relay using challenge-response auth.",
+      description:
+        "Pull signed envelopes from the relay using challenge-response auth. On artifact_fetch_failed in rejected[], retry with since = cursor - 1.",
       inputSchema: {
         since: z
           .number()

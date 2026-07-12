@@ -1261,10 +1261,16 @@ describe("inbox send absolute ttl (M1.2 §4.2)", () => {
     const peer = generateKeyPair();
     const peerId = publicKeyToAgentId(peer.publicKey);
     const allowlist = new MemoryAllowlistStore();
-    const sendEnvelope = vi.fn(async () => undefined);
+    let capturedOuter: OuterEnvelope | undefined;
+    const sendEnvelope = vi.fn(async (_to: string, outer: OuterEnvelope) => {
+      capturedOuter = outer;
+    });
     const ctx = createAgentContext({
       keyStore: createKeyStore(),
-      relay: { sendEnvelope } as unknown as HttpRelayClient,
+      relay: {
+        sendEnvelope,
+        putArtifact: vi.fn(async () => undefined),
+      } as unknown as HttpRelayClient,
       allowlist,
       bonds: new MemoryBondStore(),
       pending: createPendingQueue(),
@@ -1275,19 +1281,19 @@ describe("inbox send absolute ttl (M1.2 §4.2)", () => {
     allowlist.set(selfId, [peerId]);
 
     const beforeUnix = Math.floor(Date.now() / 1000);
-    const protocol = await import("@agentpair/protocol");
-    const createSpy = vi.spyOn(protocol, "createOuterEnvelope");
+    const { parseEnvelopeBody } = await import("@agentpair/protocol");
 
     const result = structured(await handleSend(ctx, { to: peerId, body: "ttl-check" }));
     expect(result.ok).toBe(true);
+    expect(capturedOuter).toBeDefined();
+    if (!capturedOuter) {
+      return;
+    }
 
-    expect(createSpy).toHaveBeenCalledTimes(1);
-    const ttl = createSpy.mock.calls[0]?.[0]?.ttl;
+    const ttl = parseEnvelopeBody(capturedOuter).ttl;
     expect(typeof ttl).toBe("number");
     expect(ttl).toBeGreaterThanOrEqual(beforeUnix + 3500);
     expect(ttl).toBeLessThanOrEqual(beforeUnix + 3700);
     expect(ttl).toBeGreaterThan(1_000_000);
-
-    createSpy.mockRestore();
   });
 });

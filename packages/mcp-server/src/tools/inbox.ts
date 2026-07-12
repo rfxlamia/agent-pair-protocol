@@ -1,5 +1,4 @@
 import {
-  createOuterEnvelope,
   defaultEnvelopeTtl,
   isKnownEnvelopeType,
   isSessionDispatchType,
@@ -7,8 +6,10 @@ import {
   parseEnvelopePayload,
   publicKeyToAgentId,
   receiveEnvelope,
+  resolveSpillover,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import { sendEnvelopeWithSpill } from "./inbox-spill.js";
 import type { AgentContext } from "./pair.js";
 import { ensureAllowlistReady } from "./pair.js";
 import {
@@ -147,7 +148,12 @@ export async function handleInbox(
   processedEnvelopeIds.set(ctx, seen);
 
   const envelopes = [];
-  const rejected: Array<{ id?: string; error: string; cursor?: number }> = [];
+  const rejected: Array<{
+    id?: string;
+    error: string;
+    cursor?: number;
+    retryable?: boolean;
+  }> = [];
 
   for (let i = 0; i < wiresToProcess.length; i += 1) {
     const wire = wiresToProcess[i];
@@ -160,6 +166,10 @@ export async function handleInbox(
       isBonded: (from) => bondedPeerSet.has(from),
       selfKeyPair: keyPair,
       seqStore: ctx.envelopeSeq,
+      resolvePayload: async (plaintext) =>
+        resolveSpillover(plaintext, {
+          getArtifact: (hash, size) => ctx.relay.getArtifact(hash, size),
+        }),
       dispatch: async (body, plaintext) => {
         if (!isKnownEnvelopeType(body.type)) {
           return { ok: false as const, error: "unsupported_envelope_type" };
@@ -186,6 +196,7 @@ export async function handleInbox(
         ...(received.body ? { id: received.body.id } : {}),
         error: received.error,
         cursor: rowid,
+        ...(received.error === "artifact_fetch_failed" ? { retryable: true } : {}),
       });
       continue;
     }
@@ -317,19 +328,19 @@ export async function handleSend(
   }
 
   const seq = input.seq ?? nextThreadSeq(ctx, thread);
-  const outer = createOuterEnvelope({
+  const sent = await sendEnvelopeWithSpill(ctx, {
     sender: keyPair,
-    recipientAgentId: input.to,
+    to: input.to,
     type: "core.msg",
     thread,
     seq,
     ttl: defaultEnvelopeTtl(input.ttl),
     payload: utf8ToBytes(JSON.stringify(payloadObj)),
   });
-
-  const body = parseEnvelopeBody(outer);
-
-  await ctx.relay.sendEnvelope(input.to, outer);
+  if (!sent.ok) {
+    return toolTextResult({ ok: false, error: sent.error });
+  }
+  const body = parseEnvelopeBody(sent.outer);
   recordSentSeq(ctx, thread, body.seq);
 
   const result = {
@@ -374,17 +385,20 @@ export async function handleClose(
 
   const payloadObj = input.reason !== undefined ? { reason: input.reason } : {};
   const seq = nextThreadSeq(ctx, input.thread);
-  const outer = createOuterEnvelope({
+  const sent = await sendEnvelopeWithSpill(ctx, {
     sender: keyPair,
-    recipientAgentId: to,
+    to,
     type: "core.close",
     thread: input.thread,
     seq,
     ttl: defaultEnvelopeTtl(),
     payload: utf8ToBytes(JSON.stringify(payloadObj)),
   });
-  await ctx.relay.sendEnvelope(to, outer);
-  recordSentSeq(ctx, input.thread, seq);
+  if (!sent.ok) {
+    return toolTextResult({ ok: false, error: sent.error });
+  }
+  const body = parseEnvelopeBody(sent.outer);
+  recordSentSeq(ctx, input.thread, body.seq);
 
   ctx.closedThreads.markClosed(input.thread, {
     closed_at: Math.floor(Date.now() / 1000),
@@ -397,7 +411,7 @@ export async function handleClose(
   const result = {
     ok: true,
     thread: input.thread,
-    seq,
+    seq: body.seq,
   };
   assertNoSecrets(result);
   return toolTextResult(result);
