@@ -1,0 +1,34 @@
+{
+  "accept": [
+    {
+      "input": "AAEC__4gQIA",
+      "decodedHex": "000102fffe204080"
+    },
+    {
+      "input": "YQ",
+      "decodedHex": "61"
+    }
+  ],
+  "reject": [
+    {
+      "input": "",
+      "reason": "empty"
+    },
+    {
+      "input": "YQ==",
+      "reason": "padding"
+    },
+    {
+      "input": "Y+B/",
+      "reason": "standard_alphabet"
+    },
+    {
+      "input": "ab!cd",
+      "reason": "non_alphabet"
+    },
+    {
+      "input": "_8",
+      "reason": "non_canonical"
+    }
+  ]
+}

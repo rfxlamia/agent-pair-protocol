@@ -18,10 +18,12 @@
     "build": "pnpm build:wasm && tsc -p tsconfig.build.json && mkdir -p dist/wasm && cp -R wasm/pkg dist/wasm/ && rm -f dist/wasm/pkg/.gitignore",
     "prepublishOnly": "pnpm build",
     "pretest": "test -f wasm/pkg/spake2_pake.js || pnpm build:wasm",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "generate-fixtures": "tsx scripts/generate-fixtures.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "tsx": "^4.23.0",
     "typescript": "^5.8.3"
   },
   "dependencies": {

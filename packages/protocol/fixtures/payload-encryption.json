@@ -1,0 +1,7 @@
+{
+  "sender": "alice",
+  "recipient": "bob",
+  "testOnlyNonceHex": "000102030405060708090a0b0c0d0e0f1011121314151617",
+  "plaintextUtf8": "{\"body\":\"hello\"}",
+  "expectedPayloadBase64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX5JbC7CPDsqN-Khz8W7iQV0tdwJs3mjEVDWgTOesmnho"
+}
