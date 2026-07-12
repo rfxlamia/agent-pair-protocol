@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { KeyPair } from "../crypto/keys.js";
 import type { ReceiveEnvelopeDeps } from "../crypto/receive-envelope.js";
+import type { ReceiveDispatchError } from "../crypto/receive-envelope.js";
 import { type FixtureKeys, keyPairFromEntry } from "./load-fixture.js";
 
 export interface FixtureHarness {
@@ -8,6 +9,8 @@ export interface FixtureHarness {
   nowUnix: number;
   isBonded: boolean;
   lastAcceptedSeq: number;
+  /** When set, harness dispatch returns this §4.3 step-8 error instead of ok. */
+  dispatchError?: ReceiveDispatchError;
 }
 
 export function resolveSelfKeyPair(
@@ -31,7 +34,12 @@ export function makeReceiveDeps(
       getLastAccepted: () => harness.lastAcceptedSeq,
       commitAccepted: vi.fn(),
     },
-    dispatch: vi.fn(async () => ({ ok: true as const })),
+    dispatch: vi.fn(async () => {
+      if (harness.dispatchError) {
+        return { ok: false as const, error: harness.dispatchError };
+      }
+      return { ok: true as const };
+    }),
     nowUnix: () => harness.nowUnix,
   };
 }

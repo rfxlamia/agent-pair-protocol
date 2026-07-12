@@ -1,12 +1,10 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { hexToBytes } from "@noble/hashes/utils.js";
 import { describe, expect, it } from "vitest";
-import {
-  createOuterEnvelope,
-  serializeOuterEnvelope,
-  verifyOuterEnvelope,
-} from "../crypto/envelope.js";
+import { decodeBase64UrlStrict } from "../crypto/base64url.js";
+import { serializeOuterEnvelope, verifyOuterEnvelope } from "../crypto/envelope.js";
 import { receiveEnvelope } from "../crypto/receive-envelope.js";
+import { createOuterEnvelopeWithFixedNonce } from "./crypto-fixtures.js";
 import { type FixtureHarness, makeReceiveDeps, resolveSelfKeyPair } from "./harness.js";
 import { keyPairFromEntry, loadFixture, loadKeys } from "./load-fixture.js";
 
@@ -33,10 +31,14 @@ describe("envelope-core-msg.json golden vectors", () => {
   const fixture = loadFixture<EnvelopeCoreMsgFixture>("envelope-core-msg.json");
   const keys = loadKeys();
   const alice = keyPairFromEntry(keys.alice);
-  const bob = keyPairFromEntry(keys.bob);
 
-  it("createOuterEnvelope reproduces committed blob and sig", () => {
-    const outer = createOuterEnvelope({
+  it("expected.bodyJson matches UTF-8 decode of expected.blob", () => {
+    const bodyBytes = decodeBase64UrlStrict(fixture.expected.blob);
+    expect(new TextDecoder().decode(bodyBytes)).toBe(fixture.expected.bodyJson);
+  });
+
+  it("createOuterEnvelopeWithFixedNonce reproduces committed blob and sig", () => {
+    const outer = createOuterEnvelopeWithFixedNonce({
       sender: alice,
       recipientAgentId: keys.bob.agentId,
       type: fixture.type,
@@ -45,7 +47,7 @@ describe("envelope-core-msg.json golden vectors", () => {
       ttl: fixture.ttl,
       payload: utf8ToBytes(fixture.plaintextUtf8),
       id: fixture.id,
-      testOnlyNonce: hexToBytes(fixture.testOnlyNonceHex),
+      fixedNonce: hexToBytes(fixture.testOnlyNonceHex),
     });
     expect(serializeOuterEnvelope(outer)).toBe(fixture.expected.wire);
     expect(outer.blob).toBe(fixture.expected.blob);

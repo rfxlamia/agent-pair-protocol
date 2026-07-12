@@ -9,8 +9,8 @@
  * Vector origins:
  * - keys.json: well-known 32-byte Ed25519 seeds (0x01… / 0x02…)
  * - base64url.json: static accept/reject cases per SPEC §3
- * - payload-encryption.json: encryptPayload with fixed testOnlyNonce
- * - envelope-core-msg.json: createOuterEnvelope with fixed id + testOnlyNonce
+ * - payload-encryption.json: encryptPayloadWithFixedNonce with fixed nonce
+ * - envelope-core-msg.json: createOuterEnvelopeWithFixedNonce with fixed id + nonce
  * - envelope-negative.json: hand-assembled wires (version_mismatch, tampered_sig, …)
  * - pair-bond-ok-tag.json: pairBondOkTag for initiator/joiner agent IDs
  * - pair-confirm-fingerprint.json: SPEC §6.2 golden vector (unchanged values)
@@ -21,14 +21,16 @@ import { fileURLToPath } from "node:url";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { hexToBytes } from "@noble/hashes/utils.js";
 import { decodeBase64UrlStrict, encodeBase64Url } from "../src/crypto/base64url.ts";
-import { encryptPayload } from "../src/crypto/encrypt.ts";
 import {
-  createOuterEnvelope,
   serializeBodyBytes,
   serializeOuterEnvelope,
   type EnvelopeBody,
 } from "../src/crypto/envelope.ts";
 import { getPublicKey, publicKeyToAgentId } from "../src/crypto/keys.ts";
+import {
+  createOuterEnvelopeWithFixedNonce,
+  encryptPayloadWithFixedNonce,
+} from "../src/fixtures/crypto-fixtures.ts";
 import { pairBondOkTag } from "../src/pairing/pair-bond-ok-tag.ts";
 import { pairConfirmFingerprint } from "../src/pairing/pair-confirm-fingerprint.ts";
 import { sign } from "../src/crypto/sign.ts";
@@ -103,7 +105,7 @@ function buildBase64UrlFixture() {
 function buildPayloadEncryptionFixture(keys: ReturnType<typeof makeKeys>) {
   const nonce = hexToBytes(FIXTURE_NONCE_HEX);
   const plaintext = utf8ToBytes(FIXTURE_PLAINTEXT);
-  const expectedPayloadBase64url = encryptPayload(
+  const expectedPayloadBase64url = encryptPayloadWithFixedNonce(
     plaintext,
     keys.aliceSecret,
     keys.bobPublic,
@@ -120,7 +122,7 @@ function buildPayloadEncryptionFixture(keys: ReturnType<typeof makeKeys>) {
 
 function buildEnvelopeCoreMsg(keys: ReturnType<typeof makeKeys>) {
   const nonce = hexToBytes(FIXTURE_NONCE_HEX);
-  const outer = createOuterEnvelope({
+  const outer = createOuterEnvelopeWithFixedNonce({
     sender: { secretKey: keys.aliceSecret, publicKey: keys.alicePublic },
     recipientAgentId: keys.bob.agentId,
     type: "core.msg",
@@ -129,7 +131,7 @@ function buildEnvelopeCoreMsg(keys: ReturnType<typeof makeKeys>) {
     ttl: FIXTURE_TTL,
     payload: utf8ToBytes(FIXTURE_PLAINTEXT),
     id: FIXTURE_ENVELOPE_ID,
-    testOnlyNonce: nonce,
+    fixedNonce: nonce,
   });
   const wire = serializeOuterEnvelope(outer);
   const bodyBytes = decodeBase64UrlStrict(outer.blob);
@@ -204,20 +206,9 @@ function buildEnvelopeNegative(keys: ReturnType<typeof makeKeys>, coreWire: stri
     to: "ed25519:wrongwrongwrongwrongwrongwrongwrongwrongwrongwron",
   });
 
-  const versionMismatchWire = (() => {
-    const outer = JSON.parse(coreWire) as typeof coreOuter;
-    const blobBytes = decodeBase64UrlStrict(outer.blob);
-    const body = JSON.parse(new TextDecoder().decode(blobBytes)) as EnvelopeBody;
+  const versionMismatchWire = resignBody(coreOuter, keys.aliceSecret, (body) => {
     body.v = 2 as unknown as 1;
-    const bodyBytes = serializeBodyBytes(body);
-    return serializeOuterEnvelope({
-      v: 1,
-      from: outer.from,
-      to: outer.to,
-      blob: encodeBase64Url(bodyBytes),
-      sig: outer.sig,
-    });
-  })();
+  });
 
   const expiredWire = resignBody(coreOuter, keys.aliceSecret, (body) => {
     body.ttl = FIXTURE_NOW_UNIX;
@@ -225,8 +216,31 @@ function buildEnvelopeNegative(keys: ReturnType<typeof makeKeys>, coreWire: stri
 
   const staleSeqWire = coreWire;
 
+  const unsupportedVersionWire = (() => {
+    const outer = JSON.parse(coreWire) as typeof coreOuter;
+    return JSON.stringify({ ...outer, v: 2 });
+  })();
+
+  const invalidJsonWire = '{"v":1,"from":"incomplete"';
+
+  const invalidPayloadWire = resignBody(coreOuter, keys.aliceSecret, (body) => {
+    body.payload = "YQ";
+  });
+
   return {
     cases: [
+      {
+        name: "unsupported_version",
+        wire: unsupportedVersionWire,
+        expect: "unsupported_version",
+        harness: baseHarness,
+      },
+      {
+        name: "invalid_json",
+        wire: invalidJsonWire,
+        expect: "invalid_json",
+        harness: baseHarness,
+      },
       {
         name: "tampered_sig",
         wire: tamperedSigWire,
@@ -256,6 +270,24 @@ function buildEnvelopeNegative(keys: ReturnType<typeof makeKeys>, coreWire: stri
         wire: staleSeqWire,
         expect: "stale_seq",
         harness: { ...baseHarness, lastAcceptedSeq: FIXTURE_SEQ },
+      },
+      {
+        name: "recipient_not_allowed",
+        wire: staleSeqWire,
+        expect: "recipient_not_allowed",
+        harness: { ...baseHarness, isBonded: false },
+      },
+      {
+        name: "invalid_payload",
+        wire: invalidPayloadWire,
+        expect: "invalid_payload",
+        harness: baseHarness,
+      },
+      {
+        name: "unsupported_envelope_type",
+        wire: staleSeqWire,
+        expect: "unsupported_envelope_type",
+        harness: { ...baseHarness, dispatchError: "unsupported_envelope_type" },
       },
       {
         name: "envelope_too_large",

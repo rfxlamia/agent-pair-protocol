@@ -10,6 +10,9 @@ expected values when given the same inputs.
 pnpm --filter @agentpair/protocol run generate-fixtures
 ```
 
+CI runs `pnpm --filter @agentpair/protocol run verify-fixtures` to fail when
+committed JSON drifts from the generator without an intentional review.
+
 ## Files
 
 | File | Verifies |
@@ -27,9 +30,22 @@ pnpm --filter @agentpair/protocol run generate-fixtures
 When verifying via a receiver implementation, use the fixture `harness` block:
 
 - `nowUnix` — inject as clock (never wall clock)
-- `isBonded` — default `true`
+- `isBonded` — default `true` (`recipient_not_allowed` uses `false`)
 - `lastAcceptedSeq` — default `0` (global per harness; single-thread fixtures only)
 - `self` — receiving agent (`alice` or `bob`)
+- `dispatchError` — optional; when set, step 8 dispatch returns that error (e.g.
+  `unsupported_envelope_type`)
+
+Negative cases assume SPEC §4.3 step order (version check before signature verify).
+Each wire is a single-fault case unless noted below.
+
+### `envelope_too_large` (generative)
+
+This case has `bodySize` (65537) but no committed `wire`. Synthesize any UTF-8
+outer JSON wire whose byte length equals `bodySize` and whose outer `v` is `1`.
+The reference tests pad a valid `v:1` core wire by adding a `_pad` field until
+the UTF-8 length is exact. Your receiver must return `envelope_too_large` when
+the wire exceeds 65536 UTF-8 bytes — check size before `JSON.parse` per §4.3 step 1.
 
 ## Unit tests vs fixture tests
 
@@ -37,13 +53,20 @@ When verifying via a receiver implementation, use the fixture `harness` block:
 intentionally: unit tests guard the implementation; fixture JSON is the published
 contract third parties byte-match against.
 
-## `testOnlyNonce`
+## Fixed nonce (`testOnlyNonceHex`)
 
 Fixtures that encrypt payloads include `testOnlyNonceHex` (24 bytes). Production
-code MUST use a fresh random nonce per envelope (§3). The fixed nonce exists
-only so ciphertext is reproducible in tests.
+code MUST use a fresh random nonce per envelope (§3). The fixed nonce exists only
+so ciphertext is reproducible in tests. Deterministic encryption helpers live in
+`src/fixtures/crypto-fixtures.ts` and are not exported from the package entry.
 
 ## Ed25519 determinism
 
 Given fixed message bytes and a fixed secret key, Ed25519 signatures are
 exactly reproducible across implementations.
+
+## HKDF domain string
+
+Payload encryption uses HKDF-SHA-256 with info = `"agentpair-envelope-v1"`.
+`@agentpair/protocol@0.4.0` and later use this string; `0.3.0` used
+`agentpair-envelope-v0` — ciphertext is not interoperable across that boundary.

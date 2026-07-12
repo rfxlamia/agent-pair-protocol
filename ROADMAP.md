@@ -9,7 +9,7 @@
 
 **Done (2026-07-12, off-milestone security fix):** identity-bound pairing fingerprint (§6.2: `SHA-256(domain ‖ shared_key ‖ id_init ‖ id_join)`, length-prefixed, golden vector), joiner-first confirm riding the joiner `pake` message (single-slot relay ping-pong invariant now normative), `bond_ok` joiner-first with identity-bound tag, status taxonomy (`pake_failed` = local verification not passed, `rolled_back` = verified but not committed), adversarial suite (identity swap, manifest tamper, injected/dropped `bond_fail`, malformed confirm). Closes relay identity-swap vulnerability. `@agentpair/protocol` 0.3.0 (breaking wire; no interop with 0.2.x pairing). Spec artifacts: docs/pocket/spec/2026-07-11-identity-bound-pairing-fingerprint/.
 
-**Gap vs SPEC v1:** wire format still v0 (canonical-JSON re-serialization signing — no outer envelope / sign-the-blob, no `v` field), no 64 KiB cap or spillover, envelope types not namespaced (`core.*`/`nego.*`/`atest.*`), no profile advertisement, N5/N7 not implemented, error codes drift from §10, atest not separated from mcp-server, no root README, no CI.
+**Gap vs SPEC v1:** spillover (§5), profile advertisement (§6.4), N5/N7 session rules, atest separation from mcp-server, root README, CI hardening (M1.7). Wire format v1 (outer envelope, sign-the-blob, namespaced types, §10 error codes, golden vectors) landed in M1.1–M1.6; `@agentpair/protocol@0.4.0` freezes HKDF info `agentpair-envelope-v1`.
 
 ---
 

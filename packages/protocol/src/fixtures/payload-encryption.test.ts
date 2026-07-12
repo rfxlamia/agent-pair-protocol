@@ -1,7 +1,8 @@
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { hexToBytes } from "@noble/hashes/utils.js";
 import { describe, expect, it } from "vitest";
-import { decryptPayload, encryptPayload } from "../crypto/encrypt.js";
+import { decryptPayload } from "../crypto/encrypt.js";
+import { encryptPayloadWithFixedNonce } from "./crypto-fixtures.js";
 import { keyPairFromEntry, loadFixture, loadKeys } from "./load-fixture.js";
 
 interface PayloadEncryptionFixture {
@@ -21,7 +22,12 @@ describe("payload-encryption.json golden vectors", () => {
   const plaintext = utf8ToBytes(fixture.plaintextUtf8);
 
   it("encrypt matches expectedPayloadBase64url", () => {
-    const payload = encryptPayload(plaintext, sender.secretKey, recipient.publicKey, nonce);
+    const payload = encryptPayloadWithFixedNonce(
+      plaintext,
+      sender.secretKey,
+      recipient.publicKey,
+      nonce,
+    );
     expect(payload).toBe(fixture.expectedPayloadBase64url);
   });
 

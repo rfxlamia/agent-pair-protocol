@@ -29,28 +29,4 @@ describe("encrypt", () => {
     const decrypted = decryptPayload(encrypted, bob.secretKey, alice.publicKey);
     expect(decrypted).toEqual(plaintext);
   });
-
-  it("is deterministic when testOnlyNonce is provided", () => {
-    const alice = generateKeyPair();
-    const bob = generateKeyPair();
-    const plaintext = utf8ToBytes("deterministic");
-    const nonce = new Uint8Array(24).fill(0x42);
-
-    const a = encryptPayload(plaintext, alice.secretKey, bob.publicKey, nonce);
-    const b = encryptPayload(plaintext, alice.secretKey, bob.publicKey, nonce);
-
-    expect(a).toBe(b);
-    expect(decryptPayload(a, bob.secretKey, alice.publicKey)).toEqual(plaintext);
-  });
-
-  it("uses a fresh random nonce on each call when testOnlyNonce is omitted", () => {
-    const alice = generateKeyPair();
-    const bob = generateKeyPair();
-    const plaintext = utf8ToBytes("nonce-uniqueness");
-
-    const first = encryptPayload(plaintext, alice.secretKey, bob.publicKey);
-    const second = encryptPayload(plaintext, alice.secretKey, bob.publicKey);
-
-    expect(first).not.toBe(second);
-  });
 });

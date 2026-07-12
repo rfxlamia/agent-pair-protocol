@@ -18,23 +18,13 @@ function deriveEncryptionKey(
   return hkdf(sha256, sharedSecret, undefined, HKDF_INFO, 32);
 }
 
-/**
- * Encrypts a payload for the recipient.
- *
- * @param testOnlyNonce — Test vectors only. Production callers MUST omit — spec §3:
- *   fresh random nonce per envelope. Nonce reuse with the same key breaks XChaCha20-Poly1305.
- */
 export function encryptPayload(
   plaintext: Uint8Array,
   senderSecretKey: Uint8Array,
   recipientPublicKey: Uint8Array,
-  testOnlyNonce?: Uint8Array,
 ): string {
   const key = deriveEncryptionKey(senderSecretKey, recipientPublicKey);
-  if (testOnlyNonce !== undefined && testOnlyNonce.length !== NONCE_LENGTH) {
-    throw new Error(`testOnlyNonce must be ${NONCE_LENGTH} bytes`);
-  }
-  const nonce = testOnlyNonce ?? randomBytes(NONCE_LENGTH);
+  const nonce = randomBytes(NONCE_LENGTH);
   const cipher = xchacha20poly1305(key, nonce);
   const ciphertext = cipher.encrypt(plaintext);
   const payload = new Uint8Array(nonce.length + ciphertext.length);

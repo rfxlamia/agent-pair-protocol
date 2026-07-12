@@ -52,5 +52,8 @@ jobs:
         run: pnpm --filter @agentpair/relay typecheck
 
       # pretest also runs `pnpm build`; second compile is fast when artifacts exist
+      - name: Verify golden fixtures are fresh
+        run: pnpm --filter @agentpair/protocol run verify-fixtures
+
       - name: Test
         run: pnpm test
