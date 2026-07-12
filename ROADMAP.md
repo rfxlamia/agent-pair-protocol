@@ -23,7 +23,7 @@ Breaking change; everything else builds on it. Land first.
 - [x] **M1.4** Namespace envelope types: `core.msg`, `core.close`, `core.ack`, `nego.*`; unknown type → `unsupported_envelope_type`, no side effects. Scope expanded (spec 2026-07-10): absorbs full `core.close` semantics + close registry + MCP `send` reshape. `label:protocol` `size:L`
 - [x] **M1.5** Align all error codes with §10 (`stale_seq`, `envelope_expired`, `version_mismatch`, `unsupported_version`, …); errors must not leak unbonded-recipient existence. `label:protocol` `size:S`
 - [x] **M1.6** Golden test vectors: fixed keys → expected envelopes/signatures, committed as JSON fixtures so third-party implementations can verify against them. `label:testing` `size:M`
-- [ ] **M1.7** CI: GitHub Actions — lint + build + test on push/PR (currently none). `label:infra` `size:S`
+- [x] **M1.7** CI: GitHub Actions — lint + build + test on push/PR (currently none). `label:infra` `size:S`
 
 **Exit:** all packages on wire v1, v0 paths deleted, vectors published, CI green.
 
