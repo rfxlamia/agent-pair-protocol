@@ -33,6 +33,7 @@ import {
   encryptPayloadWithFixedNonce,
 } from "../src/fixtures/crypto-fixtures.ts";
 import { encryptArtifact } from "../src/artifact/encrypt.ts";
+import { deriveContentType, deriveSummary } from "../src/artifact/fields.ts";
 import { pairBondOkTag } from "../src/pairing/pair-bond-ok-tag.ts";
 import { pairConfirmFingerprint } from "../src/pairing/pair-confirm-fingerprint.ts";
 import { sign } from "../src/crypto/sign.ts";
@@ -332,8 +333,8 @@ function buildArtifactSpilloverFixture() {
     spill: 1,
     artifact_hash: hash,
     size: plaintext.length,
-    content_type: "application/json",
-    summary: '{"body":"hello"}',
+    content_type: deriveContentType(plaintext),
+    summary: deriveSummary(plaintext),
     artifact_key: encodeBase64Url(key),
   };
   return {
