@@ -81,3 +81,4 @@ scripts/deploy-*.sh
 deploy/school-compose.yml
 .pi/
 docs/plans/
+docs/superpowers/
