@@ -14,6 +14,14 @@ export {
   encryptArtifact,
   hashArtifactBlob,
 } from "./artifact/encrypt.js";
+export { deriveContentType, deriveSummary } from "./artifact/fields.js";
+export {
+  hasSpillMarker,
+  parseSpillRef,
+  spillRefSchema,
+  type ParseSpillRefResult,
+  type SpillRef,
+} from "./artifact/schema.js";
 export { sign, verify } from "./crypto/sign.js";
 export {
   coerceEnvelopeBody,
