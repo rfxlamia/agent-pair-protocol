@@ -33,6 +33,8 @@ export interface CreateOuterEnvelopeInput {
   ttl: number;
   payload: Uint8Array;
   id?: string;
+  /** Test vectors only — see encryptPayload testOnlyNonce. */
+  testOnlyNonce?: Uint8Array;
 }
 
 export function serializeBodyBytes(body: EnvelopeBody): Uint8Array {
@@ -89,6 +91,7 @@ export function createOuterEnvelope(input: CreateOuterEnvelopeInput): OuterEnvel
     input.payload,
     input.sender.secretKey,
     recipientPublicKey,
+    input.testOnlyNonce,
   );
 
   const from = publicKeyToAgentId(input.sender.publicKey);
