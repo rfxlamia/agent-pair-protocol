@@ -1,5 +1,6 @@
 import {
   type KeyPair,
+  MAX_SPILLOVER_PLAINTEXT_BYTES,
   type OuterEnvelope,
   type PairingRelayClient,
   publicKeyToAgentId,
@@ -52,6 +53,26 @@ function signChallenge(nonce: string, secretKey: Uint8Array): string {
   const signature = sign(utf8ToBytes(nonce), secretKey);
   return Buffer.from(signature).toString("base64url");
 }
+
+function signArtifactHash(hash: string, secretKey: Uint8Array): string {
+  const signature = sign(utf8ToBytes(hash), secretKey);
+  return Buffer.from(signature).toString("base64url");
+}
+
+function relayError(code: string): Error & { code: string } {
+  return Object.assign(new Error(code), { code });
+}
+
+function artifactReadLimit(size: number): number {
+  return Math.min(size + 40, MAX_SPILLOVER_PLAINTEXT_BYTES + 40);
+}
+
+const PUT_ARTIFACT_PASSTHROUGH_ERRORS = new Set([
+  "quota_exceeded",
+  "auth_required",
+  "invalid_signature",
+  "agent_not_registered",
+]);
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -234,5 +255,74 @@ export class HttpRelayClient implements PairingRelayClient {
 
     const payload = (await purgeRes.json()) as { deleted?: number; peer_purged?: boolean };
     return { ok: true, deleted: payload.deleted ?? 0, peer_purged: payload.peer_purged };
+  }
+
+  async putArtifact(
+    hash: string,
+    blob: Uint8Array,
+    agentId: string,
+    secretKey: Uint8Array,
+  ): Promise<void> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/artifact/${encodeURIComponent(hash)}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "x-agent-id": agentId,
+          "x-artifact-sig": signArtifactHash(hash, secretKey),
+        },
+        body: blob,
+      });
+    } catch {
+      throw relayError("artifact_upload_failed");
+    }
+
+    if (res.status === 204) {
+      return;
+    }
+
+    let error: string | undefined;
+    try {
+      const body = (await res.json()) as { error?: string };
+      error = body.error;
+    } catch {
+      // non-JSON error bodies map to artifact_upload_failed
+    }
+
+    if (error === "hash_mismatch") {
+      throw new Error("hash_mismatch");
+    }
+
+    if (error && PUT_ARTIFACT_PASSTHROUGH_ERRORS.has(error)) {
+      throw relayError(error);
+    }
+
+    throw relayError("artifact_upload_failed");
+  }
+
+  async getArtifact(hash: string, size: number): Promise<Uint8Array> {
+    const readLimit = artifactReadLimit(size);
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/artifact/${encodeURIComponent(hash)}`);
+    } catch {
+      throw relayError("artifact_fetch_failed");
+    }
+
+    if (res.status === 404) {
+      throw relayError("artifact_not_found");
+    }
+
+    if (!res.ok) {
+      throw relayError("artifact_fetch_failed");
+    }
+
+    const body = new Uint8Array(await res.arrayBuffer());
+    if (body.length > readLimit) {
+      throw relayError("artifact_decrypt_failed");
+    }
+
+    return body;
   }
 }
