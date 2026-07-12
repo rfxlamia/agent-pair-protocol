@@ -19,7 +19,7 @@ export function padWireToSize(wire: string, targetBytes: number): string {
   let best = "";
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-    const candidate = JSON.stringify({ ...outer, v: 1, _pad: "x".repeat(mid) });
+    const candidate = JSON.stringify({ ...outer, _pad: "x".repeat(mid) });
     const len = wireUtf8Length(candidate);
     if (len <= targetBytes) {
       best = candidate;

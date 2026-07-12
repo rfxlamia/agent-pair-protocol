@@ -3,6 +3,9 @@
  *
  * Run: pnpm --filter @agentpair/protocol run generate-fixtures
  *
+ * Uses tsx (not node --experimental-strip-types) because production src modules
+ * import .js paths that strip-types cannot resolve transitively.
+ *
  * Vector origins:
  * - keys.json: well-known 32-byte Ed25519 seeds (0x01… / 0x02…)
  * - base64url.json: static accept/reject cases per SPEC §3
@@ -27,6 +30,7 @@ import {
 } from "../src/crypto/envelope.ts";
 import { getPublicKey, publicKeyToAgentId } from "../src/crypto/keys.ts";
 import { pairBondOkTag } from "../src/pairing/pair-bond-ok-tag.ts";
+import { pairConfirmFingerprint } from "../src/pairing/pair-confirm-fingerprint.ts";
 import { sign } from "../src/crypto/sign.ts";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "../fixtures");
@@ -283,13 +287,14 @@ function buildPairBondOkTag() {
 }
 
 function buildPairConfirmFingerprint() {
+  const sharedKey = hexToBytes(PAIR_SHARED_KEY_HEX);
   return {
     golden: {
       sharedKeyHex: PAIR_SHARED_KEY_HEX,
       initiatorId: PAIR_INITIATOR_ID,
       joinerId: PAIR_JOINER_ID,
-      fingerprint: "12e616c65b5f0ddab5b755b20b19c3ffe868b67927d77e50cde036e04ddd3c68",
-      reversedFingerprint: "122ee6cc12b9c83752374ff6cb278050bd5ed2e44ababbbfecc4076aa0baef57",
+      fingerprint: pairConfirmFingerprint(sharedKey, PAIR_INITIATOR_ID, PAIR_JOINER_ID),
+      reversedFingerprint: pairConfirmFingerprint(sharedKey, PAIR_JOINER_ID, PAIR_INITIATOR_ID),
     },
   };
 }
