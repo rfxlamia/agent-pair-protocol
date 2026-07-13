@@ -1657,6 +1657,289 @@ describe("session state machine", () => {
     });
   });
 
+  describe("terminal wire precision guard", () => {
+    async function finalizeToClosed(): Promise<string> {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:terminal-guard-finalized";
+      await signFlowToSigned(thread, artifactHash);
+      const aliceRatify = alicePending.list().find((item) => item.kind === "ratify");
+      const bobRatify = bobPending.list().find((item) => item.kind === "ratify");
+      if (!aliceRatify || !bobRatify) throw new Error("expected ratify pending");
+      await aliceMachine.handleRatify({ pending_id: aliceRatify.id, via_human: true });
+      await bobMachine.handleRatify({ pending_id: bobRatify.id, via_human: true });
+      return thread;
+    }
+
+    async function rejectOpen(): Promise<string> {
+      const opened = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) throw new Error("open failed");
+      const bobRejectPending = bobPending
+        .list()
+        .find((item) => item.kind === "session_open" && item.thread === opened.thread);
+      if (!bobRejectPending) throw new Error("expected session_open pending");
+      await bobMachine.handleRejectOpen({
+        pending_id: bobRejectPending.id,
+        reason: "scope",
+        via_human: true,
+      });
+      return opened.thread;
+    }
+
+    async function expireOpen(): Promise<string> {
+      const opened = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) throw new Error("open failed");
+      vi.advanceTimersByTime(SESSION_OPEN_TTL_MS + 1);
+      await bobMachine.handleExpirePendingOpens();
+      return opened.thread;
+    }
+
+    async function bondRevokeClosed(): Promise<string> {
+      const thread = await openAndApprove();
+      aliceMachine.handleBondRevoke(bobId);
+      return thread;
+    }
+
+    async function threadCloseClosed(): Promise<string> {
+      const thread = await openAndApprove();
+      await aliceMachine.handleThreadClose(thread);
+      return thread;
+    }
+
+    const illegalMutationCases = [
+      {
+        type: "nego.open_approved",
+        from: (thread: string) => bobId,
+        payload: (thread: string) => JSON.stringify({ thread }),
+      },
+      {
+        type: "nego.turn",
+        from: () => bobId,
+        payload: () =>
+          JSON.stringify({
+            turn_count: 1,
+            msg_type: "propose",
+            body: JSON.stringify({ diff: "late" }),
+          }),
+      },
+      {
+        type: "nego.signed",
+        from: () => bobId,
+        payload: () => JSON.stringify({ artifact_hash: "sha256:late-sign" }),
+      },
+      {
+        type: "atest.challenge",
+        from: () => bobId,
+        payload: () => "{}",
+      },
+      {
+        type: "atest.report",
+        from: () => bobId,
+        payload: () =>
+          JSON.stringify({
+            artifact_hash: "sha256:late-report",
+            passed: true,
+            runner: "payload-size",
+          }),
+      },
+    ] as const;
+
+    const terminalFactories = [
+      { label: "closed (finalized)", factory: finalizeToClosed },
+      { label: "open_rejected", factory: rejectOpen },
+      { label: "open_expired", factory: expireOpen },
+    ] as const;
+
+    for (const terminal of terminalFactories) {
+      for (const mutation of illegalMutationCases) {
+        it(`rejects ${mutation.type} on ${terminal.label} with thread_closed`, async () => {
+          const thread = await terminal.factory();
+          const before = aliceMachine.store.get(thread);
+          expect(before).toBeDefined();
+          if (!before) return;
+
+          const result = await aliceMachine.handleIncomingEnvelope({
+            from: mutation.from(thread),
+            type: mutation.type,
+            thread,
+            payload: mutation.payload(thread),
+          });
+          expect(result).toEqual({ ok: false, error: "thread_closed" });
+          expect(aliceMachine.store.get(thread)).toEqual(before);
+        });
+      }
+    }
+
+    for (const mutation of illegalMutationCases) {
+      it(`rejects ${mutation.type} on closed (bond_revoked) with thread_closed`, async () => {
+        const thread = await bondRevokeClosed();
+        const before = aliceMachine.store.get(thread);
+        expect(before).toBeDefined();
+        if (!before) return;
+
+        const result = await aliceMachine.handleIncomingEnvelope({
+          from: mutation.from(thread),
+          type: mutation.type,
+          thread,
+          payload: mutation.payload(thread),
+        });
+        expect(result).toEqual({ ok: false, error: "thread_closed" });
+        expect(aliceMachine.store.get(thread)).toEqual(before);
+      });
+
+      it(`rejects ${mutation.type} on closed (thread_closed) with thread_closed`, async () => {
+        const thread = await threadCloseClosed();
+        const before = aliceMachine.store.get(thread);
+        expect(before).toBeDefined();
+        if (!before) return;
+
+        const result = await aliceMachine.handleIncomingEnvelope({
+          from: mutation.from(thread),
+          type: mutation.type,
+          thread,
+          payload: mutation.payload(thread),
+        });
+        expect(result).toEqual({ ok: false, error: "thread_closed" });
+        expect(aliceMachine.store.get(thread)).toEqual(before);
+      });
+    }
+
+    it("rejects open_reject on closed (finalized) with thread_closed", async () => {
+      const thread = await finalizeToClosed();
+      const before = aliceMachine.store.get(thread);
+      expect(before).toBeDefined();
+      if (!before) return;
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.open_reject",
+        thread,
+        payload: JSON.stringify({ reason: "late reject" }),
+      });
+      expect(result).toEqual({ ok: false, error: "thread_closed" });
+      expect(aliceMachine.store.get(thread)).toEqual(before);
+    });
+
+    it("rejects open_reject on closed (bond_revoked) with thread_closed", async () => {
+      const thread = await bondRevokeClosed();
+      const before = aliceMachine.store.get(thread);
+      expect(before).toBeDefined();
+      if (!before) return;
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.open_reject",
+        thread,
+        payload: JSON.stringify({ reason: "late reject" }),
+      });
+      expect(result).toEqual({ ok: false, error: "thread_closed" });
+      expect(aliceMachine.store.get(thread)).toEqual(before);
+    });
+
+    it("rejects open_expired on closed (finalized) with thread_closed", async () => {
+      const thread = await finalizeToClosed();
+      const before = aliceMachine.store.get(thread);
+      expect(before).toBeDefined();
+      if (!before) return;
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.open_expired",
+        thread,
+        payload: JSON.stringify({ thread }),
+      });
+      expect(result).toEqual({ ok: false, error: "thread_closed" });
+      expect(aliceMachine.store.get(thread)).toEqual(before);
+    });
+
+    it("rejects open_expired on closed (bond_revoked) with thread_closed", async () => {
+      const thread = await bondRevokeClosed();
+      const before = aliceMachine.store.get(thread);
+      expect(before).toBeDefined();
+      if (!before) return;
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.open_expired",
+        thread,
+        payload: JSON.stringify({ thread }),
+      });
+      expect(result).toEqual({ ok: false, error: "thread_closed" });
+      expect(aliceMachine.store.get(thread)).toEqual(before);
+    });
+
+    it("accepts ratified redelivery on finalized closed without mutation", async () => {
+      const thread = await finalizeToClosed();
+      const before = aliceMachine.store.get(thread);
+      expect(before?.coSignedHash).toBeDefined();
+      if (!before) return;
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.ratified",
+        thread,
+        payload: JSON.stringify({ artifact_hash: before.coSignedHash }),
+      });
+      expect(result).toEqual({ ok: true, thread, status: "closed" });
+      expect(aliceMachine.store.get(thread)).toEqual(before);
+    });
+
+    it("accepts open_reject redelivery on open_rejected without mutation", async () => {
+      const thread = await rejectOpen();
+      const before = aliceMachine.store.get(thread);
+      expect(before?.status).toBe("open_rejected");
+      if (!before) return;
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.open_reject",
+        thread,
+        payload: JSON.stringify({ reason: "scope" }),
+      });
+      expect(result).toEqual({ ok: true, thread, status: "open_rejected" });
+      expect(aliceMachine.store.get(thread)).toEqual(before);
+    });
+
+    it("accepts open_expired redelivery on open_expired without mutation", async () => {
+      const thread = await expireOpen();
+      const before = aliceMachine.store.get(thread);
+      expect(before?.status).toBe("open_expired");
+      if (!before) return;
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.open_expired",
+        thread,
+        payload: JSON.stringify({ thread }),
+      });
+      expect(result).toEqual({ ok: true, thread, status: "open_expired" });
+      expect(aliceMachine.store.get(thread)).toEqual(before);
+    });
+
+    it("nego.open redelivery on closed returns ok without mutation", async () => {
+      const thread = await finalizeToClosed();
+      const before = aliceMachine.store.get(thread);
+      expect(before).toBeDefined();
+      if (!before) return;
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: aliceId,
+        type: "nego.open",
+        thread,
+        payload: JSON.stringify({
+          ...openPayload,
+          from: aliceId,
+          expires_at: Date.now() + SESSION_OPEN_TTL_MS,
+        }),
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.status).toBe("closed");
+      expect(aliceMachine.store.get(thread)).toEqual(before);
+    });
+  });
+
   describe("session.open initiator binding", () => {
     it("rejects session.open redelivery from a different initiator on pending session", async () => {
       const opened = await aliceMachine.handleOpen({

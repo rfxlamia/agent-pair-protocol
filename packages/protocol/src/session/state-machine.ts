@@ -25,6 +25,13 @@ import { SESSION_OPEN_TTL_MS } from "./types.js";
 /** Recipient sessions past open must not be reset by a redelivered nego.open. */
 const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = ["live", "signed", "closed", "open_rejected"];
 
+/** Terminal negotiation states for wire precision guards (§8.3 / N5). */
+const TERMINAL_NEGOTIATION_STATUSES: SessionStatus[] = ["closed", "open_rejected", "open_expired"];
+
+function isTerminalNegotiationStatus(status: SessionStatus): boolean {
+  return TERMINAL_NEGOTIATION_STATUSES.includes(status);
+}
+
 function peerFor(session: SessionRecord, agentId: string): string {
   return session.initiator === agentId ? session.recipient : session.initiator;
 }
@@ -513,6 +520,9 @@ export function createSessionStateMachine(
           if (!recipient.ok) {
             return recipient;
           }
+          if (isTerminalNegotiationStatus(found.session.status)) {
+            return { ok: false, error: "thread_closed" };
+          }
           upsert({ ...found.session, status: "live" });
           return { ok: true, thread: input.thread, status: "live" };
         }
@@ -528,6 +538,12 @@ export function createSessionStateMachine(
           const recipient = assertRecipientSender(found.session, input.from);
           if (!recipient.ok) {
             return recipient;
+          }
+          if (found.session.status === "open_rejected") {
+            return { ok: true, thread: input.thread, status: "open_rejected" };
+          }
+          if (found.session.status === "closed") {
+            return { ok: false, error: "thread_closed" };
           }
           upsert({
             ...found.session,
@@ -553,6 +569,12 @@ export function createSessionStateMachine(
           if (!recipient.ok) {
             return recipient;
           }
+          if (found.session.status === "open_expired") {
+            return { ok: true, thread: input.thread, status: "open_expired" };
+          }
+          if (found.session.status === "closed") {
+            return { ok: false, error: "thread_closed" };
+          }
           upsert({ ...found.session, status: "open_expired" });
           return {
             ok: true,
@@ -573,6 +595,9 @@ export function createSessionStateMachine(
           if (!participant.ok) {
             return participant;
           }
+          if (isTerminalNegotiationStatus(found.session.status)) {
+            return { ok: false, error: "thread_closed" };
+          }
           const challenges = { ...found.session.challenges, [participant.role]: true };
           upsert({ ...found.session, challenges });
           return { ok: true, thread: input.thread, type: "challenge" };
@@ -589,6 +614,9 @@ export function createSessionStateMachine(
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return participant;
+          }
+          if (isTerminalNegotiationStatus(found.session.status)) {
+            return { ok: false, error: "thread_closed" };
           }
           const { artifact_hash: artifactHash, passed, runner, details } = testReportPayload.data;
           const existing = found.session.testReports[artifactHash] ?? {};
@@ -619,6 +647,9 @@ export function createSessionStateMachine(
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return participant;
+          }
+          if (isTerminalNegotiationStatus(found.session.status)) {
+            return { ok: false, error: "thread_closed" };
           }
           const { artifact_hash: artifactHash } = signedPayload.data;
           const signHashes = { ...found.session.signHashes };
@@ -656,6 +687,9 @@ export function createSessionStateMachine(
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return participant;
+          }
+          if (isTerminalNegotiationStatus(found.session.status)) {
+            return { ok: false, error: "thread_closed" };
           }
           const turnCount = turnPayload.data.turn_count ?? found.session.turnCount;
           const nextTurnCount = Math.max(found.session.turnCount, turnCount);
@@ -697,6 +731,12 @@ export function createSessionStateMachine(
           const participant = assertParticipant(found.session, input.from);
           if (!participant.ok) {
             return participant;
+          }
+          if (found.session.status === "closed" && found.session.coSignedHash) {
+            return { ok: true, thread: input.thread, status: "closed" };
+          }
+          if (isTerminalNegotiationStatus(found.session.status)) {
+            return { ok: false, error: "thread_closed" };
           }
           const ratifyApproved = { ...found.session.ratifyApproved };
           if (participant.role === "initiator") {
