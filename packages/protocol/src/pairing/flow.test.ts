@@ -484,6 +484,49 @@ describe("pairing flow", () => {
     expect(joinerAllowlist.get(joinerId)).toEqual([]);
   }, 15000);
 
+  it("returns profile_not_supported when intersection lacks core/1", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      profiles: ["nego/1"],
+    });
+
+    const joinPromise = pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+      profiles: ["nego/1"],
+    });
+
+    const initResult = await pairInitComplete({
+      code: pending.code,
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      localAllowlist: initiatorAllowlist,
+      profiles: ["nego/1"],
+    });
+
+    const joinResult = await joinPromise;
+
+    expect(initResult.status).toBe("rolled_back");
+    expect(joinResult.status).toBe("rolled_back");
+    if (initResult.status === "rolled_back") {
+      expect(initResult.reason).toBe("profile_not_supported");
+    }
+    if (joinResult.status === "rolled_back") {
+      expect(joinResult.reason).toBe("profile_not_supported");
+    }
+    expect(initiatorAllowlist.get(initiatorId)).toEqual([]);
+    expect(joinerAllowlist.get(joinerId)).toEqual([]);
+  }, 15000);
+
   it("stores partial intersection as bond contract", async () => {
     const pending = await pairInit({
       scope: ["session.negotiate"],

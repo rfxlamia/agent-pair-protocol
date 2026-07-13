@@ -477,7 +477,7 @@ export async function pairJoin(input: {
   }
 
   const contractProfiles = intersectProfiles(profilesInit, profilesJoin);
-  if (contractProfiles.length === 0) {
+  if (!contractProfiles.includes("core/1")) {
     return { status: "rolled_back", reason: "profile_not_supported" };
   }
 
@@ -627,7 +627,7 @@ export async function pairInitComplete(input: {
   );
 
   const contractProfiles = intersectProfiles(profilesInit, profilesJoin);
-  if (contractProfiles.length === 0) {
+  if (!contractProfiles.includes("core/1")) {
     return { status: "rolled_back", reason: "profile_not_supported" };
   }
 
