@@ -163,8 +163,22 @@ describe("session state machine", () => {
       },
     });
     peers.set(bobId, bob);
+    const carol = createSessionStateMachine({
+      agentId: carolId,
+      keyPair: carolKeys,
+      pending: new MockPendingQueue(),
+      allowlist: new MemoryAllowlistStore(),
+      bonds: new MockBondStore(),
+      relay: {
+        async send(input) {
+          await deliver(carolId, input);
+          return { ok: true };
+        },
+      },
+    });
+    peers.set(carolId, carol);
 
-    return { alice, bob };
+    return { alice, bob, carol };
   }
 
   beforeEach(() => {
@@ -264,6 +278,188 @@ describe("session state machine", () => {
     await bobMachine.handleSign({ thread, artifact_hash: artifactHash });
     expect((await aliceMachine.handleStatus({ thread })).status).toBe("signed");
   }
+
+  describe("handleBondRevoke", () => {
+    beforeEach(() => {
+      aliceBonds.add(aliceId, {
+        peer: bobId,
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+      });
+      bobBonds.add(bobId, {
+        peer: aliceId,
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+      });
+    });
+
+    it("closes pending session with bond_revoked", async () => {
+      const opened = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+
+      aliceMachine.handleBondRevoke(bobId);
+
+      const status = await aliceMachine.handleStatus({ thread: opened.thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) return;
+      expect(status.status).toBe("closed");
+      expect(status.reject_reason).toBe("bond_revoked");
+    });
+
+    it("closes live session with bond_revoked", async () => {
+      const thread = await openAndApprove();
+
+      aliceMachine.handleBondRevoke(bobId);
+
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) return;
+      expect(status.status).toBe("closed");
+      expect(status.reject_reason).toBe("bond_revoked");
+    });
+
+    it("closes signed session retaining signHashes and artifactHash", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:bond-revoke-signed-retain";
+      await signFlowToSigned(thread, artifactHash);
+      const before = aliceMachine.store.get(thread);
+      expect(before).toBeDefined();
+      if (!before) return;
+
+      aliceMachine.handleBondRevoke(bobId);
+
+      const after = aliceMachine.store.get(thread);
+      expect(after).toBeDefined();
+      if (!after) return;
+      expect(after.status).toBe("closed");
+      expect(after.rejectReason).toBe("bond_revoked");
+      expect(after.signHashes).toEqual(before.signHashes);
+      expect(after.artifactHash).toBe(before.artifactHash);
+      expect(after.peerMessages).toEqual(before.peerMessages);
+      expect(after.testReports).toEqual(before.testReports);
+      expect(after.challenges).toEqual(before.challenges);
+      expect(after.ratifyApproved).toEqual(before.ratifyApproved);
+    });
+
+    it("leaves terminal sessions unchanged", async () => {
+      const finalizedThread = await openAndApprove();
+      const finalizedHash = "sha256:terminal-finalized";
+      await signFlowToSigned(finalizedThread, finalizedHash);
+      const aliceRatify = alicePending.list().find((item) => item.kind === "ratify");
+      const bobRatify = bobPending.list().find((item) => item.kind === "ratify");
+      if (!aliceRatify || !bobRatify) throw new Error("expected ratify pending");
+      await aliceMachine.handleRatify({ pending_id: aliceRatify.id, via_human: true });
+      await bobMachine.handleRatify({ pending_id: bobRatify.id, via_human: true });
+      const finalizedBefore = aliceMachine.store.get(finalizedThread);
+      expect(finalizedBefore?.coSignedHash).toBeDefined();
+
+      const rejectedOpen = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
+      expect(rejectedOpen.ok).toBe(true);
+      if (!rejectedOpen.ok) return;
+      const bobRejectPending = bobPending
+        .list()
+        .find((item) => item.kind === "session_open" && item.thread === rejectedOpen.thread);
+      if (!bobRejectPending) throw new Error("expected session_open pending");
+      await bobMachine.handleRejectOpen({
+        pending_id: bobRejectPending.id,
+        reason: "scope",
+        via_human: true,
+      });
+      const rejectedBefore = aliceMachine.store.get(rejectedOpen.thread);
+
+      const expiredOpen = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
+      expect(expiredOpen.ok).toBe(true);
+      if (!expiredOpen.ok) return;
+      vi.advanceTimersByTime(SESSION_OPEN_TTL_MS + 1);
+      await bobMachine.handleExpirePendingOpens();
+      const expiredBefore = aliceMachine.store.get(expiredOpen.thread);
+
+      aliceMachine.handleBondRevoke(bobId);
+
+      expect(aliceMachine.store.get(finalizedThread)).toEqual(finalizedBefore);
+      expect(aliceMachine.store.get(rejectedOpen.thread)).toEqual(rejectedBefore);
+      expect(aliceMachine.store.get(expiredOpen.thread)).toEqual(expiredBefore);
+    });
+
+    it("closes only sessions for the revoked peer", async () => {
+      aliceAllowlist.set(aliceId, [bobId, carolId]);
+      aliceBonds.add(aliceId, {
+        peer: carolId,
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      });
+
+      const bobThreads = [await openAndApprove(), await openAndApprove(), await openAndApprove()];
+      const carolOpen = await aliceMachine.handleOpen({ to: carolId, ...openPayload });
+      expect(carolOpen.ok).toBe(true);
+      if (!carolOpen.ok) return;
+
+      aliceMachine.handleBondRevoke(bobId);
+
+      for (const thread of bobThreads) {
+        const status = await aliceMachine.handleStatus({ thread });
+        expect(status.status).toBe("closed");
+        expect(status.reject_reason).toBe("bond_revoked");
+      }
+      const carolStatus = await aliceMachine.handleStatus({ thread: carolOpen.thread });
+      expect(carolStatus.status).toBe("pending");
+    });
+
+    it("removes session_open pending when revoking on recipient pending session", async () => {
+      const thread = crypto.randomUUID();
+      const inbound = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.open",
+        thread,
+        payload: JSON.stringify({
+          ...openPayload,
+          from: bobId,
+          expires_at: Date.now() + SESSION_OPEN_TTL_MS,
+        }),
+      });
+      expect(inbound.ok).toBe(true);
+      const sessionOpenPending = alicePending.list().find((item) => item.kind === "session_open");
+      expect(sessionOpenPending).toBeDefined();
+      if (!sessionOpenPending) return;
+
+      aliceMachine.handleBondRevoke(bobId);
+
+      expect(alicePending.get(sessionOpenPending.id)).toBeUndefined();
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.status).toBe("closed");
+      expect(status.reject_reason).toBe("bond_revoked");
+    });
+
+    it("sweeps budget_extend pending on live session revoke", async () => {
+      const thread = await openAndApprove();
+      const budgetPending = alicePending.addBudgetExtend({ thread, peer: bobId });
+
+      aliceMachine.handleBondRevoke(bobId);
+
+      expect(alicePending.get(budgetPending.id)).toBeUndefined();
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.status).toBe("closed");
+      expect(status.reject_reason).toBe("bond_revoked");
+    });
+
+    it("sweeps orphan ratify pending on normal-closed session", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:orphan-ratify-sweep";
+      await signFlowToSigned(thread, artifactHash);
+      await aliceMachine.handleThreadClose(thread);
+      const orphanRatify = alicePending.addRatify({ thread, peer: bobId, artifactHash });
+      expect(alicePending.get(orphanRatify.id)).toBeDefined();
+
+      aliceMachine.handleBondRevoke(bobId);
+
+      expect(alicePending.get(orphanRatify.id)).toBeUndefined();
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.pending_id).toBeUndefined();
+      expect(status.status).toBe("closed");
+      expect(status.reject_reason).toBe("thread_closed");
+    });
+  });
 
   describe("handleThreadClose", () => {
     it("transitions live session to closed (§8.3 any → core.close → closed)", async () => {

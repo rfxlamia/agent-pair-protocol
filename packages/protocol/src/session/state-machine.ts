@@ -153,8 +153,17 @@ export function createSessionStateMachine(
     }
   }
 
+  const bondRevokedPeers = new Set<string>();
+
   function ensureRatifyPending(session: SessionRecord) {
     if (session.status !== "signed" && session.status !== "closed") {
+      return undefined;
+    }
+    const peer = peerFor(session, deps.agentId);
+    if (bondRevokedPeers.has(peer) || session.rejectReason === "bond_revoked") {
+      return undefined;
+    }
+    if (!deps.bonds.find(deps.agentId, peer)) {
       return undefined;
     }
     const role = roleFor(session, deps.agentId);
@@ -976,6 +985,52 @@ export function createSessionStateMachine(
           : {}),
         ...(pendingRatify ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const } : {}),
       };
+    },
+
+    handleBondRevoke(peer: string) {
+      bondRevokedPeers.add(peer);
+      const nonTerminal: SessionStatus[] = ["pending", "live", "signed"];
+
+      for (const session of store.list()) {
+        if (peerFor(session, deps.agentId) !== peer) {
+          continue;
+        }
+        if (!nonTerminal.includes(session.status)) {
+          continue;
+        }
+        if (session.status === "pending") {
+          removeSessionOpenPendingForThread(session.thread);
+        }
+        if (session.status === "signed") {
+          removeRatifyPendingForThread(session.thread);
+        }
+        upsert({
+          ...session,
+          status: "closed",
+          rejectReason: "bond_revoked",
+        });
+      }
+
+      for (const pending of deps.pending.list()) {
+        let shouldRemove = false;
+        if (pending.kind === "budget_extend" || pending.kind === "ratify") {
+          if (pending.peer === peer) {
+            shouldRemove = true;
+          }
+        }
+        if (pending.kind === "session_open" && pending.from === peer) {
+          shouldRemove = true;
+        }
+        if (pending.kind !== "pair_join") {
+          const session = store.get(pending.thread);
+          if (session && peerFor(session, deps.agentId) === peer) {
+            shouldRemove = true;
+          }
+        }
+        if (shouldRemove) {
+          deps.pending.remove(pending.id);
+        }
+      }
     },
 
     /** Unilateral close (§8.3): `closed` + `rejectReason`, no `coSignedHash`. */
