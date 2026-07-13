@@ -9,7 +9,9 @@
 
 **Done (2026-07-12, off-milestone security fix):** identity-bound pairing fingerprint (§6.2: `SHA-256(domain ‖ shared_key ‖ id_init ‖ id_join)`, length-prefixed, golden vector), joiner-first confirm riding the joiner `pake` message (single-slot relay ping-pong invariant now normative), `bond_ok` joiner-first with identity-bound tag, status taxonomy (`pake_failed` = local verification not passed, `rolled_back` = verified but not committed), adversarial suite (identity swap, manifest tamper, injected/dropped `bond_fail`, malformed confirm). Closes relay identity-swap vulnerability. `@agentpair/protocol` 0.3.0 (breaking wire; no interop with 0.2.x pairing). Spec artifacts: docs/pocket/spec/2026-07-11-identity-bound-pairing-fingerprint/.
 
-**Gap vs SPEC v1:** spillover (§5), profile advertisement (§6.4), N5/N7 session rules, atest separation from mcp-server, root README, CI hardening (M1.7). Wire format v1 (outer envelope, sign-the-blob, namespaced types, §10 error codes, golden vectors) landed in M1.1–M1.6; `@agentpair/protocol@0.4.0` freezes HKDF info `agentpair-envelope-v1`.
+**Done (2026-07-13, M2.1):** spillover (§5): payload > 64 KiB wire cap → auto-encrypt artifact (fresh XChaCha20-Poly1305 key, AAD `agentpair-artifact-v1`), PUT to relay, send spill ref `{spill, artifact_hash, size, content_type, summary, artifact_key}`; receiver auto-fetch + decrypt via `resolveSpillover`; 10 MiB plaintext cap; §10 artifact/spillover error codes; golden vector `artifact-spillover.json`; e2e round-trip for oversized `core.msg` and `nego.turn`. Closes #28.
+
+**Gap vs SPEC v1:** profile advertisement (§6.4), N5/N7 session rules, atest separation from mcp-server, root README. Wire format v1 (outer envelope, sign-the-blob, namespaced types, §10 error codes, golden vectors) landed in M1.1–M1.6; `@agentpair/protocol@0.4.0` freezes HKDF info `agentpair-envelope-v1`.
 
 ---
 
@@ -29,8 +31,8 @@ Breaking change; everything else builds on it. Land first.
 
 ## Milestone 2 — Core Conformance (Jul 16–22)
 
-- [ ] **M2.1** Spillover (§5): payload > cap → auto-encrypt artifact (fresh key), PUT to relay, send `{artifact_hash, size, content_type, summary}`; receiver auto-fetch + decrypt. `label:protocol` `size:L`
-- [ ] **M2.2** Profile advertisement in pairing `confirm` (§6.4): bond record stores contract intersection; sending outside contract → `profile_not_supported`. `label:protocol` `size:M`
+- [x] **M2.1** Spillover (§5): payload > cap → auto-encrypt artifact (fresh key), PUT to relay, send `{artifact_hash, size, content_type, summary}`; receiver auto-fetch + decrypt. `label:protocol` `size:L` — done 2026-07-13 (#28)
+- [x] **M2.2** Profile advertisement in pairing `confirm` (§6.4): bond record stores contract intersection; sending outside contract → `profile_not_supported`. `label:protocol` `size:M`
   — Note (post identity-binding, 2026-07-12): joiner's `confirm` now rides its `pake` message (§6.2 step 1–2); profiles must ride the same message AND be cryptographically bound (into the fingerprint preimage with `u16_be` length prefix, or a MAC per `bond_ok` tag pattern). Unbound fields on the pairing wire re-open the relay-tamper class just fixed. §6.4 wording ("during confirm") needs touch-up. See docs/pocket/spec/2026-07-11-identity-bound-pairing-fingerprint/.
 - [ ] **M2.3** N5 — unbond closes every non-terminal session (`bond_revoked`); co-sign records retained as evidence. `label:protocol` `size:M`
 - [ ] **M2.4** N7 — `budget.deadline` REQUIRED (`invalid_payload` if absent); local expiry → `closed` (`deadline_expired`), no peer message needed. `label:protocol` `size:M`

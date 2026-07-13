@@ -174,14 +174,20 @@ export async function syncInboxes(agents: AgentContext[]): Promise<void> {
   }
 }
 
+const E2E_DEFAULT_PROFILES = ["core/1", "nego/1", "atest/1"];
+
 export async function runPairingFlow(
   initiator: DualAgent,
   joiner: DualAgent,
+  options?: { initiatorProfiles?: string[]; joinerProfiles?: string[] },
 ): Promise<PairingResult> {
+  const initiatorProfiles = options?.initiatorProfiles ?? E2E_DEFAULT_PROFILES;
+  const joinerProfiles = options?.joinerProfiles ?? E2E_DEFAULT_PROFILES;
   const initResult = structured(
     await handlePairInit(initiator.ctx, {
       scope: ["session.negotiate"],
       mode: "ephemeral_until_session_closes",
+      profiles: initiatorProfiles,
     }),
   );
   if (!initResult.ok) {
@@ -195,6 +201,7 @@ export async function runPairingFlow(
 
   const completeInitPromise = handlePairInitComplete(initiator.ctx, {
     code: initResult.code,
+    profiles: initiatorProfiles,
   });
 
   const approved = structured(
@@ -202,6 +209,7 @@ export async function runPairingFlow(
       pending_id: joinResult.pending_id,
       decision: "approve",
       via_human: true,
+      profiles: joinerProfiles,
     }),
   );
   if (!approved.ok) {

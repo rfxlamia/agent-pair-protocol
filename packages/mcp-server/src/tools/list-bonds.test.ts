@@ -41,6 +41,7 @@ describe("list_bonds", () => {
       peer: "ed25519:peer1",
       scope: ["session.negotiate"],
       mode: "bonded_contact" as const,
+      profiles: ["core/1", "nego/1"],
     };
     bonds.add(agentId, bond);
 

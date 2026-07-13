@@ -302,7 +302,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     expect(bob.bonds.find(bobId, aliceId)).toBeDefined();
   });
 
-  it("handleRevoke sends revoke.notice and clears bonds store", async () => {
+  it("handleRevoke clears bonds store without sending revoke.notice", async () => {
     const alice = await makeAgent("alice-revoke");
     const bob = await makeAgent("bob-revoke");
 
@@ -361,7 +361,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
           return false;
         }
       });
-      expect(revokeNotice).toBeDefined();
+      expect(revokeNotice).toBeUndefined();
       expect(
         inboxBefore.wires.some((wire) => {
           try {

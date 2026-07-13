@@ -76,7 +76,7 @@ export interface SessionEnvelopeSender {
     payload: string;
     thread: string;
     seq?: number;
-  }): Promise<{ ok: boolean }>;
+  }): Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface SessionStateMachineDeps {

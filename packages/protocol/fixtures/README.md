@@ -22,7 +22,8 @@ committed JSON drifts from the generator without an intentional review.
 | `payload-encryption.json` | HKDF + XChaCha20-Poly1305 with `agentpair-envelope-v1` |
 | `envelope-core-msg.json` | Outer envelope v1 sign-the-blob happy path |
 | `envelope-negative.json` | §10 error codes via `receiveEnvelope` harness |
-| `pair-confirm-fingerprint.json` | §6.2 pairing fingerprint |
+| `pair-confirm-fingerprint.json` | §6.2 pairing fingerprint v1 (legacy) |
+| `pair-confirm-fingerprint-v2.json` | §6.2 pairing fingerprint v2 (profiles-bound) |
 | `pair-bond-ok-tag.json` | §6.2 bond_ok tag |
 | `artifact-spillover.json` | §5 artifact blob encrypt + spill ref golden vector |
 

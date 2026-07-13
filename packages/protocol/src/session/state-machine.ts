@@ -324,7 +324,7 @@ export function createSessionStateMachine(
       };
       upsert(session);
 
-      await deps.relay.send({
+      const sent = await deps.relay.send({
         to: input.to,
         type: "nego.open",
         payload: JSON.stringify({
@@ -337,6 +337,9 @@ export function createSessionStateMachine(
         }),
         thread,
       });
+      if (!sent.ok) {
+        return { ok: false, error: sent.error ?? "relay_unavailable" };
+      }
 
       return {
         ok: true,

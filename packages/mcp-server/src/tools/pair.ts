@@ -5,14 +5,11 @@ import {
   type PairFlowResult,
   type PairingRegistry,
   type SessionStore,
-  createOuterEnvelope,
   createSessionStore,
-  defaultEnvelopeTtl,
   pairInit,
   pairJoin,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
-import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import type { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
 import { type BondStore, FileBondStore, MemoryBondStore } from "../store/bonds.js";
@@ -145,7 +142,10 @@ async function ensureJoinerRegistry(
   return { ok: true };
 }
 
-export async function handlePairInit(ctx: AgentContext, input: { scope: string[]; mode: string }) {
+export async function handlePairInit(
+  ctx: AgentContext,
+  input: { scope: string[]; mode: string; profiles?: string[] },
+) {
   const parsedMode = parseBondMode(input.mode);
   if (!parsedMode.ok) {
     const result = { ok: false, error: parsedMode.error };
@@ -160,6 +160,7 @@ export async function handlePairInit(ctx: AgentContext, input: { scope: string[]
     keyPair,
     relay: ctx.relay,
     registry: ctx.registry,
+    profiles: input.profiles,
   });
 
   await ctx.relay.publishPairManifest({
@@ -180,15 +181,15 @@ export async function handlePairInit(ctx: AgentContext, input: { scope: string[]
     completion: "initiator_auto_scheduled",
   };
   assertNoSecrets(result);
-  scheduleInitiatorPairingCompletion(ctx, output.code);
+  scheduleInitiatorPairingCompletion(ctx, output.code, input.profiles);
   return toolTextResult(result);
 }
 
 export async function handlePairInitComplete(
   ctx: AgentContext,
-  input: { code: string },
+  input: { code: string; profiles?: string[] },
 ): Promise<PairFlowResult> {
-  return runInitiatorCompletionOnce(ctx, input.code);
+  return runInitiatorCompletionOnce(ctx, input.code, input.profiles);
 }
 
 export async function handlePairJoin(ctx: AgentContext, input: { code: string }) {
@@ -226,6 +227,7 @@ export async function executePairJoinApproval(
   input: {
     code: string;
     decision: { approve: true } | { reject: string };
+    profiles?: string[];
   },
 ): Promise<PairFlowResult> {
   await ensureJoinerRegistry(ctx, input.code);
@@ -238,6 +240,7 @@ export async function executePairJoinApproval(
     registry: ctx.registry,
     localAllowlist: ctx.allowlist,
     decision: input.decision,
+    profiles: input.profiles,
   });
 }
 
@@ -301,17 +304,6 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
 
   ctx.allowlist.set(agentId, next);
   ctx.bonds.remove(agentId, input.peer);
-
-  const notice = createOuterEnvelope({
-    sender: keyPair,
-    recipientAgentId: input.peer,
-    type: "revoke.notice",
-    thread: `revoke:${agentId}`,
-    seq: 1,
-    ttl: defaultEnvelopeTtl(),
-    payload: utf8ToBytes(JSON.stringify({ from: agentId })),
-  });
-  await ctx.relay.sendEnvelope(input.peer, notice);
 
   const result = {
     ok: true,

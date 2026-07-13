@@ -241,18 +241,26 @@ invariant drops messages on the relay and breaks pairing.
    carries its identity-bound `confirm` fields (`fingerprint`, `agentId`) — one
    wire post after reading the initiator's `pake`, preserving ping-pong.
 2. `confirm` (joiner-first, identity-bound): the joiner's `fingerprint` and
-   `agent_id` are sent in its `pake` message (step 1). The fingerprint MUST be:
+   `agent_id` are sent in its `pake` message (step 1). Each side's `pake`
+   message MUST also carry its supported `profiles` array (§6.4). The
+   fingerprint MUST be:
 
    ```
    hex(SHA-256(domain ‖ u16_be(len(sk)) ‖ sk
               ‖ u16_be(len(id_init)) ‖ id_init
-              ‖ u16_be(len(id_join))  ‖ id_join))
+              ‖ u16_be(len(id_join))  ‖ id_join
+              ‖ u16_be(len(profiles_init)) ‖ profiles_init…
+              ‖ u16_be(len(profiles_join))  ‖ profiles_join…))
    ```
 
-   where `domain` = `"agentpair-pair-confirm-v1"` (UTF-8), `sk` is the SPAKE2
-   shared key, `id_init` is the initiator's `agent_id`, and `id_join` is the
-   joiner's `agent_id`. Length prefixes are big-endian 16-bit unsigned integers.
-   `‖` denotes byte concatenation.
+   where `domain` = `"agentpair-pair-confirm-v2"` (UTF-8), `sk` is the SPAKE2
+   shared key, `id_init` is the initiator's `agent_id`, `id_join` is the
+   joiner's `agent_id`, and each profile list is encoded as
+   `u16_be(count)` followed by `count` entries of
+   `u16_be(len(profile_id)) ‖ profile_id` (UTF-8). `profiles_init` is the
+   initiator's advertised list in wire order; `profiles_join` is the joiner's.
+   Length prefixes are big-endian 16-bit unsigned integers. `‖` denotes byte
+   concatenation.
 
    Golden vector (MUST match for conformance testing):
 
@@ -260,8 +268,10 @@ invariant drops messages on the relay and breaks pairing.
      (hex)
    - `id_init` = `ed25519:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo`
    - `id_join` = `ed25519:u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s`
+   - `profiles_init` = `["core/1", "nego/1"]`
+   - `profiles_join` = `["core/1", "nego/1"]`
    - fingerprint =
-     `12e616c65b5f0ddab5b755b20b19c3ffe868b67927d77e50cde036e04ddd3c68`
+     `971c14e90ee057e1229dcf228d773d13e7e1d5919b5918d5b13667f5b67ca02e`
 
    The initiator verifies the joiner's fingerprint, then replies with its own
    `confirm`. The joiner verifies the initiator's fingerprint **and** that the
@@ -312,10 +322,15 @@ SHOULD push the updated allowlist to the relay immediately.
 
 ### 6.4 Profile advertisement
 
-During `confirm`, each side MUST include its supported profiles, e.g.
-`["core/1", "nego/1"]`. The intersection is the bond's contract; both hosts
-persist it in the bond record. Sending an envelope outside the contract is a
-protocol violation (`profile_not_supported`).
+During the `pake` phase (§6.2 step 1), each side MUST include its supported
+profiles on its `pake` wire message, e.g. `["core/1", "nego/1"]`. Profile
+lists MUST satisfy the grammar in §12. The intersection (sorted, deduplicated)
+is the bond's contract; both hosts persist it in the bond record. An empty
+intersection MUST abort bonding with `profile_not_supported`. Profile lists are
+cryptographically bound into the confirm fingerprint (§6.2 step 2); a relay
+that rewrites advertised profiles without breaking SPAKE2 will fail fingerprint
+verification. Sending an envelope whose type belongs to a profile outside the
+contract is a protocol violation (`profile_not_supported`).
 
 *Rationale: this is version/capability negotiation done once, at the trust
 boundary, instead of per-message.*
@@ -455,7 +470,8 @@ Wire/envelope: `unsupported_version`, `version_mismatch`, `invalid_json`,
 `profile_not_supported`.
 
 Bond/pairing: `pair_not_found`, `pair_session_lost`, `pake_failed`,
-`recipient_not_allowed`, `allowlist_push_failed`.
+`bond_aborted`, `bond_tag_mismatch`, `recipient_not_allowed`,
+`allowlist_push_failed`.
 
 Negotiation: `session_not_found`, `session_not_live`, `session_not_signed`,
 `session_open_expired`, `not_a_participant`, `wrong_role`,
@@ -540,8 +556,14 @@ beyond unbonding are not specified in v1 (Appendix B).
 ## 12. IANA-style Registries (internal)
 
 To extend the protocol without collisions, new envelope `type`s and profile
-ids are registered in this document via pull request. Namespace grammar:
-`<profile>.<name>`, lowercase, `[a-z_]`.
+ids are registered in this document via pull request.
+
+**Envelope type namespace:** `<profile>.<name>`, lowercase, `[a-z_]`.
+
+**Profile id grammar:** `<name>/<version>` where `<name>` matches `[a-z_]+`,
+`<version>` matches `[0-9]+`, the full id is at most 64 UTF-8 bytes, a wire
+list carries at most 32 ids, and duplicates within one list are forbidden.
+Example: `core/1`, `nego/1`, `atest/1`.
 
 ---
 

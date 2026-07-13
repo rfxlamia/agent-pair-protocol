@@ -77,14 +77,15 @@ export class FileBondStore implements BondStore {
   get(agentId: string): Bond[] {
     const agents = this.backing.read().agents;
     const hasLegacyBonds = Object.values(agents).some((bonds) =>
-      bonds.some((bond) => !("profiles" in bond)),
+      bonds.some((bond) => !(bond as Bond & { profiles?: string[] }).profiles),
     );
     if (hasLegacyBonds) {
       this.backing.mutate((data) => {
         for (const bonds of Object.values(data.agents)) {
           for (const bond of bonds) {
-            if (!("profiles" in bond)) {
-              bond.profiles = [...REFERENCE_PROFILES];
+            const entry = bond as Bond & { profiles?: string[] };
+            if (!entry.profiles) {
+              entry.profiles = [...REFERENCE_PROFILES];
             }
           }
         }

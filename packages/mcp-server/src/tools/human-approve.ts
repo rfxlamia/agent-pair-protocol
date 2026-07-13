@@ -11,7 +11,7 @@ import { assertNoSecrets, toolTextResult } from "./util.js";
 
 export async function handleHumanApprove(
   ctx: AgentContext,
-  input: { pending_id: string; decision: string; via_human?: boolean },
+  input: { pending_id: string; decision: string; via_human?: boolean; profiles?: string[] },
 ) {
   if (!input.via_human) {
     const result = { ok: false, error: "self_approval_forbidden" };
@@ -37,6 +37,7 @@ export async function handleHumanApprove(
     const flow = await executePairJoinApproval(ctx, {
       code: pending.code,
       decision: parsed,
+      profiles: input.profiles,
     });
 
     ctx.pending.remove(pending.id);

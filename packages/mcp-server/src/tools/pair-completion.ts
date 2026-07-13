@@ -39,7 +39,11 @@ function wrapRelayForCancellation(
   };
 }
 
-async function runInitiatorCompletion(ctx: AgentContext, code: string): Promise<PairFlowResult> {
+async function runInitiatorCompletion(
+  ctx: AgentContext,
+  code: string,
+  profiles?: string[],
+): Promise<PairFlowResult> {
   const generation = pairingGeneration;
   await ensureAllowlistReady(ctx);
   const keyPair = await ctx.keyStore.loadOrCreate();
@@ -49,6 +53,7 @@ async function runInitiatorCompletion(ctx: AgentContext, code: string): Promise<
     relay: wrapRelayForCancellation(ctx.relay, generation),
     registry: ctx.registry,
     localAllowlist: ctx.allowlist,
+    profiles,
   });
   if (generation !== pairingGeneration) {
     return { status: "pake_failed" };
@@ -74,6 +79,7 @@ async function runInitiatorCompletion(ctx: AgentContext, code: string): Promise<
 export function runInitiatorCompletionOnce(
   ctx: AgentContext,
   code: string,
+  profiles?: string[],
 ): Promise<PairFlowResult> {
   const bonded = completed.get(code);
   if (bonded) {
@@ -85,7 +91,7 @@ export function runInitiatorCompletionOnce(
     return existing;
   }
 
-  const task = runInitiatorCompletion(ctx, code)
+  const task = runInitiatorCompletion(ctx, code, profiles)
     .catch((error: unknown) => {
       logCompletionEvent(code, {
         status: "error",
@@ -101,8 +107,12 @@ export function runInitiatorCompletionOnce(
 }
 
 /** Fire-and-forget after pair_init; joiner approval can arrive later. */
-export function scheduleInitiatorPairingCompletion(ctx: AgentContext, code: string): void {
-  runInitiatorCompletionOnce(ctx, code).catch(() => {
+export function scheduleInitiatorPairingCompletion(
+  ctx: AgentContext,
+  code: string,
+  profiles?: string[],
+): void {
+  runInitiatorCompletionOnce(ctx, code, profiles).catch(() => {
     // Error already logged in runInitiatorCompletionOnce.
   });
 }
