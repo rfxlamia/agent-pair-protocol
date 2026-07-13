@@ -2,6 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Bond } from "@agentpair/protocol";
+import { REFERENCE_PROFILES } from "@agentpair/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFileAllowlistStore } from "./allowlist.js";
 import { FileBondStore } from "./bonds.js";
@@ -36,7 +37,11 @@ describe("file-backed stores restart simulation", () => {
     await first.flush();
 
     const second = new FileBondStore({ dataDir });
-    expect(second.find("alice", "peer-agent-1")).toEqual(SAMPLE_BOND);
+    expect(second.find("alice", "peer-agent-1")).toEqual({
+      ...SAMPLE_BOND,
+      profiles: [...REFERENCE_PROFILES],
+    });
+    await second.flush();
   });
 
   it("pending ratify survives restart", async () => {

@@ -1,4 +1,9 @@
-import type { Bond, SessionRecord, SessionStatus } from "@agentpair/protocol";
+import {
+  type Bond,
+  type SessionRecord,
+  type SessionStatus,
+  isValidProfilesArray,
+} from "@agentpair/protocol";
 
 const BOND_MODES = new Set(["ephemeral_until_session_closes", "bonded_contact"]);
 const SESSION_STATUSES = new Set<SessionStatus>([
@@ -15,13 +20,19 @@ export function isBond(value: unknown): value is Bond {
   if (typeof value !== "object" || value === null) {
     return false;
   }
-  const bond = value as Bond;
-  return (
-    typeof bond.peer === "string" &&
-    Array.isArray(bond.scope) &&
-    bond.scope.every((entry) => typeof entry === "string") &&
-    BOND_MODES.has(bond.mode)
-  );
+  const bond = value as Record<string, unknown>;
+  if (
+    typeof bond.peer !== "string" ||
+    !Array.isArray(bond.scope) ||
+    !bond.scope.every((entry) => typeof entry === "string") ||
+    !BOND_MODES.has(bond.mode as Bond["mode"])
+  ) {
+    return false;
+  }
+  if ("profiles" in bond) {
+    return isValidProfilesArray(bond.profiles);
+  }
+  return true;
 }
 
 export function parseBondAgents(agents: unknown): Record<string, Bond[]> | undefined {

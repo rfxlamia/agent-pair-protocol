@@ -1,4 +1,4 @@
-import type { Bond } from "@agentpair/protocol";
+import { type Bond, REFERENCE_PROFILES } from "@agentpair/protocol";
 import { parseBondAgents } from "./persistence-validate.js";
 import {
   type JsonPersistentStore,
@@ -76,6 +76,21 @@ export class FileBondStore implements BondStore {
 
   get(agentId: string): Bond[] {
     const agents = this.backing.read().agents;
+    const hasLegacyBonds = Object.values(agents).some((bonds) =>
+      bonds.some((bond) => !("profiles" in bond)),
+    );
+    if (hasLegacyBonds) {
+      this.backing.mutate((data) => {
+        for (const bonds of Object.values(data.agents)) {
+          for (const bond of bonds) {
+            if (!("profiles" in bond)) {
+              bond.profiles = [...REFERENCE_PROFILES];
+            }
+          }
+        }
+      });
+      return [...(this.backing.read().agents[agentId] ?? [])];
+    }
     return [...(agents[agentId] ?? [])];
   }
 
