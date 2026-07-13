@@ -160,7 +160,8 @@ export function createSessionStateMachine(
       return undefined;
     }
     const peer = peerFor(session, deps.agentId);
-    if (bondRevokedPeers.has(peer) || session.rejectReason === "bond_revoked") {
+    // Ephemeral finalize is safe: bothRatified sets ratifyApproved before bond removal.
+    if (session.rejectReason === "bond_revoked" || bondRevokedPeers.has(peer)) {
       return undefined;
     }
     if (!deps.bonds.find(deps.agentId, peer)) {
