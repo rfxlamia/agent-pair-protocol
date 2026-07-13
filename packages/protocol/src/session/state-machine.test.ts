@@ -503,6 +503,30 @@ describe("session state machine", () => {
       ).toBe(false);
     });
 
+    it("re-queues ratify on thread_closed after revoke and re-bond", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:ratify-guard-revoke-rebond-normal";
+      await signFlowToSigned(thread, artifactHash);
+      await aliceMachine.handleThreadClose(thread);
+
+      aliceMachine.handleBondRevoke(bobId);
+      aliceBonds.remove(aliceId, bobId);
+
+      let status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) return;
+      expect(status.reject_reason).toBe("thread_closed");
+      expect(status.pending_id).toBeUndefined();
+
+      aliceBonds.add(aliceId, {
+        peer: bobId,
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      });
+      status = await aliceMachine.handleStatus({ thread });
+      expect(status.pending_id).toBeTypeOf("string");
+    });
+
     it("re-queues ratify on normal-closed after re-bond but never on bond_revoked", async () => {
       const normalThread = await openAndApprove();
       const artifactHash = "sha256:ratify-guard-rebond";
