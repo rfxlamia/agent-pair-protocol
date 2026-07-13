@@ -105,6 +105,9 @@ describe("pairing flow adversarial (identity-bound confirm)", () => {
 
     expect(joinResult.status).toBe("pake_failed");
     expect(initResult.status).toBe("rolled_back");
+    if (initResult.status === "rolled_back") {
+      expect(initResult.reason).toBe("bond_aborted");
+    }
     expectZeroAllowlist();
   }, 35000);
 
@@ -200,6 +203,12 @@ describe("pairing flow adversarial (identity-bound confirm)", () => {
 
     expect(initResult.status).toBe("rolled_back");
     expect(joinResult.status).toBe("rolled_back");
+    if (initResult.status === "rolled_back") {
+      expect(initResult.reason).toBe("allowlist_push_failed");
+    }
+    if (joinResult.status === "rolled_back") {
+      expect(joinResult.reason).toBe("bond_aborted");
+    }
     expectZeroAllowlist();
   }, 20000);
 
@@ -209,6 +218,9 @@ describe("pairing flow adversarial (identity-bound confirm)", () => {
     const { initResult, joinResult } = await runPairing();
 
     expect(joinResult.status).toBe("rolled_back");
+    if (joinResult.status === "rolled_back") {
+      expect(joinResult.reason).toBe("allowlist_push_failed");
+    }
     // Initiator may remain bonded briefly, but current flow rolls back on bond_fail.
     expect(["bonded", "rolled_back"]).toContain(initResult.status);
     if (initResult.status === "bonded") {
@@ -224,6 +236,12 @@ describe("pairing flow adversarial (identity-bound confirm)", () => {
 
     expect(initResult.status).toBe("rolled_back");
     expect(joinResult.status).toBe("rolled_back");
+    if (initResult.status === "rolled_back") {
+      expect(initResult.reason).toBe("bond_aborted");
+    }
+    if (joinResult.status === "rolled_back") {
+      expect(joinResult.reason).toBe("bond_aborted");
+    }
     expectZeroAllowlist();
   }, 35000);
 
@@ -244,7 +262,36 @@ describe("pairing flow adversarial (identity-bound confirm)", () => {
 
     expect(initResult.status).toBe("bonded");
     expect(joinResult.status).toBe("rolled_back");
+    if (joinResult.status === "rolled_back") {
+      expect(joinResult.reason).toBe("bond_aborted");
+    }
     expect(initiatorAllowlist.get(initiatorId)).toContain(joinerId);
     expect(joinerAllowlist.get(joinerId)).toEqual([]);
+  }, 35000);
+
+  it("tampered initiator profiles — initiator pake_failed", async () => {
+    relay.tamperInitiatorProfiles = ["core/1"];
+
+    const { initResult, joinResult } = await runPairing();
+
+    expect(initResult.status).toBe("pake_failed");
+    expect(joinResult.status).not.toBe("bonded");
+    expectZeroAllowlist();
+  }, 20000);
+
+  it("tampered bond_ok tag — initiator rolled_back with bond_tag_mismatch", async () => {
+    relay.tamperBondOkTag = true;
+
+    const { initResult, joinResult } = await runPairing();
+
+    expect(initResult.status).toBe("rolled_back");
+    if (initResult.status === "rolled_back") {
+      expect(initResult.reason).toBe("bond_tag_mismatch");
+    }
+    expect(joinResult.status).toBe("rolled_back");
+    if (joinResult.status === "rolled_back") {
+      expect(joinResult.reason).toBe("bond_aborted");
+    }
+    expectZeroAllowlist();
   }, 35000);
 });

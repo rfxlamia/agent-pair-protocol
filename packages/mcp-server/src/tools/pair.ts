@@ -276,7 +276,7 @@ function pairFlowToolResult(flow: PairFlowResult) {
   const result = {
     ok: false,
     status: flow.status,
-    ...(flow.status === "rejected" ? { reason: flow.reason } : {}),
+    ...(flow.status === "rejected" || flow.status === "rolled_back" ? { reason: flow.reason } : {}),
   };
   assertNoSecrets(result);
   return toolTextResult(result);

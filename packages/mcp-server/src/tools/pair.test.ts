@@ -322,7 +322,11 @@ describe("mcp pair tools", () => {
 
     expect(approved.ok).toBe(false);
     expect(approved.status).toBe("rolled_back");
+    expect(approved.reason).toBe("allowlist_push_failed");
     expect(initComplete.status).toBe("rolled_back");
+    if (initComplete.status === "rolled_back") {
+      expect(initComplete.reason).toBe("bond_aborted");
+    }
 
     const aliceKeys = await alice.keyStore.loadOrCreate();
     const aliceId = publicKeyToAgentId(aliceKeys.publicKey);

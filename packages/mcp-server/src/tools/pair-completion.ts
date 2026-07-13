@@ -62,7 +62,9 @@ async function runInitiatorCompletion(ctx: AgentContext, code: string): Promise<
   } else {
     logCompletionEvent(code, {
       status: flow.status,
-      ...(flow.status === "rejected" ? { reason: flow.reason } : {}),
+      ...(flow.status === "rejected" || flow.status === "rolled_back"
+        ? { reason: flow.reason }
+        : {}),
     });
   }
   return flow;

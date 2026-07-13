@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
+import { REFERENCE_PROFILES } from "../profile/reference.js";
 import {
   type Bond,
   InMemoryPairingRegistry,
@@ -168,10 +169,12 @@ describe("pairing flow", () => {
     expect(initiatorBond.peer).toBe(joinerId);
     expect(initiatorBond.scope).toEqual(["session.negotiate"]);
     expect(initiatorBond.mode).toBe("ephemeral_until_session_closes");
+    expect(initiatorBond.profiles).toEqual([...REFERENCE_PROFILES]);
 
     expect(joinerBond.peer).toBe(initiatorId);
     expect(joinerBond.scope).toEqual(["session.negotiate"]);
     expect(joinerBond.mode).toBe("ephemeral_until_session_closes");
+    expect(joinerBond.profiles).toEqual([...REFERENCE_PROFILES]);
 
     expect(initiatorAllowlist.get(initiatorId)).toContain(joinerId);
     expect(joinerAllowlist.get(joinerId)).toContain(initiatorId);
@@ -379,6 +382,12 @@ describe("pairing flow", () => {
 
     expect(joinResult.status).toBe("rolled_back");
     expect(initResult.status).toBe("rolled_back");
+    if (joinResult.status === "rolled_back") {
+      expect(joinResult.reason).toBe("bond_aborted");
+    }
+    if (initResult.status === "rolled_back") {
+      expect(initResult.reason).toBe("allowlist_push_failed");
+    }
     expect(initiatorAllowlist.get(initiatorId)).toEqual([]);
     expect(joinerAllowlist.get(joinerId)).toEqual([]);
     expect(relay.getAllowlist(initiatorId)).toEqual([]);
@@ -424,5 +433,187 @@ describe("pairing flow", () => {
     expect(initRetry.status).toBe("bonded");
     expect(initiatorAllowlist.get(initiatorId)).toContain(joinerId);
     expect(joinerAllowlist.get(joinerId)).toContain(initiatorId);
+  }, 20000);
+
+  it("stores full profile contract when both sides advertise the reference set", async () => {
+    const { initiatorBond, joinerBond } = await runSuccessfulPairing();
+    expect(initiatorBond.profiles).toEqual(["core/1", "nego/1"]);
+    expect(joinerBond.profiles).toEqual(["core/1", "nego/1"]);
+  }, 15000);
+
+  it("returns profile_not_supported when profiles are disjoint", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      profiles: ["core/1"],
+    });
+
+    const joinPromise = pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+      profiles: ["nego/1"],
+    });
+
+    const initResult = await pairInitComplete({
+      code: pending.code,
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      localAllowlist: initiatorAllowlist,
+      profiles: ["core/1"],
+    });
+
+    const joinResult = await joinPromise;
+
+    expect(initResult.status).toBe("rolled_back");
+    expect(joinResult.status).toBe("rolled_back");
+    if (initResult.status === "rolled_back") {
+      expect(initResult.reason).toBe("profile_not_supported");
+    }
+    if (joinResult.status === "rolled_back") {
+      expect(joinResult.reason).toBe("profile_not_supported");
+    }
+    expect(initiatorAllowlist.get(initiatorId)).toEqual([]);
+    expect(joinerAllowlist.get(joinerId)).toEqual([]);
+  }, 15000);
+
+  it("stores partial intersection as bond contract", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      profiles: ["core/1", "nego/1"],
+    });
+
+    const joinPromise = pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+      profiles: ["core/1"],
+    });
+
+    const initResult = await pairInitComplete({
+      code: pending.code,
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      localAllowlist: initiatorAllowlist,
+      profiles: ["core/1", "nego/1"],
+    });
+
+    const joinResult = await joinPromise;
+
+    expect(initResult.status).toBe("bonded");
+    expect(joinResult.status).toBe("bonded");
+    if (initResult.status === "bonded" && joinResult.status === "bonded") {
+      expect(initResult.bond.profiles).toEqual(["core/1"]);
+      expect(joinResult.bond.profiles).toEqual(["core/1"]);
+    }
+  }, 15000);
+
+  it("initiator sends confirm even when intersection gate fails", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      profiles: ["core/1"],
+    });
+
+    const joinPromise = pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+      profiles: ["nego/1"],
+    });
+
+    const initResult = await pairInitComplete({
+      code: pending.code,
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      localAllowlist: initiatorAllowlist,
+      profiles: ["core/1"],
+    });
+
+    await joinPromise;
+
+    const confirmPosted = relay.postedPakeBodies.some((body) => {
+      const wire = JSON.parse(body) as { phase: string };
+      return wire.phase === "confirm";
+    });
+    expect(confirmPosted).toBe(true);
+    expect(initResult.status).toBe("rolled_back");
+    if (initResult.status === "rolled_back") {
+      expect(initResult.reason).toBe("profile_not_supported");
+    }
+  }, 15000);
+
+  it("pairRetry includes profiles on initiator pake wire", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      profiles: ["core/1", "nego/1"],
+    });
+
+    relay.failAllowlistFor = initiatorId;
+
+    const joinPromise = pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+    });
+
+    await pairInitComplete({
+      code: pending.code,
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      localAllowlist: initiatorAllowlist,
+    });
+    await joinPromise;
+
+    relay.failAllowlistFor = null;
+    relay.postedPakeBodies = [];
+
+    await pairRetry({
+      code: pending.code,
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+      profiles: ["core/1", "nego/1"],
+    });
+
+    const retryPake = relay.postedPakeBodies.find((body) => {
+      const wire = JSON.parse(body) as { phase: string; role: string; profiles?: string[] };
+      return wire.phase === "pake" && wire.role === "initiator";
+    });
+    expect(retryPake).toBeDefined();
+    if (retryPake) {
+      const wire = JSON.parse(retryPake) as { profiles: string[] };
+      expect(wire.profiles).toEqual(["core/1", "nego/1"]);
+    }
   }, 20000);
 });

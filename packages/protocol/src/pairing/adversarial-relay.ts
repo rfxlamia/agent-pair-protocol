@@ -11,6 +11,7 @@ interface WireMessage {
   payload?: string;
   role?: string;
   reason?: string;
+  profiles?: string[];
 }
 
 export class TamperingRelay extends MockRelayClient {
@@ -27,6 +28,11 @@ export class TamperingRelay extends MockRelayClient {
   injectBondFailDuringBondOk = false;
   dropInitiatorBondOkReply = false;
   malformConfirm: "omit_fingerprint" | "omit_agentId" | null = null;
+  /** When set, rewrite initiator pake profiles on poll. */
+  tamperInitiatorProfiles: string[] | null = null;
+  /** When set, rewrite joiner pake profiles on poll. */
+  tamperJoinerProfiles: string[] | null = null;
+  tamperBondOkTag = false;
 
   constructor(realInitiatorId: string, realJoinerId: string, registry: PairingRegistry) {
     super();
@@ -90,15 +96,51 @@ export class TamperingRelay extends MockRelayClient {
       return null;
     }
 
+    if (wire.phase === "pake" && wire.role === "initiator") {
+      return this.tamperInitiatorPakeProfiles(this.swapJoinerPakeAgentId(raw));
+    }
+
     if (wire.phase === "pake" && wire.role === "joiner") {
-      return this.swapJoinerPakeAgentId(raw);
+      return this.tamperJoinerPakeProfiles(raw);
     }
 
     if (wire.phase === "confirm") {
       return this.swapConfirmAgentIds(raw);
     }
 
+    if (wire.phase === "bond_ok" && this.tamperBondOkTag && wire.agentId === this.realJoinerId) {
+      return JSON.stringify({ ...wire, tag: "deadbeef".repeat(8) });
+    }
+
     return raw;
+  }
+
+  private tamperInitiatorPakeProfiles(body: string): string {
+    if (this.tamperInitiatorProfiles === null) {
+      return body;
+    }
+    const wire = JSON.parse(body) as WireMessage;
+    if (wire.phase !== "pake" || wire.role !== "initiator") {
+      return body;
+    }
+    wire.profiles = [...this.tamperInitiatorProfiles];
+    return JSON.stringify(wire);
+  }
+
+  private tamperJoinerPakeProfiles(body: string): string {
+    let result = body;
+    if (this.swapJoinerAgentId !== null) {
+      result = this.swapJoinerPakeAgentId(result);
+    }
+    if (this.tamperJoinerProfiles === null) {
+      return result;
+    }
+    const wire = JSON.parse(result) as WireMessage;
+    if (wire.phase !== "pake" || wire.role !== "joiner") {
+      return result;
+    }
+    wire.profiles = [...this.tamperJoinerProfiles];
+    return JSON.stringify(wire);
   }
 
   private swapJoinerPakeAgentId(body: string): string {
