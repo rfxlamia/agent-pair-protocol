@@ -1,6 +1,8 @@
 import {
   type KeyPair,
   type OuterEnvelope,
+  REFERENCE_PROFILES,
+  isProfileInBond,
   publicKeyToAgentId,
   wrapOrSpill,
 } from "@agentpair/protocol";
@@ -21,6 +23,11 @@ export async function sendEnvelopeWithSpill(
   input: SpillSendInput,
 ): Promise<{ ok: true; outer: OuterEnvelope } | { ok: false; error: string }> {
   const agentId = publicKeyToAgentId(input.sender.publicKey);
+  const bond = ctx.bonds.find(agentId, input.to);
+  const contract = bond?.profiles ?? [...REFERENCE_PROFILES];
+  if (!isProfileInBond(input.type, contract)) {
+    return { ok: false, error: "profile_not_supported" };
+  }
   const spillResult = await wrapOrSpill(
     {
       sender: input.sender,

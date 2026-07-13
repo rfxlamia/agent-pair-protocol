@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hasSpillMarker } from "@agentpair/protocol";
+import { REFERENCE_PROFILES, hasSpillMarker } from "@agentpair/protocol";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   type DualRelayEnv,
@@ -75,8 +75,18 @@ async function makeStubBondedPair() {
 
   allowlistAlice.set(aliceId, [bobId]);
   allowlistBob.set(bobId, [aliceId]);
-  bondsAlice.add(aliceId, { peer: bobId, scope: ["msg"], mode: "bonded_contact" });
-  bondsBob.add(bobId, { peer: aliceId, scope: ["msg"], mode: "bonded_contact" });
+  bondsAlice.add(aliceId, {
+    peer: bobId,
+    scope: ["msg"],
+    mode: "bonded_contact",
+    profiles: [...REFERENCE_PROFILES],
+  });
+  bondsBob.add(bobId, {
+    peer: aliceId,
+    scope: ["msg"],
+    mode: "bonded_contact",
+    profiles: [...REFERENCE_PROFILES],
+  });
 
   await aliceCtx.envelopeSeq.init(aliceId);
   await bobCtx.envelopeSeq.init(bobId);

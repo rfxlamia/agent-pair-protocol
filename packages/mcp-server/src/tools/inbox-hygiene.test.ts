@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   type KeyPair,
   type OuterEnvelope,
+  REFERENCE_PROFILES,
   createOuterEnvelope,
   generateKeyPair,
   publicKeyToAgentId,
@@ -160,8 +161,18 @@ async function makeBondedInboxPair() {
 
   allowlistAlice.set(aliceId, [bobId]);
   allowlistBob.set(bobId, [aliceId]);
-  bondsAlice.add(aliceId, { peer: bobId, scope: ["msg"], mode: "bonded_contact" });
-  bondsBob.add(bobId, { peer: aliceId, scope: ["msg"], mode: "bonded_contact" });
+  bondsAlice.add(aliceId, {
+    peer: bobId,
+    scope: ["msg"],
+    mode: "bonded_contact",
+    profiles: [...REFERENCE_PROFILES],
+  });
+  bondsBob.add(bobId, {
+    peer: aliceId,
+    scope: ["msg"],
+    mode: "bonded_contact",
+    profiles: [...REFERENCE_PROFILES],
+  });
 
   await aliceCtx.envelopeSeq.init(aliceId);
   await bobCtx.envelopeSeq.init(bobId);
@@ -182,9 +193,19 @@ async function makeAliceBobCarolTriple() {
   const carolId = publicKeyToAgentId(carolKeys.publicKey);
 
   aliceCtx.allowlist.set(aliceId, [...aliceCtx.allowlist.get(aliceId), carolId]);
-  aliceCtx.bonds.add(aliceId, { peer: carolId, scope: ["msg"], mode: "bonded_contact" });
+  aliceCtx.bonds.add(aliceId, {
+    peer: carolId,
+    scope: ["msg"],
+    mode: "bonded_contact",
+    profiles: [...REFERENCE_PROFILES],
+  });
   carolCtx.allowlist.set(carolId, [aliceId]);
-  carolCtx.bonds.add(carolId, { peer: aliceId, scope: ["msg"], mode: "bonded_contact" });
+  carolCtx.bonds.add(carolId, {
+    peer: aliceId,
+    scope: ["msg"],
+    mode: "bonded_contact",
+    profiles: [...REFERENCE_PROFILES],
+  });
   await carolCtx.envelopeSeq.init(carolId);
 
   return { ...pair, carolKeys, carolId, carolCtx, carolDir };

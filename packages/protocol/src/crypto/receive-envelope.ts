@@ -24,6 +24,7 @@ export interface SeqStore {
 
 export type ReceiveDispatchError =
   | "unsupported_envelope_type"
+  | "profile_not_supported"
   | "invalid_payload"
   | "not_a_participant";
 

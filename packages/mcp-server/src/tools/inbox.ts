@@ -1,6 +1,8 @@
 import {
+  REFERENCE_PROFILES,
   defaultEnvelopeTtl,
   isKnownEnvelopeType,
+  isProfileInBond,
   isSessionDispatchType,
   parseEnvelopeBody,
   parseEnvelopePayload,
@@ -173,6 +175,11 @@ export async function handleInbox(
       dispatch: async (body, plaintext) => {
         if (!isKnownEnvelopeType(body.type)) {
           return { ok: false as const, error: "unsupported_envelope_type" };
+        }
+        const bond = ctx.bonds.find(agentId, body.from);
+        const contract = bond?.profiles ?? [...REFERENCE_PROFILES];
+        if (!isProfileInBond(body.type, contract)) {
+          return { ok: false as const, error: "profile_not_supported" };
         }
         let parsed: unknown;
         try {
