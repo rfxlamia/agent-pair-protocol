@@ -23,6 +23,7 @@ import {
   MemoryEnvelopeSeqStore,
   createFileEnvelopeSeqStore,
 } from "../store/envelope-seq.js";
+import { scheduleAgentContextFlush } from "../store/flush-context.js";
 import {
   type InboxCursorStore,
   MemoryInboxCursorStore,
@@ -35,6 +36,7 @@ import {
   runInitiatorCompletionOnce,
   scheduleInitiatorPairingCompletion,
 } from "./pair-completion.js";
+import { processBondRevoke } from "./session.js";
 import { assertNoSecrets, parseBondMode, toolTextResult } from "./util.js";
 
 export interface AgentContext {
@@ -290,31 +292,47 @@ export async function handleRevoke(ctx: AgentContext, input: { peer: string }) {
   const keyPair = await ctx.keyStore.loadOrCreate();
   const agentId = publicKeyToAgentId(keyPair.publicKey);
 
+  const noBondFound = !ctx.bonds.find(agentId, input.peer);
+
+  await processBondRevoke(ctx, input.peer);
+
+  ctx.bonds.remove(agentId, input.peer);
+
   const previous = ctx.allowlist.get(agentId);
   const next = previous.filter((peer) => peer !== input.peer);
-
-  const push = await ctx.relay.putAllowlist(agentId, next, keyPair.secretKey);
-  if (!push.ok) {
-    const result = { ok: false, error: "allowlist_push_failed" };
-    assertNoSecrets(result);
-    return toolTextResult(result);
-  }
+  ctx.allowlist.set(agentId, next);
 
   const purge = await purgeInboxWithRetry(ctx, input.peer, keyPair);
+  const push = await putAllowlistWithRetry(ctx, agentId, next, keyPair);
 
-  ctx.allowlist.set(agentId, next);
-  ctx.bonds.remove(agentId, input.peer);
+  scheduleAgentContextFlush(ctx);
 
   const result = {
     ok: true,
     revoked: input.peer,
     allowed: next,
+    ...(noBondFound ? { no_bond_found: true } : {}),
     ...(purge.ok
       ? { purged: purge.deleted, ...(purge.peer_purged ? { peer_purged: true } : {}) }
       : { purge_warning: purge.error, inbox_purge_incomplete: true }),
+    ...(push.ok ? {} : { allowlist_push_incomplete: true }),
   };
   assertNoSecrets(result);
   return toolTextResult(result);
+}
+
+async function putAllowlistWithRetry(
+  ctx: AgentContext,
+  agentId: string,
+  allowed: string[],
+  keyPair: Awaited<ReturnType<AgentContext["keyStore"]["loadOrCreate"]>>,
+  attempts = 2,
+) {
+  let last = await ctx.relay.putAllowlist(agentId, allowed, keyPair.secretKey);
+  for (let attempt = 1; attempt < attempts && !last.ok; attempt += 1) {
+    last = await ctx.relay.putAllowlist(agentId, allowed, keyPair.secretKey);
+  }
+  return last;
 }
 
 async function purgeInboxWithRetry(

@@ -190,3 +190,8 @@ export async function processThreadClose(
   const machine = await getSessionMachine(ctx);
   await machine.handleThreadClose(thread, reason);
 }
+
+export async function processBondRevoke(ctx: AgentContext, peer: string): Promise<void> {
+  const machine = await getSessionMachine(ctx);
+  machine.handleBondRevoke(peer);
+}
