@@ -1,6 +1,6 @@
 {
   "name": "@agentpair/protocol",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "AgentPair v0 protocol — crypto, envelopes, SPAKE2 pairing",
   "license": "WTFPL",
   "type": "module",
@@ -19,6 +19,7 @@
     "prepublishOnly": "pnpm build",
     "pretest": "test -f wasm/pkg/spake2_pake.js || pnpm build:wasm",
     "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "generate-fixtures": "tsx scripts/generate-fixtures.ts",
     "verify-fixtures": "pnpm run generate-fixtures && git diff --exit-code -- fixtures/"
   },

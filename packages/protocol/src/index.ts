@@ -85,7 +85,17 @@ export {
 } from "./pairing/flow.js";
 export { isEphemeralBond } from "./session/bond.js";
 export { pairBondOkTag } from "./pairing/pair-bond-ok-tag.js";
-export { pairConfirmFingerprint } from "./pairing/pair-confirm-fingerprint.js";
+export {
+  pairConfirmFingerprint,
+  pairConfirmFingerprintV2,
+} from "./pairing/pair-confirm-fingerprint.js";
+export { REFERENCE_PROFILES } from "./profile/reference.js";
+export { intersectProfiles } from "./profile/intersect.js";
+export {
+  isValidProfilesArray,
+  parseProfilesWire,
+  type ParseProfilesWireResult,
+} from "./profile/wire-schema.js";
 export type {
   BudgetExtendPendingInput,
   BudgetExtendPendingItem,

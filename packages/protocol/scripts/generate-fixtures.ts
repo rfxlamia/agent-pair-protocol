@@ -14,6 +14,7 @@
  * - envelope-negative.json: hand-assembled wires (version_mismatch, tampered_sig, …)
  * - pair-bond-ok-tag.json: pairBondOkTag for initiator/joiner agent IDs
  * - pair-confirm-fingerprint.json: SPEC §6.2 golden vector (unchanged values)
+ * - pair-confirm-fingerprint-v2.json: fingerprint v2 with REFERENCE_PROFILES
  * - artifact-spillover.json: encryptArtifact with fixed key/nonce (§5 spillover)
  */
 import { writeFileSync } from "node:fs";
@@ -35,7 +36,11 @@ import {
 import { encryptArtifact } from "../src/artifact/encrypt.ts";
 import { deriveContentType, deriveSummary } from "../src/artifact/fields.ts";
 import { pairBondOkTag } from "../src/pairing/pair-bond-ok-tag.ts";
-import { pairConfirmFingerprint } from "../src/pairing/pair-confirm-fingerprint.ts";
+import {
+  pairConfirmFingerprint,
+  pairConfirmFingerprintV2,
+} from "../src/pairing/pair-confirm-fingerprint.ts";
+import { REFERENCE_PROFILES } from "../src/profile/reference.ts";
 import { sign } from "../src/crypto/sign.ts";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "../fixtures");
@@ -360,6 +365,28 @@ function buildPairConfirmFingerprint() {
   };
 }
 
+function buildPairConfirmFingerprintV2() {
+  const sharedKey = hexToBytes(PAIR_SHARED_KEY_HEX);
+  const profilesInit = [...REFERENCE_PROFILES];
+  const profilesJoin = [...REFERENCE_PROFILES];
+  return {
+    golden: {
+      sharedKeyHex: PAIR_SHARED_KEY_HEX,
+      initiatorId: PAIR_INITIATOR_ID,
+      joinerId: PAIR_JOINER_ID,
+      profilesInit,
+      profilesJoin,
+      fingerprint: pairConfirmFingerprintV2(
+        sharedKey,
+        PAIR_INITIATOR_ID,
+        PAIR_JOINER_ID,
+        profilesInit,
+        profilesJoin,
+      ),
+    },
+  };
+}
+
 const keys = makeKeys();
 writeJson("keys.json", { alice: keys.alice, bob: keys.bob });
 writeJson("base64url.json", buildBase64UrlFixture());
@@ -369,4 +396,5 @@ writeJson("envelope-core-msg.json", core);
 writeJson("envelope-negative.json", buildEnvelopeNegative(keys, core.expected.wire));
 writeJson("pair-bond-ok-tag.json", buildPairBondOkTag());
 writeJson("pair-confirm-fingerprint.json", buildPairConfirmFingerprint());
+writeJson("pair-confirm-fingerprint-v2.json", buildPairConfirmFingerprintV2());
 writeJson("artifact-spillover.json", buildArtifactSpilloverFixture());
