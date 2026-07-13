@@ -90,6 +90,7 @@ export {
   pairConfirmFingerprintV2,
 } from "./pairing/pair-confirm-fingerprint.js";
 export { REFERENCE_PROFILES } from "./profile/reference.js";
+export { isProfileInBond, profileForEnvelopeType } from "./profile/envelope-profile.js";
 export { intersectProfiles } from "./profile/intersect.js";
 export {
   isValidProfilesArray,
