@@ -461,6 +461,83 @@ describe("session state machine", () => {
     });
   });
 
+  describe("ensureRatifyPending bond revoke guards", () => {
+    it("does not re-queue ratify after bond_revoked close via session_status", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:ratify-guard-bond-revoked";
+      await signFlowToSigned(thread, artifactHash);
+      expect(alicePending.list().some((item) => item.kind === "ratify")).toBe(true);
+
+      aliceMachine.handleBondRevoke(bobId);
+      for (const item of alicePending
+        .list()
+        .filter((pending) => pending.kind === "ratify" && pending.thread === thread)) {
+        alicePending.remove(item.id);
+      }
+
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) return;
+      expect(status.status).toBe("closed");
+      expect(status.reject_reason).toBe("bond_revoked");
+      expect(status.pending_id).toBeUndefined();
+      expect(
+        alicePending.list().some((item) => item.kind === "ratify" && item.thread === thread),
+      ).toBe(false);
+    });
+
+    it("does not re-queue ratify when bond absent on normal-closed session", async () => {
+      const thread = await openAndApprove();
+      const artifactHash = "sha256:ratify-guard-no-bond";
+      await signFlowToSigned(thread, artifactHash);
+      await aliceMachine.handleThreadClose(thread, "done");
+      aliceBonds.remove(aliceId, bobId);
+
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) return;
+      expect(status.pending_id).toBeUndefined();
+      expect(
+        alicePending.list().some((item) => item.kind === "ratify" && item.thread === thread),
+      ).toBe(false);
+    });
+
+    it("re-queues ratify on normal-closed after re-bond but never on bond_revoked", async () => {
+      const normalThread = await openAndApprove();
+      const artifactHash = "sha256:ratify-guard-rebond";
+      await signFlowToSigned(normalThread, artifactHash);
+      await aliceMachine.handleThreadClose(normalThread, "done");
+      aliceBonds.remove(aliceId, bobId);
+
+      let status = await aliceMachine.handleStatus({ thread: normalThread });
+      expect(status.pending_id).toBeUndefined();
+
+      aliceBonds.add(aliceId, {
+        peer: bobId,
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      });
+      status = await aliceMachine.handleStatus({ thread: normalThread });
+      expect(status.pending_id).toBeTypeOf("string");
+
+      const revokedThread = await openAndApprove();
+      await signFlowToSigned(revokedThread, artifactHash);
+      aliceMachine.handleBondRevoke(bobId);
+      aliceBonds.add(aliceId, {
+        peer: bobId,
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      });
+
+      status = await aliceMachine.handleStatus({ thread: revokedThread });
+      expect(status.reject_reason).toBe("bond_revoked");
+      expect(status.pending_id).toBeUndefined();
+      expect(
+        alicePending.list().some((item) => item.kind === "ratify" && item.thread === revokedThread),
+      ).toBe(false);
+    });
+  });
+
   describe("handleThreadClose", () => {
     it("transitions live session to closed (§8.3 any → core.close → closed)", async () => {
       const thread = await openAndApprove();
