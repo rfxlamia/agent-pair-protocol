@@ -559,6 +559,112 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     });
   });
 
+  describe("N5 revoke integration", () => {
+    it("revoke then human_approve returns pending_not_found with no outbound", async () => {
+      const alice = await makeAgent("n5-revoke-approve-alice");
+      const bob = await makeAgent("n5-revoke-approve-bob");
+      const { aliceId, bobId, bobKeys } = await pairBondedAgents(alice, bob);
+
+      const opened = structured(
+        await handleSessionOpen(bob, {
+          to: aliceId,
+          goal: "revoke wins over approve",
+          ...SESSION_OPEN_INPUT,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+
+      const aliceBootstrap = structured(await handleInbox(alice, { since: 0 }));
+      expect(aliceBootstrap.ok).toBe(true);
+      if (!aliceBootstrap.ok) return;
+      const sessionOpenPending = alice.pending.list().find((item) => item.kind === "session_open");
+      expect(sessionOpenPending).toBeDefined();
+      if (!sessionOpenPending) return;
+      const pendingId = sessionOpenPending.id;
+
+      const inboxBefore = await bob.relay.pullInbox(bobKeys, 0, { bonded_only: false });
+      const cursorBefore = inboxBefore.ok ? (inboxBefore.cursor ?? 0) : 0;
+
+      const revoked = structured(await handleRevoke(alice, { peer: bobId }));
+      expect(revoked.ok).toBe(true);
+
+      const approve = structured(
+        await handleHumanApprove(alice, {
+          pending_id: pendingId,
+          decision: "approve",
+          via_human: true,
+        }),
+      );
+      expect(approve.ok).toBe(false);
+      if (approve.ok) return;
+      expect(approve.error).toBe("pending_not_found");
+
+      const inboxAfter = await bob.relay.pullInbox(bobKeys, cursorBefore, { bonded_only: false });
+      expect(inboxAfter.ok).toBe(true);
+      if (!inboxAfter.ok) return;
+      const openApproved = inboxAfter.wires.filter((wire) => {
+        try {
+          const body = parseEnvelopeBody(deserializeOuterEnvelope(wire));
+          return body.type === "nego.open_approved" && body.thread === opened.thread;
+        } catch {
+          return false;
+        }
+      });
+      expect(openApproved).toHaveLength(0);
+    });
+
+    it("inbound nego.open_approved on bond_revoked session returns thread_closed", async () => {
+      const alice = await makeAgent("n5-inbound-guard-alice");
+      const bob = await makeAgent("n5-inbound-guard-bob");
+      const { bobId } = await pairBondedAgents(alice, bob);
+
+      const opened = structured(
+        await handleSessionOpen(alice, {
+          to: bobId,
+          goal: "inbound guard after revoke",
+          ...SESSION_OPEN_INPUT,
+        }),
+      );
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+
+      const bobBootstrap = structured(await handleInbox(bob, { since: 0 }));
+      expect(bobBootstrap.ok).toBe(true);
+      if (!bobBootstrap.ok) return;
+      const bobPending = bob.pending.list().find((item) => item.kind === "session_open");
+      expect(bobPending).toBeDefined();
+      if (!bobPending) return;
+
+      await handleHumanApprove(bob, {
+        pending_id: bobPending.id,
+        decision: "approve",
+        via_human: true,
+      });
+      structured(await handleInbox(alice, { since: 0 }));
+
+      const revoked = structured(await handleRevoke(alice, { peer: bobId }));
+      expect(revoked.ok).toBe(true);
+
+      const before = alice.sessionStore.get(opened.thread);
+      expect(before?.rejectReason).toBe("bond_revoked");
+
+      const { processSessionInboxEnvelope } = await import("./session.js");
+      const result = structured(
+        await processSessionInboxEnvelope(alice, {
+          from: bobId,
+          type: "nego.open_approved",
+          thread: opened.thread,
+          payload: JSON.stringify({ thread: opened.thread }),
+        }),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBe("thread_closed");
+      expect(alice.sessionStore.get(opened.thread)).toEqual(before);
+    });
+  });
+
   it("createFileAllowlistStore get() reads persisted allowlist synchronously", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agentpair-allowlist-race-"));
     tempDirs.push(dir);
