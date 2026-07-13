@@ -82,6 +82,7 @@ export {
   type PairingRegistry,
   type PairingRelayClient,
   type PendingPair,
+  type RolledBackReason,
 } from "./pairing/flow.js";
 export { isEphemeralBond } from "./session/bond.js";
 export { pairBondOkTag } from "./pairing/pair-bond-ok-tag.js";

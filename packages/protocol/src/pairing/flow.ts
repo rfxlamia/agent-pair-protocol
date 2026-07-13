@@ -1,7 +1,10 @@
 import { decodeBase64UrlStrict, encodeBase64Url } from "../crypto/base64url.js";
 import { type KeyPair, publicKeyToAgentId } from "../crypto/keys.js";
+import { intersectProfiles } from "../profile/intersect.js";
+import { REFERENCE_PROFILES } from "../profile/reference.js";
+import { parseProfilesWire } from "../profile/wire-schema.js";
 import { pairBondOkTag } from "./pair-bond-ok-tag.js";
-import { pairConfirmFingerprint } from "./pair-confirm-fingerprint.js";
+import { pairConfirmFingerprintV2 } from "./pair-confirm-fingerprint.js";
 import { generatePairingCode } from "./pairing-words.js";
 import { type PakeSessionHandle, finish, init, respond, start } from "./pake-adapter.js";
 
@@ -9,10 +12,17 @@ export const PAIR_TTL_MS = 5 * 60 * 1000;
 
 export type BondMode = "ephemeral_until_session_closes" | "bonded_contact";
 
+export type RolledBackReason =
+  | "profile_not_supported"
+  | "bond_aborted"
+  | "bond_tag_mismatch"
+  | "allowlist_push_failed";
+
 export interface Bond {
   peer: string;
   scope: string[];
   mode: BondMode;
+  profiles: string[];
 }
 
 export interface PairProposal {
@@ -71,8 +81,15 @@ export class InMemoryPairingRegistry implements PairingRegistry {
 }
 
 type PairWireMessage =
-  | { phase: "pake"; payload: string; role: "initiator" }
-  | { phase: "pake"; payload: string; role: "joiner"; fingerprint: string; agentId: string }
+  | { phase: "pake"; payload: string; role: "initiator"; profiles: string[] }
+  | {
+      phase: "pake";
+      payload: string;
+      role: "joiner";
+      fingerprint: string;
+      agentId: string;
+      profiles: string[];
+    }
   | { phase: "confirm"; fingerprint: string; agentId: string }
   | { phase: "reject"; reason: string }
   | { phase: "bond_ok"; agentId: string; tag: string }
@@ -82,7 +99,7 @@ export type PairFlowResult =
   | { status: "bonded"; bond: Bond }
   | { status: "rejected"; reason: string }
   | { status: "pake_failed" }
-  | { status: "rolled_back" }
+  | { status: "rolled_back"; reason: RolledBackReason }
   | { status: "not_found" }
   | { status: "expired" };
 
@@ -113,6 +130,19 @@ function decodePakePayload(payload: string): Uint8Array {
   return decodeBase64UrlStrict(payload);
 }
 
+function resolveOwnProfiles(profiles?: string[]): string[] {
+  const parsed = parseProfilesWire(profiles ?? [...REFERENCE_PROFILES]);
+  if (!parsed.ok) {
+    throw new Error(`invalid profiles: ${parsed.error}`);
+  }
+  return parsed.profiles;
+}
+
+function parseWireProfiles(value: unknown): string[] | null {
+  const parsed = parseProfilesWire(value);
+  return parsed.ok ? parsed.profiles : null;
+}
+
 function parseConfirmMessage(
   wire: PairWireMessage,
 ): { fingerprint: string; agentId: string } | null {
@@ -128,9 +158,23 @@ function parseConfirmMessage(
   return { fingerprint: wire.fingerprint, agentId: wire.agentId };
 }
 
+function parseInitiatorPake(wire: PairWireMessage): { payload: string; profiles: string[] } | null {
+  if (wire.phase !== "pake" || wire.role !== "initiator") {
+    return null;
+  }
+  if (typeof wire.payload !== "string" || wire.payload.length === 0) {
+    return null;
+  }
+  const profiles = parseWireProfiles(wire.profiles);
+  if (!profiles) {
+    return null;
+  }
+  return { payload: wire.payload, profiles };
+}
+
 function parseJoinerPakeWithConfirm(
   wire: PairWireMessage,
-): { payload: string; fingerprint: string; agentId: string } | null {
+): { payload: string; fingerprint: string; agentId: string; profiles: string[] } | null {
   if (wire.phase !== "pake" || wire.role !== "joiner") {
     return null;
   }
@@ -143,7 +187,16 @@ function parseJoinerPakeWithConfirm(
   if (typeof wire.agentId !== "string" || wire.agentId.length === 0) {
     return null;
   }
-  return { payload: wire.payload, fingerprint: wire.fingerprint, agentId: wire.agentId };
+  const profiles = parseWireProfiles(wire.profiles);
+  if (!profiles) {
+    return null;
+  }
+  return {
+    payload: wire.payload,
+    fingerprint: wire.fingerprint,
+    agentId: wire.agentId,
+    profiles,
+  };
 }
 
 function parseBondOkMessage(wire: PairWireMessage): { agentId: string; tag: string } | null {
@@ -233,9 +286,11 @@ export async function pairInit(input: {
   keyPair: KeyPair;
   relay: PairingRelayClient;
   registry: PairingRegistry;
+  profiles?: string[];
 }): Promise<PairInitOutput> {
   await init();
 
+  const profiles = resolveOwnProfiles(input.profiles);
   const code = generatePairingCode();
   const sessionId = generateSessionId();
   const createdAt = Date.now();
@@ -263,6 +318,7 @@ export async function pairInit(input: {
       phase: "pake",
       payload: encodePakePayload(message),
       role: "initiator",
+      profiles,
     }),
   );
 
@@ -274,6 +330,7 @@ export async function pairRetry(input: {
   keyPair: KeyPair;
   relay: PairingRelayClient;
   registry: PairingRegistry;
+  profiles?: string[];
 }): Promise<PairInitOutput> {
   const pendingResult = lookupPending(input.registry, input.code);
   if ("status" in pendingResult) {
@@ -282,6 +339,7 @@ export async function pairRetry(input: {
 
   await init();
 
+  const profiles = resolveOwnProfiles(input.profiles);
   const sessionId = generateSessionId();
   input.registry.update(input.code, {
     sessionId,
@@ -297,6 +355,7 @@ export async function pairRetry(input: {
       phase: "pake",
       payload: encodePakePayload(message),
       role: "initiator",
+      profiles,
     }),
   );
 
@@ -316,6 +375,7 @@ export async function pairJoin(input: {
   registry: PairingRegistry;
   localAllowlist: LocalAllowlistStore;
   decision: { approve: true } | { reject: string };
+  profiles?: string[];
 }): Promise<PairFlowResult> {
   const pendingResult = lookupPending(input.registry, input.code);
   if ("status" in pendingResult) {
@@ -324,6 +384,7 @@ export async function pairJoin(input: {
 
   const pending = pendingResult;
   const joinerAgentId = publicKeyToAgentId(input.keyPair.publicKey);
+  const profilesJoin = resolveOwnProfiles(input.profiles);
 
   if ("reject" in input.decision) {
     await input.relay.postPakeMessage(
@@ -345,18 +406,23 @@ export async function pairJoin(input: {
     pending.sessionId,
     (message) => message.phase === "pake" && message.role === "initiator",
   );
-  if (!initiatorWire || initiatorWire.phase !== "pake") {
+  if (!initiatorWire) {
+    return { status: "pake_failed" };
+  }
+  const initiatorPake = parseInitiatorPake(initiatorWire);
+  if (!initiatorPake) {
     return { status: "pake_failed" };
   }
 
   let initiatorMessage: Uint8Array;
   try {
-    initiatorMessage = decodePakePayload(initiatorWire.payload);
+    initiatorMessage = decodePakePayload(initiatorPake.payload);
   } catch {
     return { status: "pake_failed" };
   }
   const joiner = respond(pakeCode, pending.sessionId, initiatorMessage);
   const sharedKey = finish(joiner.session, initiatorMessage);
+  const profilesInit = initiatorPake.profiles;
 
   await input.relay.postPakeMessage(
     pending.sessionId,
@@ -364,12 +430,15 @@ export async function pairJoin(input: {
       phase: "pake",
       payload: encodePakePayload(joiner.message),
       role: "joiner",
-      fingerprint: pairConfirmFingerprint(
+      fingerprint: pairConfirmFingerprintV2(
         sharedKey,
         pending.proposal.initiatorAgentId,
         joinerAgentId,
+        profilesInit,
+        profilesJoin,
       ),
       agentId: joinerAgentId,
+      profiles: profilesJoin,
     }),
   );
 
@@ -392,10 +461,12 @@ export async function pairJoin(input: {
     return { status: "pake_failed" };
   }
 
-  const expectedInitiatorFingerprint = pairConfirmFingerprint(
+  const expectedInitiatorFingerprint = pairConfirmFingerprintV2(
     sharedKey,
     pending.proposal.initiatorAgentId,
     joinerAgentId,
+    profilesInit,
+    profilesJoin,
   );
   if (
     initiatorConfirm.fingerprint !== expectedInitiatorFingerprint ||
@@ -405,10 +476,16 @@ export async function pairJoin(input: {
     return { status: "pake_failed" };
   }
 
+  const contractProfiles = intersectProfiles(profilesInit, profilesJoin);
+  if (contractProfiles.length === 0) {
+    return { status: "rolled_back", reason: "profile_not_supported" };
+  }
+
   const bond: Bond = {
     peer: pending.proposal.initiatorAgentId,
     scope: [...pending.proposal.scope],
     mode: pending.proposal.mode,
+    profiles: contractProfiles,
   };
 
   await input.relay.postPakeMessage(
@@ -429,7 +506,7 @@ export async function pairJoin(input: {
     BOND_COORDINATION_TIMEOUT_MS,
   );
   if (!peerBondWire || peerBondWire.phase === "bond_fail") {
-    return { status: "rolled_back" };
+    return { status: "rolled_back", reason: "bond_aborted" };
   }
   const peerBond = parseBondOkMessage(peerBondWire);
   if (
@@ -437,7 +514,7 @@ export async function pairJoin(input: {
     peerBond.agentId !== pending.proposal.initiatorAgentId ||
     !bondOkTagMatches(sharedKey, peerBond.agentId, peerBond.tag)
   ) {
-    return { status: "rolled_back" };
+    return { status: "rolled_back", reason: "bond_tag_mismatch" };
   }
 
   const previousAllowed = input.localAllowlist.get(joinerAgentId);
@@ -458,7 +535,7 @@ export async function pairJoin(input: {
       input.keyPair.secretKey,
     );
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "rolled_back" };
+    return { status: "rolled_back", reason: "allowlist_push_failed" };
   }
 
   return { status: "bonded", bond };
@@ -470,6 +547,7 @@ export async function pairInitComplete(input: {
   relay: PairingRelayClient;
   registry: PairingRegistry;
   localAllowlist: LocalAllowlistStore;
+  profiles?: string[];
 }): Promise<PairFlowResult> {
   const pendingResult = lookupPending(input.registry, input.code);
   if ("status" in pendingResult) {
@@ -478,6 +556,7 @@ export async function pairInitComplete(input: {
 
   const pending = pendingResult;
   const initiatorAgentId = publicKeyToAgentId(input.keyPair.publicKey);
+  const profilesInit = resolveOwnProfiles(input.profiles);
 
   if (pending.rejectReason) {
     return { status: "rejected", reason: pending.rejectReason };
@@ -518,11 +597,14 @@ export async function pairInitComplete(input: {
     fingerprint: joinerPake.fingerprint,
     agentId: joinerPake.agentId,
   };
+  const profilesJoin = joinerPake.profiles;
 
-  const expectedJoinerFingerprint = pairConfirmFingerprint(
+  const expectedJoinerFingerprint = pairConfirmFingerprintV2(
     sharedKey,
     initiatorAgentId,
     joinerConfirm.agentId,
+    profilesInit,
+    profilesJoin,
   );
   if (joinerConfirm.fingerprint !== expectedJoinerFingerprint) {
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
@@ -533,15 +615,27 @@ export async function pairInitComplete(input: {
     pending.sessionId,
     encodeWireMessage({
       phase: "confirm",
-      fingerprint: pairConfirmFingerprint(sharedKey, initiatorAgentId, joinerConfirm.agentId),
+      fingerprint: pairConfirmFingerprintV2(
+        sharedKey,
+        initiatorAgentId,
+        joinerConfirm.agentId,
+        profilesInit,
+        profilesJoin,
+      ),
       agentId: initiatorAgentId,
     }),
   );
+
+  const contractProfiles = intersectProfiles(profilesInit, profilesJoin);
+  if (contractProfiles.length === 0) {
+    return { status: "rolled_back", reason: "profile_not_supported" };
+  }
 
   const bond: Bond = {
     peer: joinerConfirm.agentId,
     scope: [...pending.proposal.scope],
     mode: pending.proposal.mode,
+    profiles: contractProfiles,
   };
 
   const joinerBondWire = await pollWireMessage(
@@ -553,7 +647,7 @@ export async function pairInitComplete(input: {
     BOND_COORDINATION_TIMEOUT_MS,
   );
   if (!joinerBondWire || joinerBondWire.phase === "bond_fail") {
-    return { status: "rolled_back" };
+    return { status: "rolled_back", reason: "bond_aborted" };
   }
   const joinerBond = parseBondOkMessage(joinerBondWire);
   if (
@@ -561,7 +655,8 @@ export async function pairInitComplete(input: {
     joinerBond.agentId !== joinerConfirm.agentId ||
     !bondOkTagMatches(sharedKey, joinerBond.agentId, joinerBond.tag)
   ) {
-    return { status: "rolled_back" };
+    await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
+    return { status: "rolled_back", reason: "bond_tag_mismatch" };
   }
 
   const previousAllowed = input.localAllowlist.get(initiatorAgentId);
@@ -584,7 +679,7 @@ export async function pairInitComplete(input: {
     );
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
     input.registry.update(input.code, { rolledBack: true });
-    return { status: "rolled_back" };
+    return { status: "rolled_back", reason: "allowlist_push_failed" };
   }
 
   await input.relay.postPakeMessage(
@@ -608,7 +703,7 @@ export async function pairInitComplete(input: {
         input.keyPair.secretKey,
       );
       input.registry.update(input.code, { rolledBack: true });
-      return { status: "rolled_back" };
+      return { status: "rolled_back", reason: "bond_aborted" };
     }
   }
 
@@ -627,7 +722,7 @@ export async function pairInitComplete(input: {
       input.keyPair.secretKey,
     );
     input.registry.update(input.code, { rolledBack: true });
-    return { status: "rolled_back" };
+    return { status: "rolled_back", reason: "bond_aborted" };
   }
 
   return { status: "bonded", bond };

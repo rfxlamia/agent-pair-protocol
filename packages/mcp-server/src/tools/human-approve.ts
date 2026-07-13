@@ -103,7 +103,7 @@ export async function handleHumanApprove(
 function spreadFlowError(
   flow: Awaited<ReturnType<typeof executePairJoinApproval>>,
 ): Record<string, unknown> {
-  if (flow.status === "rejected") {
+  if (flow.status === "rejected" || flow.status === "rolled_back") {
     return { reason: flow.reason };
   }
   return {};
