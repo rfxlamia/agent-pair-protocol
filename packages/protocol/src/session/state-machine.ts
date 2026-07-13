@@ -160,15 +160,13 @@ export function createSessionStateMachine(
     }
   }
 
-  const bondRevokedPeers = new Set<string>();
-
   function ensureRatifyPending(session: SessionRecord) {
     if (session.status !== "signed" && session.status !== "closed") {
       return undefined;
     }
     const peer = peerFor(session, deps.agentId);
     // Ephemeral finalize is safe: bothRatified sets ratifyApproved before bond removal.
-    if (session.rejectReason === "bond_revoked" || bondRevokedPeers.has(peer)) {
+    if (session.rejectReason === "bond_revoked") {
       return undefined;
     }
     if (!deps.bonds.find(deps.agentId, peer)) {
@@ -1029,7 +1027,6 @@ export function createSessionStateMachine(
     },
 
     handleBondRevoke(peer: string) {
-      bondRevokedPeers.add(peer);
       const nonTerminal: SessionStatus[] = ["pending", "live", "signed"];
 
       for (const session of store.list()) {

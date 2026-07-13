@@ -454,6 +454,7 @@ describe("session state machine", () => {
       aliceMachine.handleBondRevoke(bobId);
 
       expect(alicePending.get(orphanRatify.id)).toBeUndefined();
+      aliceBonds.remove(aliceId, bobId);
       const status = await aliceMachine.handleStatus({ thread });
       expect(status.pending_id).toBeUndefined();
       expect(status.status).toBe("closed");
