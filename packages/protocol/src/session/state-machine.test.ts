@@ -116,7 +116,12 @@ describe("session state machine", () => {
   let aliceBonds: MockBondStore;
   let bobBonds: MockBondStore;
 
-  function createLinkedMachines() {
+  type RelayCapture = { type: string; to: string; thread: string; payload: string };
+
+  function createLinkedMachines(capture?: {
+    aliceSends?: RelayCapture[];
+    bobSends?: RelayCapture[];
+  }) {
     const peers = new Map<string, SessionStateMachine>();
 
     const deliver = async (
@@ -143,6 +148,12 @@ describe("session state machine", () => {
       bonds: aliceBonds,
       relay: {
         async send(input) {
+          capture?.aliceSends?.push({
+            type: input.type,
+            to: input.to,
+            thread: input.thread,
+            payload: input.payload,
+          });
           await deliver(aliceId, input);
           return { ok: true };
         },
@@ -157,6 +168,12 @@ describe("session state machine", () => {
       bonds: bobBonds,
       relay: {
         async send(input) {
+          capture?.bobSends?.push({
+            type: input.type,
+            to: input.to,
+            thread: input.thread,
+            payload: input.payload,
+          });
           await deliver(bobId, input);
           return { ok: true };
         },
@@ -218,6 +235,9 @@ describe("session state machine", () => {
     vi.useRealTimers();
   });
 
+  const FUTURE_DEADLINE = new Date(Date.now() + 86_400_000).toISOString();
+  const PAST_DEADLINE = new Date(Date.now() - 60_000).toISOString();
+
   const openPayload = {
     goal: "Agree telemetry API contract v1",
     acceptance: [
@@ -228,7 +248,7 @@ describe("session state machine", () => {
         runner: "payload-size",
       },
     ],
-    budget: { max_turns: 30 },
+    budget: { max_turns: 30, deadline: FUTURE_DEADLINE },
     mandate: {
       agent_may: ["propose", "counter", "accept_section", "challenge"],
       human_required: ["sign_final", "budget_extend", "constraint_change"],
@@ -372,7 +392,7 @@ describe("session state machine", () => {
       expect(expiredOpen.ok).toBe(true);
       if (!expiredOpen.ok) return;
       vi.advanceTimersByTime(SESSION_OPEN_TTL_MS + 1);
-      await bobMachine.handleExpirePendingOpens();
+      await bobMachine.handleExpireSessions();
       const expiredBefore = aliceMachine.store.get(expiredOpen.thread);
 
       aliceMachine.handleBondRevoke(bobId);
@@ -415,7 +435,6 @@ describe("session state machine", () => {
         payload: JSON.stringify({
           ...openPayload,
           from: bobId,
-          expires_at: Date.now() + SESSION_OPEN_TTL_MS,
         }),
       });
       expect(inbound.ok).toBe(true);
@@ -636,7 +655,7 @@ describe("session state machine", () => {
       from: aliceId,
       type: "nego.open",
       thread,
-      payload: JSON.stringify({ ...openPayload, expires_at: Date.now() + SESSION_OPEN_TTL_MS }),
+      payload: JSON.stringify(openPayload),
     });
     expect(result.ok).toBe(true);
   });
@@ -720,7 +739,7 @@ describe("session state machine", () => {
 
     vi.advanceTimersByTime(SESSION_OPEN_TTL_MS + 1);
 
-    const expired = await bobMachine.handleExpirePendingOpens();
+    const expired = await bobMachine.handleExpireSessions();
     expect(expired.ok).toBe(true);
     if (!expired.ok) {
       return;
@@ -771,7 +790,6 @@ describe("session state machine", () => {
       budget: openPayload.budget,
       mandate: openPayload.mandate,
       from: aliceId,
-      expires_at: Date.now() + SESSION_OPEN_TTL_MS,
     };
     const redelivered = await bobMachine.handleIncomingEnvelope({
       from: aliceId,
@@ -1085,7 +1103,7 @@ describe("session state machine", () => {
     const opened = await aliceMachine.handleOpen({
       to: bobId,
       ...openPayload,
-      budget: { max_turns: 2 },
+      budget: { max_turns: 2, deadline: FUTURE_DEADLINE },
     });
     expect(opened.ok).toBe(true);
     if (!opened.ok) {
@@ -1716,7 +1734,7 @@ describe("session state machine", () => {
       expect(opened.ok).toBe(true);
       if (!opened.ok) throw new Error("open failed");
       vi.advanceTimersByTime(SESSION_OPEN_TTL_MS + 1);
-      await bobMachine.handleExpirePendingOpens();
+      await bobMachine.handleExpireSessions();
       return opened.thread;
     }
 
@@ -1955,7 +1973,6 @@ describe("session state machine", () => {
         payload: JSON.stringify({
           ...openPayload,
           from: aliceId,
-          expires_at: Date.now() + SESSION_OPEN_TTL_MS,
         }),
       });
       expect(result.ok).toBe(true);
@@ -2000,6 +2017,353 @@ describe("session state machine", () => {
       }
       expect(status.status).toBe("pending");
       expect(status.goal).toBe(openPayload.goal);
+    });
+  });
+
+  describe("deadline expiry (M2.4)", () => {
+    function sessionOpenPendingId(): string {
+      const pending = bobPending.list().find((i) => i.kind === "session_open");
+      if (!pending) {
+        throw new Error("expected session_open pending item");
+      }
+      return pending.id;
+    }
+
+    function requireSession(thread: string) {
+      const session = aliceMachine.store.get(thread);
+      if (!session) {
+        throw new Error(`expected session ${thread}`);
+      }
+      return session;
+    }
+
+    it("handleOpen rejects past deadline before creating session or sending", async () => {
+      const aliceSends: RelayCapture[] = [];
+      const { alice } = createLinkedMachines({ aliceSends });
+      aliceMachine = alice;
+      const beforeCount = aliceMachine.store.list().length;
+      const result = await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+        budget: { max_turns: 30, deadline: PAST_DEADLINE },
+      });
+      expect(result).toEqual({ ok: false, error: "invalid_payload" });
+      expect(aliceMachine.store.list().length).toBe(beforeCount);
+      expect(aliceSends).toHaveLength(0);
+    });
+
+    it("handleOpen accepts deadline equal to now (strict > guard)", async () => {
+      vi.setSystemTime(new Date("2030-06-01T12:00:00.000Z"));
+      const deadline = "2030-06-01T12:00:00.000Z";
+      const result = await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+        budget: { max_turns: 30, deadline },
+      });
+      expect(result.ok).toBe(true);
+    });
+
+    it("handleOpen wire payload has budget.deadline and no expires_at", async () => {
+      const aliceSends: RelayCapture[] = [];
+      const { alice, bob } = createLinkedMachines({ aliceSends });
+      aliceMachine = alice;
+      bobMachine = bob;
+      const opened = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
+      expect(opened.ok).toBe(true);
+      const openSend = aliceSends.find((s) => s.type === "nego.open");
+      if (!openSend) {
+        throw new Error("expected nego.open send");
+      }
+      const body = JSON.parse(openSend.payload) as Record<string, unknown>;
+      expect((body.budget as { deadline?: string }).deadline).toBeDefined();
+      expect(body).not.toHaveProperty("expires_at");
+    });
+
+    it("recipient session expiresAt equals createdAt + SESSION_OPEN_TTL_MS", async () => {
+      vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+      const thread = crypto.randomUUID();
+      await bobMachine.handleIncomingOpen({
+        thread,
+        from: aliceId,
+        goal: openPayload.goal,
+        acceptance: openPayload.acceptance,
+        budget: openPayload.budget,
+        mandate: openPayload.mandate,
+      });
+      const session = bobMachine.store.get(thread);
+      expect(session?.expiresAt).toBe(Date.now() + SESSION_OPEN_TTL_MS);
+    });
+
+    it("handleIncomingOpen with past deadline → open_expired, no pending, courtesy sent", async () => {
+      const bobSends: RelayCapture[] = [];
+      const { bob } = createLinkedMachines({ bobSends });
+      const thread = crypto.randomUUID();
+      const result = await bob.handleIncomingOpen({
+        thread,
+        from: aliceId,
+        goal: openPayload.goal,
+        acceptance: openPayload.acceptance,
+        budget: { max_turns: 30, deadline: PAST_DEADLINE },
+        mandate: openPayload.mandate,
+      });
+      expect(result).toMatchObject({ ok: true, status: "open_expired" });
+      expect(bob.store.get(thread)?.status).toBe("open_expired");
+      expect(bobPending.list().filter((i) => i.kind === "session_open")).toHaveLength(0);
+      expect(bobSends.some((s) => s.type === "nego.open_expired")).toBe(true);
+      expect(bobSends[0]).toMatchObject({ type: "nego.open_expired", to: aliceId, thread });
+    });
+
+    it("redelivered nego.open on open_expired is no-op", async () => {
+      const bobSends: RelayCapture[] = [];
+      const { bob } = createLinkedMachines({ bobSends });
+      const thread = crypto.randomUUID();
+      const input = {
+        thread,
+        from: aliceId,
+        goal: openPayload.goal,
+        acceptance: openPayload.acceptance,
+        budget: { max_turns: 30, deadline: PAST_DEADLINE },
+        mandate: openPayload.mandate,
+      };
+      await bob.handleIncomingOpen(input);
+      const sendCountAfterFirst = bobSends.length;
+      const beforePending = bobPending.list().length;
+      const second = await bob.handleIncomingOpen(input);
+      expect(second).toMatchObject({ ok: true, status: "open_expired" });
+      expect(bobPending.list().length).toBe(beforePending);
+      expect(bobSends.length).toBe(sendCountAfterFirst);
+    });
+
+    it("now equal to deadline is not expired for effectiveOpenExpiry check", async () => {
+      vi.setSystemTime(new Date("2030-06-01T12:00:00.000Z"));
+      const deadline = "2030-06-01T12:00:00.000Z";
+      const opened = await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+        budget: { max_turns: 30, deadline },
+      });
+      if (!opened.ok) throw new Error("open failed");
+      const approve = await bobMachine.handleApproveOpen({
+        pending_id: sessionOpenPendingId(),
+        via_human: true,
+      });
+      expect(approve.ok).toBe(true);
+    });
+
+    it("approve after effectiveOpenExpiry → session_open_expired + open_expired", async () => {
+      const shortDeadline = new Date(Date.now() + 30 * 60_000).toISOString();
+      const opened = await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+        budget: { max_turns: 30, deadline: shortDeadline },
+      });
+      if (!opened.ok) throw new Error("open failed");
+      const pendingId = sessionOpenPendingId();
+      vi.advanceTimersByTime(31 * 60_000);
+      const result = await bobMachine.handleApproveOpen({ pending_id: pendingId, via_human: true });
+      expect(result).toEqual({ ok: false, error: "session_open_expired" });
+      expect(bobMachine.store.get(opened.thread)?.status).toBe("open_expired");
+    });
+
+    it("reject after effectiveOpenExpiry → session_open_expired, no nego.open_reject", async () => {
+      const bobSends: RelayCapture[] = [];
+      const { alice, bob } = createLinkedMachines({ bobSends });
+      aliceMachine = alice;
+      bobMachine = bob;
+      const shortDeadline = new Date(Date.now() + 30 * 60_000).toISOString();
+      await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+        budget: { max_turns: 30, deadline: shortDeadline },
+      });
+      const pendingId = sessionOpenPendingId();
+      vi.advanceTimersByTime(31 * 60_000);
+      const result = await bobMachine.handleRejectOpen({
+        pending_id: pendingId,
+        reason: "no",
+        via_human: true,
+      });
+      expect(result).toEqual({ ok: false, error: "session_open_expired" });
+      expect(bobSends.some((s) => s.type === "nego.open_reject")).toBe(false);
+    });
+
+    it("handleExpireSessions closes live session with deadline_expired", async () => {
+      const thread = await openAndApprove();
+      const session = requireSession(thread);
+      const nearDeadline = new Date(Date.now() + 60_000).toISOString();
+      aliceMachine.store.upsert({
+        ...session,
+        budget: { ...session.budget, deadline: nearDeadline },
+      });
+      vi.advanceTimersByTime(120_000);
+      await aliceMachine.handleExpireSessions();
+      expect(aliceMachine.store.get(thread)?.status).toBe("closed");
+      expect(aliceMachine.store.get(thread)?.rejectReason).toBe("deadline_expired");
+    });
+
+    it("handleMsg on expired live → session_not_live + budget_extend GC", async () => {
+      const opened = await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+        budget: { max_turns: 1, deadline: FUTURE_DEADLINE },
+      });
+      if (!opened.ok) throw new Error("open failed");
+      await bobMachine.handleApproveOpen({ pending_id: sessionOpenPendingId(), via_human: true });
+      const thread = opened.thread;
+      const okTurn = await aliceMachine.handleMsg({
+        thread,
+        type: "propose",
+        body: JSON.stringify({ section_id: "s0" }),
+      });
+      expect(okTurn.ok).toBe(true);
+      const exhausted = await aliceMachine.handleMsg({
+        thread,
+        type: "propose",
+        body: JSON.stringify({ section_id: "s1" }),
+      });
+      expect(exhausted).toEqual({ ok: false, error: "budget_exhausted" });
+      expect(
+        alicePending.list().some((p) => p.kind === "budget_extend" && p.thread === thread),
+      ).toBe(true);
+      const session = requireSession(thread);
+      const nearDeadline = new Date(Date.now() + 60_000).toISOString();
+      aliceMachine.store.upsert({
+        ...session,
+        budget: { ...session.budget, deadline: nearDeadline },
+      });
+      vi.advanceTimersByTime(120_000);
+      const result = await aliceMachine.handleMsg({ thread, type: "propose", body: "{}" });
+      expect(result).toEqual({ ok: false, error: "session_not_live" });
+      expect(
+        alicePending.list().some((p) => p.kind === "budget_extend" && p.thread === thread),
+      ).toBe(false);
+    });
+
+    it("handleSign on expired live → session_not_live after auto-close", async () => {
+      const thread = await openAndApprove();
+      const session = requireSession(thread);
+      const nearDeadline = new Date(Date.now() + 60_000).toISOString();
+      aliceMachine.store.upsert({
+        ...session,
+        budget: { ...session.budget, deadline: nearDeadline },
+      });
+      vi.advanceTimersByTime(120_000);
+      const result = await aliceMachine.handleSign({ thread, artifact_hash: "sha256:abc" });
+      expect(result).toEqual({ ok: false, error: "session_not_live" });
+      expect(aliceMachine.store.get(thread)?.rejectReason).toBe("deadline_expired");
+    });
+
+    it("handleIncomingEnvelope nego.turn on expired live → thread_closed", async () => {
+      const thread = await openAndApprove();
+      const session = requireSession(thread);
+      const nearDeadline = new Date(Date.now() + 60_000).toISOString();
+      const bobSession = bobMachine.store.get(thread);
+      if (!bobSession) {
+        throw new Error(`expected bob session ${thread}`);
+      }
+      bobMachine.store.upsert({
+        ...bobSession,
+        budget: { ...session.budget, deadline: nearDeadline },
+      });
+      vi.advanceTimersByTime(120_000);
+      const result = await bobMachine.handleIncomingEnvelope({
+        from: aliceId,
+        type: "nego.turn",
+        thread,
+        payload: JSON.stringify({ turn_count: 1, msg_type: "propose", body: "{}" }),
+      });
+      expect(result).toEqual({ ok: false, error: "thread_closed" });
+    });
+
+    it("handleStatus on expired live → closed + deadline_expired", async () => {
+      const thread = await openAndApprove();
+      const session = requireSession(thread);
+      const nearDeadline = new Date(Date.now() + 60_000).toISOString();
+      aliceMachine.store.upsert({
+        ...session,
+        budget: { ...session.budget, deadline: nearDeadline },
+      });
+      vi.advanceTimersByTime(120_000);
+      const result = await aliceMachine.handleStatus({ thread });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.status).toBe("closed");
+        expect(result.reject_reason).toBe("deadline_expired");
+      }
+    });
+
+    it("signed past deadline survives sweep", async () => {
+      const thread = await openAndApprove();
+      await signFlowToSigned(thread, "sha256:deadline-survive-test");
+      const session = requireSession(thread);
+      const pastDeadline = new Date(Date.now() - 60_000).toISOString();
+      aliceMachine.store.upsert({
+        ...session,
+        budget: { ...session.budget, deadline: pastDeadline },
+      });
+      await aliceMachine.handleExpireSessions();
+      expect(aliceMachine.store.get(thread)?.status).toBe("signed");
+      expect(alicePending.list().some((p) => p.kind === "ratify" && p.thread === thread)).toBe(
+        true,
+      );
+    });
+
+    it("core.close after deadline_expired is no-op on rejectReason", async () => {
+      const thread = await openAndApprove();
+      const session = requireSession(thread);
+      const nearDeadline = new Date(Date.now() + 60_000).toISOString();
+      aliceMachine.store.upsert({
+        ...session,
+        budget: { ...session.budget, deadline: nearDeadline },
+      });
+      vi.advanceTimersByTime(120_000);
+      await aliceMachine.handleStatus({ thread });
+      const close = await aliceMachine.handleThreadClose(thread, "user_abort");
+      expect(close.status).toBe("closed");
+      expect(aliceMachine.store.get(thread)?.rejectReason).toBe("deadline_expired");
+    });
+
+    it("initiator pending expire sends no envelope", async () => {
+      const aliceSends: RelayCapture[] = [];
+      const { alice, bob } = createLinkedMachines({ aliceSends });
+      aliceMachine = alice;
+      bobMachine = bob;
+      const shortDeadline = new Date(Date.now() + 30 * 60_000).toISOString();
+      await aliceMachine.handleOpen({
+        to: bobId,
+        ...openPayload,
+        budget: { max_turns: 30, deadline: shortDeadline },
+      });
+      aliceSends.length = 0;
+      vi.advanceTimersByTime(31 * 60_000);
+      await aliceMachine.handleExpireSessions();
+      expect(aliceSends).toHaveLength(0);
+      expect(aliceMachine.store.list()[0]?.status).toBe("open_expired");
+    });
+
+    it("ensureRecipientOpenPending re-queues gate when pending dropped but session valid", async () => {
+      const opened = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
+      if (!opened.ok) throw new Error("open failed");
+      const pendingBefore = bobPending.list().filter((i) => i.kind === "session_open");
+      expect(pendingBefore).toHaveLength(1);
+      const dropped = pendingBefore[0];
+      if (!dropped) {
+        throw new Error("expected session_open pending item");
+      }
+      bobPending.remove(dropped.id);
+      const status = await bobMachine.handleStatus({ thread: opened.thread });
+      expect(status.ok).toBe(true);
+      if (status.ok) {
+        expect(status.pending_id).toBeDefined();
+        expect(status.pending_kind).toBe("session_open");
+      }
+    });
+
+    it("exports handleExpireSessions", () => {
+      expect(typeof aliceMachine.handleExpireSessions).toBe("function");
+      expect(
+        (aliceMachine as { handleExpirePendingOpens?: unknown }).handleExpirePendingOpens,
+      ).toBeUndefined();
     });
   });
 });

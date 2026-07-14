@@ -74,7 +74,7 @@ describe("SessionStateMachineDeps structural typing", () => {
       from: "initiator",
       goal: "test goal",
       acceptance: [],
-      budget: { max_turns: 10 },
+      budget: { max_turns: 10, deadline: "2030-01-01T00:00:00.000Z" },
       mandate: { agent_may: [], human_required: [] },
       expiresAt: Date.now() + 3_600_000,
     });

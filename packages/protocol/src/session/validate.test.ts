@@ -16,7 +16,7 @@ const validOpenPayload = {
       runner: "payload-size",
     },
   ],
-  budget: { max_turns: 30 },
+  budget: { max_turns: 30, deadline: "2030-01-01T00:00:00.000Z" },
   mandate: {
     agent_may: ["propose", "counter", "accept_section", "challenge"],
     human_required: ["sign_final", "budget_extend", "constraint_change"],

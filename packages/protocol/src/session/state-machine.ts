@@ -23,7 +23,13 @@ import type {
 import { SESSION_OPEN_TTL_MS } from "./types.js";
 
 /** Recipient sessions past open must not be reset by a redelivered nego.open. */
-const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = ["live", "signed", "closed", "open_rejected"];
+const NON_REOPENABLE_OPEN_STATUSES: SessionStatus[] = [
+  "live",
+  "signed",
+  "closed",
+  "open_rejected",
+  "open_expired",
+];
 
 /** Terminal negotiation states for wire precision guards (§8.3 / N5). */
 const TERMINAL_NEGOTIATION_STATUSES: SessionStatus[] = ["closed", "open_rejected", "open_expired"];
@@ -92,6 +98,10 @@ function bothRatified(session: SessionRecord): boolean {
   return Boolean(session.ratifyApproved.initiator && session.ratifyApproved.recipient);
 }
 
+function effectiveOpenExpiry(session: SessionRecord): number {
+  return Math.min(session.expiresAt, Date.parse(session.budget.deadline));
+}
+
 export function createSessionStateMachine(
   deps: SessionStateMachineDeps,
   store: SessionStore = createSessionStore(),
@@ -117,13 +127,52 @@ export function createSessionStateMachine(
       .find((item) => item.kind === "session_open" && item.thread === thread);
   }
 
+  function removeBudgetExtendPendingForThread(thread: string) {
+    for (const pending of deps.pending.list()) {
+      if (pending.kind === "budget_extend" && pending.thread === thread) {
+        deps.pending.remove(pending.id);
+      }
+    }
+  }
+
+  function expireOpenPendingSync(session: SessionRecord): SessionRecord {
+    const expired = upsert({ ...session, status: "open_expired" });
+    removeSessionOpenPendingForThread(session.thread);
+    return expired;
+  }
+
+  async function expireOpenPending(session: SessionRecord): Promise<SessionRecord> {
+    const expired = expireOpenPendingSync(session);
+    if (session.role === "recipient") {
+      await notifyPeer(expired, "nego.open_expired", {
+        thread: expired.thread,
+      });
+    }
+    return expired;
+  }
+
+  function ensureLiveNotExpired(session: SessionRecord): SessionRecord {
+    if (session.status !== "live") {
+      return session;
+    }
+    if (now() <= Date.parse(session.budget.deadline)) {
+      return session;
+    }
+    removeBudgetExtendPendingForThread(session.thread);
+    return upsert({
+      ...session,
+      status: "closed",
+      rejectReason: "deadline_expired",
+    });
+  }
+
   function ensureRecipientOpenPending(session: SessionRecord) {
     if (session.status !== "pending" || session.role !== "recipient") {
       return undefined;
     }
-    if (now() > session.expiresAt) {
+    if (now() > effectiveOpenExpiry(session)) {
       // Read-path side effect: used by handleStatus and resolveOpenPendingId.
-      upsert({ ...session, status: "open_expired" });
+      expireOpenPendingSync(session);
       return undefined;
     }
     const existing = findSessionOpenPending(session.thread);
@@ -244,7 +293,6 @@ export function createSessionStateMachine(
     acceptance: AcceptanceCriterion[];
     budget: SessionBudget;
     mandate: SessionMandate;
-    expires_at: number;
   }) {
     const existing = store.get(input.thread);
     if (existing && NON_REOPENABLE_OPEN_STATUSES.includes(existing.status)) {
@@ -272,7 +320,7 @@ export function createSessionStateMachine(
       budget: input.budget,
       mandate: input.mandate,
       createdAt,
-      expiresAt: input.expires_at,
+      expiresAt: createdAt + SESSION_OPEN_TTL_MS,
       turnCount: preserveProgress ? existing.turnCount : 0,
       peerMessages: preserveProgress ? existing.peerMessages : [],
       lockedSections: preserveProgress ? existing.lockedSections : [],
@@ -282,6 +330,15 @@ export function createSessionStateMachine(
       ratifyApproved: preserveProgress ? existing.ratifyApproved : {},
     };
     upsert(session);
+
+    if (now() > Date.parse(input.budget.deadline)) {
+      await expireOpenPending(session);
+      return {
+        ok: true,
+        thread: input.thread,
+        status: "open_expired",
+      };
+    }
 
     const pending = ensureRecipientOpenPending(session);
     if (!pending) {
@@ -313,6 +370,10 @@ export function createSessionStateMachine(
       const allowed = deps.allowlist.get(deps.agentId);
       if (!allowed.includes(input.to)) {
         return { ok: false, error: "recipient_not_allowed" };
+      }
+
+      if (now() > Date.parse(input.budget.deadline)) {
+        return { ok: false, error: "invalid_payload" };
       }
 
       const thread = crypto.randomUUID();
@@ -348,7 +409,6 @@ export function createSessionStateMachine(
           budget: input.budget,
           mandate: input.mandate,
           from: deps.agentId,
-          expires_at: session.expiresAt,
         }),
         thread,
       });
@@ -376,13 +436,14 @@ export function createSessionStateMachine(
         return { ok: false, error: "pending_not_found" };
       }
 
-      if (now() > pending.expiresAt) {
-        return { ok: false, error: "session_open_expired" };
-      }
-
       const session = store.get(pending.thread);
       if (!session) {
         return { ok: false, error: "session_not_found" };
+      }
+
+      if (now() > effectiveOpenExpiry(session)) {
+        await expireOpenPending(session);
+        return { ok: false, error: "session_open_expired" };
       }
 
       const live = upsert({ ...session, status: "live" });
@@ -415,6 +476,11 @@ export function createSessionStateMachine(
         return { ok: false, error: "session_not_found" };
       }
 
+      if (now() > effectiveOpenExpiry(session)) {
+        await expireOpenPending(session);
+        return { ok: false, error: "session_open_expired" };
+      }
+
       const rejected = upsert({
         ...session,
         status: "open_rejected",
@@ -434,20 +500,19 @@ export function createSessionStateMachine(
       };
     },
 
-    async handleExpirePendingOpens() {
+    async handleExpireSessions() {
       const expiredThreads: string[] = [];
 
       for (const session of store.list()) {
-        if (session.status !== "pending" || now() <= session.expiresAt) {
+        if (session.status === "pending" && now() > effectiveOpenExpiry(session)) {
+          const expired = await expireOpenPending(session);
+          expiredThreads.push(expired.thread);
           continue;
         }
-        const expired = upsert({ ...session, status: "open_expired" });
-        if (session.role === "recipient") {
-          await notifyPeer(expired, "nego.open_expired", {
-            thread: expired.thread,
-          });
+        if (session.status === "live" && now() > Date.parse(session.budget.deadline)) {
+          ensureLiveNotExpired(session);
+          expiredThreads.push(session.thread);
         }
-        expiredThreads.push(session.thread);
       }
 
       for (const pending of deps.pending.list()) {
@@ -480,6 +545,11 @@ export function createSessionStateMachine(
       thread: string;
       payload: string;
     }) {
+      const preloaded = store.get(input.thread);
+      if (preloaded) {
+        ensureLiveNotExpired(preloaded);
+      }
+
       const raw = parseJsonBody<unknown>(input.payload);
       if (typeof raw === "object" && raw !== null && "error" in raw) {
         return { ok: false, error: (raw as { error: string }).error };
@@ -502,7 +572,6 @@ export function createSessionStateMachine(
             acceptance: openPayload.data.acceptance,
             budget: openPayload.data.budget,
             mandate: openPayload.data.mandate,
-            expires_at: openPayload.data.expires_at ?? now() + SESSION_OPEN_TTL_MS,
           });
         }
         case "nego.open_approved": {
@@ -764,7 +833,7 @@ export function createSessionStateMachine(
       if (!found.ok) {
         return found;
       }
-      const session = found.session;
+      const session = ensureLiveNotExpired(found.session);
       if (session.status !== "live" && session.status !== "signed") {
         return { ok: false, error: "session_not_live" };
       }
@@ -862,7 +931,7 @@ export function createSessionStateMachine(
       if (!found.ok) {
         return found;
       }
-      const session = found.session;
+      const session = ensureLiveNotExpired(found.session);
       if (session.status !== "live" && session.status !== "signed") {
         return { ok: false, error: "session_not_live" };
       }
@@ -992,7 +1061,7 @@ export function createSessionStateMachine(
       if (!found.ok) {
         return found;
       }
-      const session = store.get(found.session.thread) ?? found.session;
+      const session = ensureLiveNotExpired(store.get(found.session.thread) ?? found.session);
       const pendingOpen =
         session.status === "pending" && session.role === "recipient"
           ? ensureRecipientOpenPending(session)
@@ -1071,28 +1140,28 @@ export function createSessionStateMachine(
       }
     },
 
-    /** Unilateral close (§8.3): `closed` + `rejectReason`, no `coSignedHash`. */
     async handleThreadClose(thread: string, reason?: string) {
       const found = store.get(thread);
       if (!found) {
         return { ok: true as const, thread };
       }
-      const closeReason = reason ?? found.rejectReason ?? "thread_closed";
-      if (found.status === "closed") {
+      const session = ensureLiveNotExpired(found);
+      const closeReason = reason ?? session.rejectReason ?? "thread_closed";
+      if (session.status === "closed") {
         return { ok: true as const, thread, status: "closed" as const };
       }
       const terminal: SessionStatus[] = ["open_rejected", "open_expired"];
-      if (terminal.includes(found.status)) {
-        return { ok: true as const, thread, status: found.status };
+      if (terminal.includes(session.status)) {
+        return { ok: true as const, thread, status: session.status };
       }
-      if (found.status === "pending") {
+      if (session.status === "pending") {
         removeSessionOpenPendingForThread(thread);
       }
-      if (found.status === "signed") {
+      if (session.status === "signed") {
         removeRatifyPendingForThread(thread);
       }
       const updated = upsert({
-        ...found,
+        ...session,
         status: "closed",
         rejectReason: closeReason,
       });
