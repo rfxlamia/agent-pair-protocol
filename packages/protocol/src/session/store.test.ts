@@ -11,7 +11,7 @@ function makeSession(thread: string): SessionRecord {
     status: "pending",
     goal: "test goal",
     acceptance: [{ id: "ac-1", test: "executable", desc: "passes tests" }],
-    budget: { max_turns: 10 },
+    budget: { max_turns: 10, deadline: "2030-01-01T00:00:00.000Z" },
     mandate: { agent_may: ["negotiate"], human_required: ["approve"] },
     createdAt: 1,
     expiresAt: 2,
