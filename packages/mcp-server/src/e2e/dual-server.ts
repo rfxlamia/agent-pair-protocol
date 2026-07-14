@@ -69,7 +69,7 @@ const SESSION_OPEN_PAYLOAD = {
       runner: "payload-size",
     },
   ],
-  budget: { max_turns: 30 },
+  budget: { max_turns: 30, deadline: new Date(Date.now() + 86_400_000).toISOString() },
   mandate: {
     agent_may: ["propose", "counter", "accept_section", "challenge"],
     human_required: ["sign_final", "budget_extend", "constraint_change"],

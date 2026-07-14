@@ -202,7 +202,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
         ),
         budget: z.object({
           max_turns: z.number(),
-          deadline: z.string().optional(),
+          deadline: z.string().datetime(),
         }),
         mandate: z.object({
           agent_may: z.array(z.string()),

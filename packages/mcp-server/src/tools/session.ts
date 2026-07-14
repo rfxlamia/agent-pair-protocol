@@ -14,10 +14,10 @@ import { assertNoSecrets, toolTextResult } from "./util.js";
 
 const sessionMachines = new WeakMap<AgentContext, SessionStateMachine>();
 
-export async function expirePendingSessions(ctx: AgentContext): Promise<void> {
+export async function expireSessions(ctx: AgentContext): Promise<void> {
   const machine = sessionMachines.get(ctx);
   if (machine) {
-    await machine.handleExpirePendingOpens();
+    await machine.handleExpireSessions();
   }
 }
 
@@ -119,7 +119,7 @@ export async function handleSessionOpen(
       desc: string;
       runner?: string;
     }>;
-    budget: { max_turns: number; deadline?: string };
+    budget: { max_turns: number; deadline: string };
     mandate: {
       agent_may: string[];
       human_required: string[];
@@ -145,7 +145,7 @@ export async function handleSessionSign(
 }
 
 export async function handleSessionStatus(ctx: AgentContext, input: { thread: string }) {
-  await expirePendingSessions(ctx);
+  await expireSessions(ctx);
   return withSessionMachine(ctx, (machine) => machine.handleStatus(input));
 }
 

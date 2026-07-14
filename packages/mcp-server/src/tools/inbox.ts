@@ -15,7 +15,7 @@ import { sendEnvelopeWithSpill } from "./inbox-spill.js";
 import type { AgentContext } from "./pair.js";
 import { ensureAllowlistReady } from "./pair.js";
 import {
-  expirePendingSessions,
+  expireSessions,
   peekSessionOpenStatus,
   processSessionInboxEnvelope,
   processThreadClose,
@@ -106,7 +106,7 @@ export async function handleInbox(
   ctx: AgentContext,
   input: { since?: number; include_history?: boolean },
 ) {
-  await expirePendingSessions(ctx);
+  await expireSessions(ctx);
   await ensureAllowlistReady(ctx);
 
   const keyPair = await ctx.keyStore.loadOrCreate();
