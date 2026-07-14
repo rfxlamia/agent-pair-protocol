@@ -9,7 +9,7 @@ const acceptanceCriterionSchema = z.object({
 
 const negoBudgetSchema = z.object({
   max_turns: z.number(),
-  deadline: z.string().optional(),
+  deadline: z.string().datetime(),
 });
 
 const negoMandateSchema = z.object({
@@ -56,7 +56,6 @@ const PAYLOAD_SCHEMAS: Record<string, z.ZodTypeAny> = {
     acceptance: z.array(acceptanceCriterionSchema),
     budget: negoBudgetSchema,
     mandate: negoMandateSchema,
-    expires_at: z.number().optional(),
   }),
   "nego.open_approved": signalSchema,
   "nego.open_reject": z.object({ reason: z.string().optional() }),

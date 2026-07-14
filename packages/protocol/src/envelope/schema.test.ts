@@ -60,10 +60,75 @@ describe("parseEnvelopePayload", () => {
     const payload = {
       goal: "g",
       acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
-      budget: { max_turns: 5 },
+      budget: { max_turns: 5, deadline: "2030-01-01T00:00:00.000Z" },
       mandate: { agent_may: ["x"], human_required: ["y"] },
     };
     expect(parseEnvelopePayload("nego.open", payload).ok).toBe(true);
+  });
+
+  it("rejects nego.open without budget.deadline", () => {
+    const payload = {
+      goal: "g",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: ["x"], human_required: ["y"] },
+    };
+    expect(parseEnvelopePayload("nego.open", payload)).toEqual({
+      ok: false,
+      error: "invalid_payload",
+    });
+  });
+
+  it("rejects nego.open deadline with offset", () => {
+    const payload = {
+      goal: "g",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5, deadline: "2030-01-01T00:00:00+00:00" },
+      mandate: { agent_may: ["x"], human_required: ["y"] },
+    };
+    expect(parseEnvelopePayload("nego.open", payload)).toEqual({
+      ok: false,
+      error: "invalid_payload",
+    });
+  });
+
+  it("rejects nego.open with invalid datetime string", () => {
+    const payload = {
+      goal: "g",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5, deadline: "not-a-date" },
+      mandate: { agent_may: ["x"], human_required: ["y"] },
+    };
+    expect(parseEnvelopePayload("nego.open", payload)).toEqual({
+      ok: false,
+      error: "invalid_payload",
+    });
+  });
+
+  it("rejects nego.open with lowercase z suffix", () => {
+    const payload = {
+      goal: "g",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5, deadline: "2030-01-01T00:00:00.000z" },
+      mandate: { agent_may: ["x"], human_required: ["y"] },
+    };
+    expect(parseEnvelopePayload("nego.open", payload)).toEqual({
+      ok: false,
+      error: "invalid_payload",
+    });
+  });
+
+  it("accepts nego.open with Z-suffix deadline", () => {
+    const payload = {
+      goal: "g",
+      acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
+      budget: { max_turns: 5, deadline: "2030-01-01T00:00:00.000Z" },
+      mandate: { agent_may: ["x"], human_required: ["y"] },
+    };
+    expect(parseEnvelopePayload("nego.open", payload)).toEqual({
+      ok: true,
+      data: payload,
+    });
   });
 
   it("returns unsupported_envelope_type for unknown type", () => {
@@ -81,7 +146,7 @@ describe("parseEnvelopePayload", () => {
       "nego.open": {
         goal: "g",
         acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
-        budget: { max_turns: 5 },
+        budget: { max_turns: 5, deadline: "2030-01-01T00:00:00.000Z" },
         mandate: { agent_may: ["x"], human_required: ["y"] },
       },
       "nego.open_approved": {},

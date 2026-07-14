@@ -18,7 +18,7 @@ export interface AcceptanceCriterion {
 
 export interface SessionBudget {
   max_turns: number;
-  deadline?: string;
+  deadline: string;
 }
 
 export interface SessionMandate {
