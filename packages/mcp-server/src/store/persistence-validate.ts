@@ -65,6 +65,7 @@ export function isSessionRecord(value: unknown): value is SessionRecord {
     typeof session.budget === "object" &&
     session.budget !== null &&
     typeof session.budget.max_turns === "number" &&
+    typeof session.budget.deadline === "string" &&
     typeof session.mandate === "object" &&
     session.mandate !== null &&
     Array.isArray(session.mandate.agent_may) &&
@@ -131,6 +132,8 @@ export function isPendingItemRecord(value: unknown): boolean {
         Array.isArray(item.acceptance) &&
         typeof item.budget === "object" &&
         item.budget !== null &&
+        typeof (item.budget as { max_turns?: unknown }).max_turns === "number" &&
+        typeof (item.budget as { deadline?: unknown }).deadline === "string" &&
         typeof item.mandate === "object" &&
         item.mandate !== null &&
         typeof item.expiresAt === "number"

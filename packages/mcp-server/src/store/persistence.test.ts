@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createFileAllowlistStore } from "./allowlist.js";
 import { FileBondStore } from "./bonds.js";
 import { createFilePendingQueue } from "./pending.js";
+import { isPendingItemRecord, isSessionRecord } from "./persistence-validate.js";
 import { createFileSessionStore } from "./session-store.js";
 
 const SAMPLE_BOND: Bond = {
@@ -69,7 +70,7 @@ describe("file-backed stores restart simulation", () => {
       status: "live",
       goal: "test",
       acceptance: [],
-      budget: { max_turns: 5 },
+      budget: { max_turns: 5, deadline: "2030-01-01T00:00:00.000Z" },
       mandate: { agent_may: [], human_required: [] },
       createdAt: Date.now(),
       expiresAt: Date.now() + 60_000,
@@ -122,7 +123,7 @@ describe("file-backed stores restart simulation", () => {
             status: "live",
             goal: "test",
             acceptance: [],
-            budget: { max_turns: 1 },
+            budget: { max_turns: 1, deadline: "2030-01-01T00:00:00.000Z" },
             mandate: { agent_may: [], human_required: [] },
             createdAt: 1,
             expiresAt: 2,
@@ -180,5 +181,87 @@ describe("file-backed stores restart simulation", () => {
     expect(files).not.toContain("pending.json");
     expect(files).not.toContain("sessions.json");
     expect(files).not.toContain("allowlist.json");
+  });
+});
+
+describe("deadline presence guards", () => {
+  it("drops session record missing budget.deadline", () => {
+    const record = {
+      thread: "t1",
+      initiator: "ed25519:a",
+      recipient: "ed25519:b",
+      role: "recipient" as const,
+      status: "pending" as const,
+      goal: "g",
+      acceptance: [],
+      budget: { max_turns: 10 },
+      mandate: { agent_may: [], human_required: [] },
+      createdAt: 1,
+      expiresAt: 2,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    };
+    expect(isSessionRecord(record)).toBe(false);
+  });
+
+  it("accepts session record with budget.deadline", () => {
+    const record = {
+      thread: "t1",
+      initiator: "ed25519:a",
+      recipient: "ed25519:b",
+      role: "recipient" as const,
+      status: "pending" as const,
+      goal: "g",
+      acceptance: [],
+      budget: { max_turns: 10, deadline: "2030-01-01T00:00:00.000Z" },
+      mandate: { agent_may: [], human_required: [] },
+      createdAt: 1,
+      expiresAt: 2,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    };
+    expect(isSessionRecord(record)).toBe(true);
+  });
+
+  it("drops session_open pending missing budget.deadline", () => {
+    const item = {
+      id: "p1",
+      kind: "session_open" as const,
+      createdAt: 1,
+      thread: "t1",
+      from: "ed25519:a",
+      goal: "g",
+      acceptance: [],
+      budget: { max_turns: 5 },
+      mandate: { agent_may: [], human_required: [] },
+      expiresAt: 2,
+    };
+    expect(isPendingItemRecord(item)).toBe(false);
+  });
+
+  it("accepts session_open pending with budget.deadline", () => {
+    const item = {
+      id: "p1",
+      kind: "session_open" as const,
+      createdAt: 1,
+      thread: "t1",
+      from: "ed25519:a",
+      goal: "g",
+      acceptance: [],
+      budget: { max_turns: 5, deadline: "2030-01-01T00:00:00.000Z" },
+      mandate: { agent_may: [], human_required: [] },
+      expiresAt: 2,
+    };
+    expect(isPendingItemRecord(item)).toBe(true);
   });
 });
