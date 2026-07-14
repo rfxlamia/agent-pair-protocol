@@ -25,6 +25,8 @@ function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
 
+const TEST_DEADLINE = "2030-06-01T12:00:00.000Z";
+
 type PullRow = { rowid: number; wire: string };
 
 type StubResponse = {
@@ -1077,7 +1079,7 @@ describe("M1.4 envelope types", () => {
       status: "live",
       goal: "probe",
       acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
-      budget: { max_turns: 5 },
+      budget: { max_turns: 5, deadline: TEST_DEADLINE },
       mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       createdAt: Date.now(),
       expiresAt: Date.now() + 3_600_000,
@@ -1104,7 +1106,7 @@ describe("M1.4 envelope types", () => {
       status: "live",
       goal: "probe",
       acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
-      budget: { max_turns: 5 },
+      budget: { max_turns: 5, deadline: TEST_DEADLINE },
       mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       createdAt: Date.now(),
       expiresAt: Date.now() + 3_600_000,
@@ -1165,7 +1167,7 @@ describe("M1.4 envelope types", () => {
       status: "live",
       goal: "probe",
       acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
-      budget: { max_turns: 5 },
+      budget: { max_turns: 5, deadline: TEST_DEADLINE },
       mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       createdAt: Date.now(),
       expiresAt: Date.now() + 3_600_000,
@@ -1203,7 +1205,7 @@ describe("M1.4 envelope types", () => {
       status: "live",
       goal: "probe",
       acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
-      budget: { max_turns: 5 },
+      budget: { max_turns: 5, deadline: TEST_DEADLINE },
       mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       createdAt: Date.now(),
       expiresAt: Date.now() + 3_600_000,
@@ -1241,7 +1243,7 @@ describe("M1.4 envelope types", () => {
       status: "live",
       goal: "probe",
       acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
-      budget: { max_turns: 5 },
+      budget: { max_turns: 5, deadline: TEST_DEADLINE },
       mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       createdAt: Date.now(),
       expiresAt: Date.now() + 3_600_000,
@@ -1262,9 +1264,8 @@ describe("M1.4 envelope types", () => {
     const openPayload = {
       goal: "test",
       acceptance: [{ id: "a1", test: "judgment" as const, desc: "d" }],
-      budget: { max_turns: 3 },
+      budget: { max_turns: 3, deadline: TEST_DEADLINE },
       mandate: { agent_may: ["propose"], human_required: ["sign"] },
-      expires_at: Date.now() + 3_600_000,
     };
     const wire = makeWireEnvelope(aliceKeys, bobId, {
       type: "nego.open",

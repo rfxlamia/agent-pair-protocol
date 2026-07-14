@@ -14,6 +14,8 @@ function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
 
+const TEST_DEADLINE = "2030-06-01T12:00:00.000Z";
+
 describe("inbox session negotiation fixes", () => {
   let env: DualRelayEnv;
 
@@ -35,7 +37,7 @@ describe("inbox session negotiation fixes", () => {
         to: bob.agentId,
         goal: "Relay propose body probe",
         acceptance: [{ id: "A1", test: "executable", desc: "probe", runner: "vitest" }],
-        budget: { max_turns: 10 },
+        budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       }),
     );
@@ -103,7 +105,7 @@ describe("inbox session negotiation fixes", () => {
         to: bob.agentId,
         goal: "Retry peer_turn probe",
         acceptance: [{ id: "A1", test: "executable", desc: "probe", runner: "vitest" }],
-        budget: { max_turns: 10 },
+        budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       }),
     );
@@ -162,7 +164,7 @@ describe("inbox session negotiation fixes", () => {
         to: bob.agentId,
         goal: "Secret scan probe",
         acceptance: [{ id: "A1", test: "executable", desc: "probe", runner: "vitest" }],
-        budget: { max_turns: 10 },
+        budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       }),
     );
@@ -210,7 +212,7 @@ describe("inbox session negotiation fixes", () => {
         to: bob.agentId,
         goal: "Legacy peer_turn probe",
         acceptance: [{ id: "A1", test: "executable", desc: "probe", runner: "vitest" }],
-        budget: { max_turns: 10 },
+        budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       }),
     );

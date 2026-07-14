@@ -33,9 +33,11 @@ import {
 } from "./pair.js";
 import { handleSessionOpen, handleSessionStatus } from "./session.js";
 
+const TEST_DEADLINE = "2030-06-01T12:00:00.000Z";
+
 const SESSION_OPEN_INPUT = {
   acceptance: [{ id: "A1", test: "executable" as const, desc: "probe", runner: "payload-size" }],
-  budget: { max_turns: 10 },
+  budget: { max_turns: 10, deadline: TEST_DEADLINE },
   mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
 };
 

@@ -23,6 +23,8 @@ function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
 
+const TEST_DEADLINE = "2030-06-01T12:00:00.000Z";
+
 function largeText(chars = 70_000): string {
   return "x".repeat(chars);
 }
@@ -343,7 +345,7 @@ describe("inbox spillover", () => {
       status: "live",
       goal: "spill close probe",
       acceptance: [{ id: "a1", test: "judgment", desc: "d" }],
-      budget: { max_turns: 5 },
+      budget: { max_turns: 5, deadline: TEST_DEADLINE },
       mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
       createdAt: Date.now(),
       expiresAt: Date.now() + 3_600_000,

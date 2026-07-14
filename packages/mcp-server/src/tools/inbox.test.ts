@@ -19,6 +19,8 @@ function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
 
+const TEST_DEADLINE = "2030-06-01T12:00:00.000Z";
+
 const SESSION_OPEN_INPUT = {
   acceptance: [
     {
@@ -28,7 +30,7 @@ const SESSION_OPEN_INPUT = {
       runner: "payload-size",
     },
   ],
-  budget: { max_turns: 10 },
+  budget: { max_turns: 10, deadline: TEST_DEADLINE },
   mandate: {
     agent_may: ["propose"],
     human_required: ["sign_final"],
@@ -154,7 +156,7 @@ describe("inbox production path", () => {
             runner: "payload-size",
           },
         ],
-        budget: { max_turns: 10 },
+        budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: {
           agent_may: ["propose"],
           human_required: ["sign_final"],
@@ -212,7 +214,7 @@ describe("inbox production path", () => {
             runner: "payload-size",
           },
         ],
-        budget: { max_turns: 10 },
+        budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: {
           agent_may: ["propose"],
           human_required: ["sign_final"],
@@ -283,7 +285,7 @@ describe("inbox production path", () => {
             runner: "payload-size",
           },
         ],
-        budget: { max_turns: 10 },
+        budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: {
           agent_may: ["propose"],
           human_required: ["sign_final"],
@@ -436,7 +438,7 @@ describe("inbox production path", () => {
             runner: "payload-size",
           },
         ],
-        budget: { max_turns: 10 },
+        budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: {
           agent_may: ["propose"],
           human_required: ["sign_final"],
