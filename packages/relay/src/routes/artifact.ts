@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { agentIdToPublicKey, verify } from "@agentpair/protocol";
+import { agentIdToPublicKey, decodeBase64UrlStrict, verify } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
 import type { RelayDatabase } from "../db/index.js";
@@ -55,7 +55,7 @@ function isAgentRegistered(db: RelayDatabase, agentId: string): boolean {
 function verifyArtifactSignature(agentId: string, hash: string, sig: string): boolean {
   try {
     const publicKey = agentIdToPublicKey(agentId);
-    const signature = Buffer.from(sig, "base64url");
+    const signature = decodeBase64UrlStrict(sig);
     return verify(signature, utf8ToBytes(hash), publicKey);
   } catch {
     return false;

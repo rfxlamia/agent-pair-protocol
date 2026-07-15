@@ -75,6 +75,30 @@ function tamperBodyV(outer: OuterEnvelope, bodyVersion: number): string {
   return JSON.stringify(parsed);
 }
 
+function tamperOuterFrom(outer: OuterEnvelope, from: string): string {
+  const parsed = JSON.parse(serializeOuterEnvelope(outer)) as {
+    v: number;
+    from: string;
+    to: string;
+    blob: string;
+    sig: string;
+  };
+  parsed.from = from;
+  return JSON.stringify(parsed);
+}
+
+function tamperOuterTo(outer: OuterEnvelope, to: string): string {
+  const parsed = JSON.parse(serializeOuterEnvelope(outer)) as {
+    v: number;
+    from: string;
+    to: string;
+    blob: string;
+    sig: string;
+  };
+  parsed.to = to;
+  return JSON.stringify(parsed);
+}
+
 describe("inbox relay routes", () => {
   let server: ServerType;
   let db: ReturnType<typeof createRelayApp>["db"];
@@ -175,9 +199,9 @@ describe("inbox relay routes", () => {
       headers: { "Content-Type": "application/json" },
       body: tamperBodyFrom(envelope, aliceId),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("invalid_signature");
+    expect(body.error).toBe("routing_mismatch");
 
     const count = (
       db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(spoofId) as {
@@ -220,7 +244,7 @@ describe("inbox relay routes", () => {
     expect(body.error).toBe("envelope_expired");
   });
 
-  it("returns 403 for malformed from agent id on POST", async () => {
+  it("returns 400 routing_mismatch when body.from tampered to malformed agent id", async () => {
     const envelope = createOuterEnvelope({
       sender: alice,
       recipientAgentId: bobId,
@@ -237,9 +261,9 @@ describe("inbox relay routes", () => {
       headers: { "Content-Type": "application/json" },
       body: tamperBodyFrom(envelope, "not-a-valid-agent-id"),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("invalid_signature");
+    expect(body.error).toBe("routing_mismatch");
   });
 
   it("returns 400 for malformed envelope JSON on POST", async () => {
@@ -900,6 +924,148 @@ describe("inbox relay routes", () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string };
       expect(body.error).toBe("routing_mismatch");
+    });
+
+    it("returns 400 routing_mismatch when outer.from !== body.from with valid sig", async () => {
+      const envelopeId = crypto.randomUUID();
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "core.msg",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 103,
+        ttl: futureTtl(),
+        payload: utf8ToBytes("outer-from-tamper"),
+        id: envelopeId,
+      });
+      const wire = tamperOuterFrom(outer, strangerId);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("routing_mismatch");
+
+      const count = (
+        db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(envelopeId) as {
+          count: number;
+        }
+      ).count;
+      expect(count).toBe(0);
+    });
+
+    it("returns 400 routing_mismatch when outer.to !== body.to with body.to matching path", async () => {
+      const envelopeId = crypto.randomUUID();
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "core.msg",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 104,
+        ttl: futureTtl(),
+        payload: utf8ToBytes("outer-to-tamper"),
+        id: envelopeId,
+      });
+      const wire = tamperOuterTo(outer, aliceId);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("routing_mismatch");
+
+      const count = (
+        db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(envelopeId) as {
+          count: number;
+        }
+      ).count;
+      expect(count).toBe(0);
+    });
+
+    it("returns 400 routing_mismatch for allowlisted decoy outer.from (not recipient_not_allowed)", async () => {
+      const decoyAllowlist = signedAllowlist(bob, [aliceId, strangerId]);
+      const allowRes = await fetch(`${BASE_URL}/allowlist/${bobId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(decoyAllowlist),
+      });
+      expect(allowRes.status).toBe(204);
+
+      const envelopeId = crypto.randomUUID();
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "core.msg",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 105,
+        ttl: futureTtl(),
+        payload: utf8ToBytes("decoy-outer-from"),
+        id: envelopeId,
+      });
+      const wire = tamperOuterFrom(outer, strangerId);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("routing_mismatch");
+
+      const count = (
+        db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE id = ?").get(envelopeId) as {
+          count: number;
+        }
+      ).count;
+      expect(count).toBe(0);
+    });
+  });
+
+  describe("M2.6 strict challenge sig decode", () => {
+    function nonCanonicalLooseValidSig(canonical: string): string {
+      const bytes = Buffer.from(canonical, "base64url");
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+      for (const ch of alphabet) {
+        if (ch === canonical[canonical.length - 1]) {
+          continue;
+        }
+        const alt = canonical.slice(0, -1) + ch;
+        try {
+          if (Buffer.from(alt, "base64url").equals(bytes)) {
+            return alt;
+          }
+        } catch {
+          // try next
+        }
+      }
+      throw new Error("no non-canonical encoding found");
+    }
+
+    it("returns 403 challenge_invalid for GET inbox with padded loose-valid sig", async () => {
+      const challengeRes = await fetch(`${BASE_URL}/inbox/${bobId}?since=0`);
+      const { challenge } = (await challengeRes.json()) as { challenge: string };
+      const canonical = signChallenge(challenge, bob.secretKey);
+      const paddedSig = `${canonical}==`;
+
+      const res = await fetch(
+        `${BASE_URL}/inbox/${bobId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(paddedSig)}`,
+      );
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("challenge_invalid");
+    });
+
+    it("returns 403 challenge_invalid for DELETE purge with non-canonical loose-valid sig", async () => {
+      const senderQuery = `sender=${encodeURIComponent(aliceId)}`;
+      const challengeRes = await fetch(`${BASE_URL}/inbox/${bobId}/purge?${senderQuery}`, {
+        method: "DELETE",
+      });
+      const { challenge } = (await challengeRes.json()) as { challenge: string };
+      const canonical = signChallenge(challenge, bob.secretKey);
+      const nonCanonicalSig = nonCanonicalLooseValidSig(canonical);
+
+      const res = await fetch(
+        `${BASE_URL}/inbox/${bobId}/purge?${senderQuery}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(nonCanonicalSig)}`,
+        { method: "DELETE" },
+      );
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("challenge_invalid");
     });
   });
 

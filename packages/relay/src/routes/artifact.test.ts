@@ -232,6 +232,64 @@ describe("artifact relay routes", () => {
     const { res } = await putArtifact(app, owner, utf8Blob("card-backed"));
     expect(res.status).toBe(204);
   });
+
+  it("rejects artifact sig with padding (YQ== loose-valid)", async () => {
+    const { app } = createRelayApp();
+    await registerAgent(app, owner);
+    const blob = utf8Blob("padded-sig");
+    const hash = sha256Hex(blob);
+
+    const res = await app.request(`/artifact/${hash}`, {
+      method: "PUT",
+      headers: {
+        "x-agent-id": publicKeyToAgentId(owner.publicKey),
+        "x-artifact-sig": "YQ==",
+      },
+      body: blob,
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_signature");
+  });
+
+  it("rejects artifact sig with non-canonical encoding (_8 loose-valid)", async () => {
+    const { app } = createRelayApp();
+    await registerAgent(app, owner);
+    const blob = utf8Blob("non-canonical-sig");
+    const hash = sha256Hex(blob);
+
+    const res = await app.request(`/artifact/${hash}`, {
+      method: "PUT",
+      headers: {
+        "x-agent-id": publicKeyToAgentId(owner.publicKey),
+        "x-artifact-sig": "_8",
+      },
+      body: blob,
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_signature");
+  });
+
+  it("rejects artifact sig with padded canonical encoding (loose-valid)", async () => {
+    const { app } = createRelayApp();
+    await registerAgent(app, owner);
+    const blob = utf8Blob("padded-canonical-sig");
+    const hash = sha256Hex(blob);
+    const canonical = signChallenge(hash, owner.secretKey);
+
+    const res = await app.request(`/artifact/${hash}`, {
+      method: "PUT",
+      headers: {
+        "x-agent-id": publicKeyToAgentId(owner.publicKey),
+        "x-artifact-sig": `${canonical}==`,
+      },
+      body: blob,
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_signature");
+  });
 });
 
 function utf8Blob(text: string): Uint8Array {

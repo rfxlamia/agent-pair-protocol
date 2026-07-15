@@ -106,4 +106,49 @@ describe("allowlist relay routes", () => {
     expect(isSenderAllowed(db, ownerId, peerId)).toBe(true);
     expect(isSenderAllowed(db, ownerId, strangerId)).toBe(true);
   });
+
+  it("rejects allowlist sig with padding (YQ== loose-valid)", async () => {
+    const { app } = createRelayApp();
+    const body = signedAllowlist(owner, [peerId]);
+    body.sig = "YQ==";
+
+    const res = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(403);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe("invalid_signature");
+  });
+
+  it("rejects allowlist sig with non-canonical encoding (_8 loose-valid)", async () => {
+    const { app } = createRelayApp();
+    const body = signedAllowlist(owner, [peerId]);
+    body.sig = "_8";
+
+    const res = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(403);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe("invalid_signature");
+  });
+
+  it("rejects allowlist sig with padded canonical encoding (loose-valid)", async () => {
+    const { app } = createRelayApp();
+    const body = signedAllowlist(owner, [peerId]);
+    body.sig = `${body.sig}==`;
+
+    const res = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(403);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe("invalid_signature");
+  });
 });

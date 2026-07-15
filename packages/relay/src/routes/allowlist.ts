@@ -1,4 +1,4 @@
-import { agentIdToPublicKey, sign, verify } from "@agentpair/protocol";
+import { agentIdToPublicKey, decodeBase64UrlStrict, sign, verify } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
 import type { RelayDatabase } from "../db/index.js";
@@ -17,7 +17,7 @@ function canonicalAllowlistBytes(agentId: string, allowed: string[]): Uint8Array
 function verifyAllowlistSignature(body: AllowlistBody): boolean {
   try {
     const publicKey = agentIdToPublicKey(body.agent_id);
-    const signature = Buffer.from(body.sig, "base64url");
+    const signature = decodeBase64UrlStrict(body.sig);
     return verify(signature, canonicalAllowlistBytes(body.agent_id, body.allowed), publicKey);
   } catch {
     return false;

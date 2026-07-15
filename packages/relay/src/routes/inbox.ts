@@ -3,6 +3,7 @@ import {
   MAX_ENVELOPE_WIRE_BYTES,
   type OuterEnvelope,
   agentIdToPublicKey,
+  decodeBase64UrlStrict,
   deserializeOuterEnvelope,
   parseEnvelopeBody,
   parseOuterVersion,
@@ -233,7 +234,7 @@ function verifyChallenge(
 
   try {
     const publicKey = agentIdToPublicKey(agentId);
-    const signature = Buffer.from(sig, "base64url");
+    const signature = decodeBase64UrlStrict(sig);
     const valid = verify(signature, utf8ToBytes(nonce), publicKey);
     if (!valid) {
       return { ok: false, status: 403 };
@@ -325,8 +326,8 @@ export function createInboxRoutes(
       return c.json({ error: "version_mismatch" }, 400);
     }
 
-    // routing (path only for now)
-    if (body.to !== recipientAgentId) {
+    // routing (pre-verify cross-check)
+    if (body.to !== recipientAgentId || outer.to !== body.to || outer.from !== body.from) {
       return c.json({ error: "routing_mismatch" }, 400);
     }
 
