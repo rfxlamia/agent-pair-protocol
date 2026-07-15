@@ -43,13 +43,7 @@ function isAgentRegistered(db: RelayDatabase, agentId: string): boolean {
   const allowlist = db.prepare("SELECT 1 AS ok FROM allowlists WHERE agent_id = ?").get(agentId) as
     | { ok: number }
     | undefined;
-  if (allowlist) {
-    return true;
-  }
-  const card = db.prepare("SELECT 1 AS ok FROM cards WHERE agent_id = ?").get(agentId) as
-    | { ok: number }
-    | undefined;
-  return Boolean(card);
+  return Boolean(allowlist);
 }
 
 function verifyArtifactSignature(agentId: string, hash: string, sig: string): boolean {

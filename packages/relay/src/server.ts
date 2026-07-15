@@ -4,7 +4,6 @@ import { type RelayDatabase, createDatabase } from "./db/index.js";
 import { createRateLimiter } from "./middleware/rate-limit.js";
 import { createAllowlistRoutes } from "./routes/allowlist.js";
 import { createArtifactRoutes } from "./routes/artifact.js";
-import { createCardRoutes } from "./routes/card.js";
 import { healthRoutes } from "./routes/health.js";
 import { createInboxRoutes } from "./routes/inbox.js";
 import { createPairRoutes } from "./routes/pair.js";
@@ -42,7 +41,6 @@ export function createRelayApp(config: RelayConfig = {}): RelayApp {
   });
 
   app.route("/", healthRoutes);
-  app.route("/", createCardRoutes(db));
   app.route("/", createAllowlistRoutes(db));
   app.route("/", createPairRoutes(db, rateLimit));
   app.route("/", createInboxRoutes(db, rateLimit));

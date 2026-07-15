@@ -212,22 +212,6 @@ describe("artifact relay routes", () => {
     expect(new Uint8Array(await getRes.arrayBuffer())).toEqual(blob);
   });
 
-  it("registers agents via card rows for artifact auth", async () => {
-    const { app } = createRelayApp();
-    const agentId = publicKeyToAgentId(owner.publicKey);
-    const card = JSON.stringify({ agent_id: agentId, name: "card-only" });
-
-    const cardRes = await app.request(`/card/${agentId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: card,
-    });
-    expect(cardRes.status).toBe(204);
-
-    const { res } = await putArtifact(app, owner, utf8Blob("card-backed"));
-    expect(res.status).toBe(204);
-  });
-
   it("rejects artifact sig with padding (YQ== loose-valid)", async () => {
     const { app } = createRelayApp();
     await registerAgent(app, owner);
@@ -290,3 +274,97 @@ describe("artifact relay routes", () => {
 function utf8Blob(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
+
+describe("card cut + allowlist-only registration", () => {
+  const owner = generateKeyPair();
+  const ownerId = publicKeyToAgentId(owner.publicKey);
+
+  it("returns 404 for GET /card/{agent_id}", async () => {
+    const { app } = createRelayApp();
+    const res = await app.request(`/card/${ownerId}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 for PUT /card/{agent_id}", async () => {
+    const { app } = createRelayApp();
+    const res = await app.request(`/card/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: ownerId, name: "card-only" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("registers agent via signed allowlist push with allowed: []", async () => {
+    const { app } = createRelayApp();
+    const body = encodeAllowlistPush(ownerId, [], owner.secretKey);
+
+    const allowlistRes = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(allowlistRes.status).toBe(204);
+
+    const blob = utf8Blob("allowlist-registered");
+    const hash = sha256Hex(blob);
+    const artifactRes = await app.request(`/artifact/${hash}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...artifactAuthHeaders(owner, hash),
+      },
+      body: blob,
+    });
+    expect(artifactRes.status).toBe(204);
+  });
+
+  it("returns 403 agent_not_registered when no allowlist row exists", async () => {
+    const { app } = createRelayApp();
+    const blob = utf8Blob("unregistered");
+    const hash = sha256Hex(blob);
+
+    const res = await app.request(`/artifact/${hash}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...artifactAuthHeaders(owner, hash),
+      },
+      body: blob,
+    });
+    expect(res.status).toBe(403);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe("agent_not_registered");
+  });
+
+  it("rejects re-PUT of existing hash without valid auth (not 204 idempotent success)", async () => {
+    const { app } = createRelayApp();
+    const body = encodeAllowlistPush(ownerId, [], owner.secretKey);
+    await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const blob = utf8Blob("already-stored");
+    const hash = sha256Hex(blob);
+    const first = await app.request(`/artifact/${hash}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...artifactAuthHeaders(owner, hash),
+      },
+      body: blob,
+    });
+    expect(first.status).toBe(204);
+
+    const replay = await app.request(`/artifact/${hash}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: blob,
+    });
+    expect(replay.status).toBe(401);
+    const payload = (await replay.json()) as { error: string };
+    expect(payload.error).toBe("auth_required");
+  });
+});
