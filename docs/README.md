@@ -8,6 +8,7 @@ Dokumentasi ini dibagi untuk dua pembaca:
 |---------|---------|-----|
 | [Panduan Pengguna](./user-guide.md) | Pengguna akhir | Instalasi, integrasi ke AI client, alur pairing & session, hasil sukses/gagal |
 | [Panduan Developer](./developer-guide.md) | Kontributor | Struktur monorepo, setup dev, arsitektur, testing, deployment |
+| [Conformance Checklist](./conformance-checklist.md) | Implementor pihak ketiga | Pemetaan setiap MUST SPEC §3–§7 ke test referensi |
 
 ## Ringkasan cepat
 
