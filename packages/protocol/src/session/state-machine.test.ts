@@ -2473,5 +2473,140 @@ describe("session state machine", () => {
         expect(after.turn_count).toBe(3);
       },
     );
+
+    describe("receive-side budget enforcement (R3)", () => {
+      async function openLiveWithMaxTurns(maxTurns: number): Promise<string> {
+        const opened = await aliceMachine.handleOpen({
+          to: bobId,
+          ...openPayload,
+          budget: { max_turns: maxTurns, deadline: FUTURE_DEADLINE },
+        });
+        expect(opened.ok).toBe(true);
+        if (!opened.ok) {
+          throw new Error("open failed");
+        }
+        const bobPendingItems = bobPending.list().filter((item) => item.kind === "session_open");
+        const bobPendingItem = bobPendingItems[0];
+        if (!bobPendingItem) {
+          throw new Error("expected session_open pending");
+        }
+        await bobMachine.handleApproveOpen({
+          pending_id: bobPendingItem.id,
+          via_human: true,
+        });
+        return opened.thread;
+      }
+
+      async function exhaustTurnBudgetViaMsgs(thread: string, maxTurns: number): Promise<void> {
+        for (let i = 0; i < maxTurns; i++) {
+          const machine = i % 2 === 0 ? aliceMachine : bobMachine;
+          const type = i % 2 === 0 ? "propose" : "counter";
+          const result = await machine.handleMsg({
+            thread,
+            type,
+            body: JSON.stringify({ diff: `turn-${i}` }),
+          });
+          expect(result.ok).toBe(true);
+        }
+      }
+
+      function budgetExtendCount(thread: string): number {
+        return alicePending
+          .list()
+          .filter((item) => item.kind === "budget_extend" && item.thread === thread).length;
+      }
+
+      it("rejects over-budget nego.turn with budget_exhausted and registers one budget_extend", async () => {
+        const maxTurns = 3;
+        const thread = await openLiveWithMaxTurns(maxTurns);
+        await exhaustTurnBudgetViaMsgs(thread, maxTurns);
+
+        const before = requireN6Session(thread);
+        expect(before.turnCount).toBe(maxTurns);
+
+        const result = await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "nego.turn",
+          thread,
+          payload: peerTurnEnvelope(),
+        });
+        expect(result).toEqual({ ok: false, error: "budget_exhausted" });
+
+        const after = requireN6Session(thread);
+        expect(after.turnCount).toBe(maxTurns);
+        expect(after.peerMessages).toEqual(before.peerMessages);
+        expect(budgetExtendCount(thread)).toBe(1);
+      });
+
+      it("repeated over-budget nego.turn does not duplicate budget_extend pending", async () => {
+        const maxTurns = 3;
+        const thread = await openLiveWithMaxTurns(maxTurns);
+        await exhaustTurnBudgetViaMsgs(thread, maxTurns);
+
+        const first = await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "nego.turn",
+          thread,
+          payload: peerTurnEnvelope(),
+        });
+        expect(first).toEqual({ ok: false, error: "budget_exhausted" });
+        expect(budgetExtendCount(thread)).toBe(1);
+
+        const second = await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "nego.turn",
+          thread,
+          payload: peerTurnEnvelope(999),
+        });
+        expect(second).toEqual({ ok: false, error: "budget_exhausted" });
+        expect(budgetExtendCount(thread)).toBe(1);
+      });
+
+      it("send-path then receive-path over-budget shares one budget_extend pending", async () => {
+        const maxTurns = 3;
+        const thread = await openLiveWithMaxTurns(maxTurns);
+        await exhaustTurnBudgetViaMsgs(thread, maxTurns);
+
+        const sendExhausted = await aliceMachine.handleMsg({
+          thread,
+          type: "propose",
+          body: JSON.stringify({ diff: "over-send" }),
+        });
+        expect(sendExhausted).toEqual({ ok: false, error: "budget_exhausted" });
+        expect(budgetExtendCount(thread)).toBe(1);
+
+        const receiveExhausted = await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "nego.turn",
+          thread,
+          payload: peerTurnEnvelope(),
+        });
+        expect(receiveExhausted).toEqual({ ok: false, error: "budget_exhausted" });
+        expect(budgetExtendCount(thread)).toBe(1);
+      });
+
+      it("receive-path then send-path over-budget shares one budget_extend pending", async () => {
+        const maxTurns = 3;
+        const thread = await openLiveWithMaxTurns(maxTurns);
+        await exhaustTurnBudgetViaMsgs(thread, maxTurns);
+
+        const receiveExhausted = await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "nego.turn",
+          thread,
+          payload: peerTurnEnvelope(),
+        });
+        expect(receiveExhausted).toEqual({ ok: false, error: "budget_exhausted" });
+        expect(budgetExtendCount(thread)).toBe(1);
+
+        const sendExhausted = await aliceMachine.handleMsg({
+          thread,
+          type: "propose",
+          body: JSON.stringify({ diff: "over-send" }),
+        });
+        expect(sendExhausted).toEqual({ ok: false, error: "budget_exhausted" });
+        expect(budgetExtendCount(thread)).toBe(1);
+      });
+    });
   });
 });

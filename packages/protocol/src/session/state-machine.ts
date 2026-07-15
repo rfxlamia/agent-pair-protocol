@@ -135,6 +135,25 @@ export function createSessionStateMachine(
     }
   }
 
+  function guardTurnBudget(
+    session: SessionRecord,
+  ): { ok: true } | { ok: false; error: "budget_exhausted" } {
+    if (session.turnCount >= session.budget.max_turns) {
+      const peer = peerFor(session, deps.agentId);
+      const existing = deps.pending
+        .list()
+        .find((item) => item.kind === "budget_extend" && item.thread === session.thread);
+      if (!existing) {
+        deps.pending.addBudgetExtend({
+          thread: session.thread,
+          peer,
+        });
+      }
+      return { ok: false, error: "budget_exhausted" };
+    }
+    return { ok: true };
+  }
+
   function expireOpenPendingSync(session: SessionRecord): SessionRecord {
     const expired = upsert({ ...session, status: "open_expired" });
     removeSessionOpenPendingForThread(session.thread);
@@ -761,6 +780,10 @@ export function createSessionStateMachine(
           if (found.session.status !== "live") {
             return { ok: false, error: "session_not_live" };
           }
+          const budgetGuard = guardTurnBudget(found.session);
+          if (!budgetGuard.ok) {
+            return budgetGuard;
+          }
           const nextTurnCount = found.session.turnCount + 1;
           const msgType = turnPayload.data.msg_type;
           const msgBody = turnPayload.data.body;
@@ -879,18 +902,9 @@ export function createSessionStateMachine(
         return { ok: false, error: "invalid_payload" };
       }
 
-      if (session.turnCount >= session.budget.max_turns) {
-        const peer = peerFor(session, deps.agentId);
-        const existing = deps.pending
-          .list()
-          .find((item) => item.kind === "budget_extend" && item.thread === session.thread);
-        if (!existing) {
-          deps.pending.addBudgetExtend({
-            thread: session.thread,
-            peer,
-          });
-        }
-        return { ok: false, error: "budget_exhausted" };
+      const budgetGuard = guardTurnBudget(session);
+      if (!budgetGuard.ok) {
+        return budgetGuard;
       }
 
       if (input.type === "accept") {
