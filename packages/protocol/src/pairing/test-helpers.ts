@@ -1,23 +1,17 @@
-import { utf8ToBytes } from "@noble/ciphers/utils.js";
-import { encodeBase64Url } from "../crypto/base64url.js";
-import { sign } from "../crypto/sign.js";
+import { decodeAllowlistBlob, encodeAllowlistPush } from "../allowlist/encode.js";
 import type { LocalAllowlistStore, PairingRelayClient } from "./flow.js";
-
-export function canonicalAllowlistBytes(agentId: string, allowed: string[]): Uint8Array {
-  const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
-  return utf8ToBytes(JSON.stringify(ordered));
-}
 
 export function signAllowlist(
   agentId: string,
   allowed: string[],
   secretKey: Uint8Array,
 ): { agent_id: string; allowed: string[]; sig: string } {
-  const signature = sign(canonicalAllowlistBytes(agentId, allowed), secretKey);
+  const push = encodeAllowlistPush(agentId, allowed, secretKey);
+  const decoded = decodeAllowlistBlob(push);
   return {
-    agent_id: agentId,
-    allowed: [...allowed].sort(),
-    sig: encodeBase64Url(signature),
+    agent_id: decoded.agent_id,
+    allowed: decoded.allowed,
+    sig: push.sig,
   };
 }
 

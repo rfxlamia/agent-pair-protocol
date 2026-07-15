@@ -3,6 +3,7 @@ import {
   MAX_SPILLOVER_PLAINTEXT_BYTES,
   type OuterEnvelope,
   type PairingRelayClient,
+  encodeAllowlistPush,
   publicKeyToAgentId,
   serializeOuterEnvelope,
   sign,
@@ -29,24 +30,6 @@ export interface PairManifest {
   };
   createdAt: number;
   expiresAt: number;
-}
-
-function canonicalAllowlistBytes(agentId: string, allowed: string[]): Uint8Array {
-  const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
-  return utf8ToBytes(JSON.stringify(ordered));
-}
-
-function signAllowlist(
-  agentId: string,
-  allowed: string[],
-  secretKey: Uint8Array,
-): { agent_id: string; allowed: string[]; sig: string } {
-  const signature = sign(canonicalAllowlistBytes(agentId, allowed), secretKey);
-  return {
-    agent_id: agentId,
-    allowed: [...allowed].sort(),
-    sig: Buffer.from(signature).toString("base64url"),
-  };
 }
 
 function signChallenge(nonce: string, secretKey: Uint8Array): string {
@@ -116,7 +99,7 @@ export class HttpRelayClient implements PairingRelayClient {
     allowed: string[],
     secretKey: Uint8Array,
   ): Promise<{ ok: boolean }> {
-    const body = signAllowlist(agentId, allowed, secretKey);
+    const body = encodeAllowlistPush(agentId, allowed, secretKey);
     const res = await fetch(`${this.baseUrl}/allowlist/${encodeURIComponent(agentId)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
