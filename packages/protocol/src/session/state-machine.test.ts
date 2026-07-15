@@ -2366,4 +2366,85 @@ describe("session state machine", () => {
       ).toBeUndefined();
     });
   });
+
+  describe("N6 wire-derived turn count (M2.5)", () => {
+    function requireN6Session(thread: string) {
+      const session = aliceMachine.store.get(thread);
+      if (!session) {
+        throw new Error(`expected session ${thread}`);
+      }
+      return session;
+    }
+
+    function peerTurnEnvelope(turnCount?: number): string {
+      const payload: Record<string, unknown> = {
+        msg_type: "propose",
+        body: JSON.stringify({ diff: "peer" }),
+      };
+      if (turnCount !== undefined) {
+        payload.turn_count = turnCount;
+      }
+      return JSON.stringify(payload);
+    }
+
+    async function liveSessionAtTurnCountTwo(): Promise<string> {
+      const thread = await openAndApprove();
+      const session = requireN6Session(thread);
+      aliceMachine.store.upsert({ ...session, turnCount: 2 });
+      return thread;
+    }
+
+    it("rejects nego.turn in pending with session_not_live and no side effects", async () => {
+      const opened = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        throw new Error("open failed");
+      }
+      const thread = opened.thread;
+      const before = requireN6Session(thread);
+      expect(before.status).toBe("pending");
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.turn",
+        thread,
+        payload: peerTurnEnvelope(1),
+      });
+      expect(result).toEqual({ ok: false, error: "session_not_live" });
+
+      const after = requireN6Session(thread);
+      expect(after.turnCount).toBe(before.turnCount);
+      expect(after.peerMessages).toEqual(before.peerMessages);
+      expect(after.status).toBe("pending");
+    });
+
+    it("rejects nego.turn in signed with session_not_live and no increment", async () => {
+      const thread = await openAndApprove();
+      await signFlowToSigned(thread, "sha256:n6-signed-guard");
+      const before = requireN6Session(thread);
+      expect(before.status).toBe("signed");
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.turn",
+        thread,
+        payload: peerTurnEnvelope(1),
+      });
+      expect(result).toEqual({ ok: false, error: "session_not_live" });
+      expect(requireN6Session(thread).turnCount).toBe(before.turnCount);
+    });
+
+    it("rejects nego.turn in terminal status with thread_closed", async () => {
+      const thread = await openAndApprove();
+      await aliceMachine.handleThreadClose(thread);
+
+      const result = await aliceMachine.handleIncomingEnvelope({
+        from: bobId,
+        type: "nego.turn",
+        thread,
+        payload: peerTurnEnvelope(1),
+      });
+      expect(result).toEqual({ ok: false, error: "thread_closed" });
+    });
+  });
 });

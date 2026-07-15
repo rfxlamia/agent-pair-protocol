@@ -758,6 +758,9 @@ export function createSessionStateMachine(
           if (isTerminalNegotiationStatus(found.session.status)) {
             return { ok: false, error: "thread_closed" };
           }
+          if (found.session.status !== "live") {
+            return { ok: false, error: "session_not_live" };
+          }
           const turnCount = turnPayload.data.turn_count ?? found.session.turnCount;
           const nextTurnCount = Math.max(found.session.turnCount, turnCount);
           const msgType = turnPayload.data.msg_type;
