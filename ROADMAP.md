@@ -38,7 +38,7 @@ Breaking change; everything else builds on it. Land first.
 - [x] **M2.4** N7 — `budget.deadline` REQUIRED (`invalid_payload` if absent); local expiry → `closed` (`deadline_expired`), no peer message needed. `label:protocol` `size:M` — done 2026-07-15 (#31)
 - [x] **M2.5** N6 audit — turn count derived from wire only, both directions; property test that peer-reported counters are never trusted. `label:testing` `size:S` — done 2026-07-15 (#32)
 - [x] **M2.6** Relay inbox conformance: size gate, pre-verify routing cross-check, strict base64url sig decode on inbox/allowlist/artifact (reject garbage early, never decrypt). `label:relay` `size:S` — done 2026-07-15 (#33)
-- [ ] **M2.7** Conformance checklist doc: table of every MUST in §3–§7 → test that covers it. Gaps become issues. `label:testing` `size:M`
+- [x] **M2.7** Conformance checklist doc: table of every MUST in §3–§7 → test that covers it. Gaps become issues. `label:testing` `size:M` — done 2026-07-15 (#34, `docs/conformance-checklist.md`; gap #53)
 
 **Exit:** Core + Negotiation profiles pass conformance checklist end-to-end over a real relay (docker compose, two hosts).
 
