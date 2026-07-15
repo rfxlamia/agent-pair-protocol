@@ -35,6 +35,19 @@ export {
 } from "./artifact/spill.js";
 export { sign, verify } from "./crypto/sign.js";
 export {
+  decodeAllowlistBlob,
+  encodeAllowlistPush,
+  sortAllowed,
+  verifyAllowlistPush,
+  type AllowlistPush,
+} from "./allowlist/encode.js";
+export {
+  ALLOWLIST_MAX_ALLOWED,
+  validateAllowlistSchema,
+  type AllowlistBlob,
+  type ValidateAllowlistSchemaResult,
+} from "./allowlist/schema.js";
+export {
   coerceEnvelopeBody,
   createOuterEnvelope,
   decryptEnvelopePayload,
