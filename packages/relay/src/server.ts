@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import { type RelayDatabase, createDatabase } from "./db/index.js";
 import { createRateLimiter } from "./middleware/rate-limit.js";
 import { createAllowlistRoutes } from "./routes/allowlist.js";
@@ -24,15 +23,6 @@ export interface RelayApp {
 export function createRelayApp(config: RelayConfig = {}): RelayApp {
   const db = createDatabase(config.dbPath ?? ":memory:");
   const app = new Hono();
-
-  const maxBodyBytes = config.maxBodyBytes ?? 1024 * 1024;
-  app.use(
-    "*",
-    bodyLimit({
-      maxSize: maxBodyBytes,
-      onError: (c) => c.json({ error: "payload_too_large" }, 413),
-    }),
-  );
 
   const rateLimit = createRateLimiter({
     windowMs: config.rateLimitWindowMs ?? 60_000,

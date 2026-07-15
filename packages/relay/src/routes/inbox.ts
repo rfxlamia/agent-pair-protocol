@@ -13,6 +13,7 @@ import {
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { RelayDatabase } from "../db/index.js";
 import type { createRateLimiter } from "../middleware/rate-limit.js";
 import { isSenderAllowed } from "./allowlist.js";
@@ -21,6 +22,7 @@ const CHALLENGE_TTL_MS = 60 * 1000;
 const GC_INTERVAL_MS = 60_000;
 const DEFAULT_ENVELOPE_TTL_SEC = 3600;
 const LEGACY_CURSOR_THRESHOLD = 1_000_000_000_000;
+const INBOX_MAX_WIRE_BYTES = 128 * 1024;
 
 // Millisecond timestamps from pre-rowid clients exceed this threshold. Reset once
 // to 0 so those cursors re-deliver; MCP clients dedupe by envelope id.
@@ -292,95 +294,109 @@ export function createInboxRoutes(
   const inboxGcState = { lastGcAt: 0 };
   const routes = new Hono();
 
-  routes.post("/inbox/:agentId", rateLimit, async (c) => {
-    maybeGarbageCollectInbox(db, inboxGcState);
-    const recipientAgentId = c.req.param("agentId");
-    const wireText = await c.req.text();
+  routes.post(
+    "/inbox/:agentId",
+    bodyLimit({
+      maxSize: INBOX_MAX_WIRE_BYTES,
+      onError: (c) => c.json({ error: "envelope_too_large" }, 413),
+    }),
+    rateLimit,
+    async (c) => {
+      maybeGarbageCollectInbox(db, inboxGcState);
+      const recipientAgentId = c.req.param("agentId");
+      const wireText = await c.req.text();
 
-    // size gate (before any JSON parse)
-    if (utf8ToBytes(wireText).length > MAX_ENVELOPE_WIRE_BYTES) {
-      return c.json({ error: "envelope_too_large" }, 413);
-    }
+      // size gate (before any JSON parse)
+      if (utf8ToBytes(wireText).length > MAX_ENVELOPE_WIRE_BYTES) {
+        return c.json({ error: "envelope_too_large" }, 413);
+      }
 
-    // parseOuterVersion → deserialize → body parse
-    const outerVersion = parseOuterVersion(wireText);
-    if (outerVersion !== null && outerVersion !== 1) {
-      return c.json({ error: "unsupported_version" }, 400);
-    }
+      // parseOuterVersion → deserialize → body parse
+      const outerVersion = parseOuterVersion(wireText);
+      if (outerVersion !== null && outerVersion !== 1) {
+        return c.json({ error: "unsupported_version" }, 400);
+      }
 
-    let outer: OuterEnvelope;
-    try {
-      outer = deserializeOuterEnvelope(wireText);
-    } catch {
-      return c.json({ error: "invalid_json" }, 400);
-    }
+      let outer: OuterEnvelope;
+      try {
+        outer = deserializeOuterEnvelope(wireText);
+      } catch {
+        return c.json({ error: "invalid_json" }, 400);
+      }
 
-    const parsedBody = tryParseEnvelopeBody(outer);
-    if (parsedBody === null) {
-      return c.json({ error: "invalid_json" }, 400);
-    }
-    const body = parsedBody;
+      const parsedBody = tryParseEnvelopeBody(outer);
+      if (parsedBody === null) {
+        return c.json({ error: "invalid_json" }, 400);
+      }
+      const body = parsedBody;
 
-    // version_mismatch
-    if (body.v !== outer.v) {
-      return c.json({ error: "version_mismatch" }, 400);
-    }
+      // version_mismatch
+      if (body.v !== outer.v) {
+        return c.json({ error: "version_mismatch" }, 400);
+      }
 
-    // routing (pre-verify cross-check)
-    if (body.to !== recipientAgentId || outer.to !== body.to || outer.from !== body.from) {
-      return c.json({ error: "routing_mismatch" }, 400);
-    }
+      // routing (pre-verify cross-check)
+      if (body.to !== recipientAgentId || outer.to !== body.to || outer.from !== body.from) {
+        return c.json({ error: "routing_mismatch" }, 400);
+      }
 
-    // ttl
-    if (!Number.isFinite(body.ttl) || body.ttl <= 0) {
-      return c.json({ error: "envelope_expired" }, 400);
-    }
+      // ttl
+      if (!Number.isFinite(body.ttl) || body.ttl <= 0) {
+        return c.json({ error: "envelope_expired" }, 400);
+      }
 
-    // verify
-    let senderPublicKey: Uint8Array;
-    try {
-      senderPublicKey = agentIdToPublicKey(body.from);
-    } catch {
-      return c.json({ error: "invalid_signature" }, 403);
-    }
+      // verify
+      let senderPublicKey: Uint8Array;
+      try {
+        senderPublicKey = agentIdToPublicKey(body.from);
+      } catch {
+        return c.json({ error: "invalid_signature" }, 403);
+      }
 
-    if (!verifyOuterEnvelope(outer, senderPublicKey)) {
-      return c.json({ error: "invalid_signature" }, 403);
-    }
+      if (!verifyOuterEnvelope(outer, senderPublicKey)) {
+        return c.json({ error: "invalid_signature" }, 403);
+      }
 
-    // allowlist
-    if (!isSenderAllowed(db, recipientAgentId, body.from)) {
-      return c.json({ error: "recipient_not_allowed" }, 403);
-    }
+      // allowlist
+      if (!isSenderAllowed(db, recipientAgentId, body.from)) {
+        return c.json({ error: "recipient_not_allowed" }, 403);
+      }
 
-    const now = Date.now();
-    const expiresAt = body.ttl * 1000;
-    const insert = db
-      .prepare(
-        `INSERT INTO inbox (
+      const now = Date.now();
+      const expiresAt = body.ttl * 1000;
+      const insert = db
+        .prepare(
+          `INSERT INTO inbox (
          id, recipient_agent_id, envelope_json, sender_agent_id,
          thread_id, seq, msg_type, received_at, expires_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO NOTHING`,
-      )
-      .run(
-        body.id,
-        recipientAgentId,
-        wireText,
-        body.from,
-        body.thread,
-        body.seq,
-        body.type,
-        now,
-        expiresAt,
-      );
+        )
+        .run(
+          body.id,
+          recipientAgentId,
+          wireText,
+          body.from,
+          body.thread,
+          body.seq,
+          body.type,
+          now,
+          expiresAt,
+        );
 
-    if (insert.changes === 0) {
-      return c.json({ error: "duplicate_envelope_id" }, 409);
-    }
+      if (insert.changes === 0) {
+        const existing = db.prepare("SELECT envelope_json FROM inbox WHERE id = ?").get(body.id) as
+          | { envelope_json: string }
+          | undefined;
+        if (existing?.envelope_json === wireText) {
+          return c.body(null, 204);
+        }
+        return c.json({ error: "envelope_id_collision" }, 409);
+      }
 
-    return c.body(null, 204);
-  });
+      return c.body(null, 204);
+    },
+  );
 
   routes.get("/inbox/:agentId", (c) => {
     maybeGarbageCollectInbox(db, inboxGcState);

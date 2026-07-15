@@ -126,19 +126,7 @@ export class HttpRelayClient implements PairingRelayClient {
       headers: { "Content-Type": "application/json" },
       body: serializeOuterEnvelope(outer),
     });
-    if (res.status === 409) {
-      let error = "";
-      try {
-        const body = (await res.json()) as { error?: string };
-        error = body.error ?? "";
-      } catch {
-        // duplicate_envelope_id responses are idempotent success
-      }
-      if (error === "duplicate_envelope_id") {
-        return;
-      }
-    }
-    if (!res.ok && res.status !== 204) {
+    if (!res.ok) {
       const body = await res.text();
       throw new Error(`relay inbox post failed: ${res.status} ${body}`);
     }

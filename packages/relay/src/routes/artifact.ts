@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { agentIdToPublicKey, decodeBase64UrlStrict, verify } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { RelayDatabase } from "../db/index.js";
 import type { createRateLimiter } from "../middleware/rate-limit.js";
 
 const GC_INTERVAL_MS = 60_000;
 const DEFAULT_QUOTA_BYTES = 50 * 1024 * 1024;
 const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const ARTIFACT_MAX_BODY_BYTES = 10 * 1024 * 1024;
 
 function artifactAuthMode(): "off" | "required" {
   const mode = process.env.AGENTPAIR_ARTIFACT_AUTH ?? "required";
@@ -90,52 +92,60 @@ export function createArtifactRoutes(
   const gcState = { lastGcAt: 0 };
   const routes = new Hono();
 
-  routes.put("/artifact/:hash", rateLimit, async (c) => {
-    const hash = c.req.param("hash");
-    maybeGarbageCollectArtifacts(db, gcState);
+  routes.put(
+    "/artifact/:hash",
+    bodyLimit({
+      maxSize: ARTIFACT_MAX_BODY_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+    rateLimit,
+    async (c) => {
+      const hash = c.req.param("hash");
+      maybeGarbageCollectArtifacts(db, gcState);
 
-    const authMode = artifactAuthMode();
-    let ownerAgentId: string | null = null;
+      const authMode = artifactAuthMode();
+      let ownerAgentId: string | null = null;
 
-    if (authMode === "required") {
-      const agentId = c.req.header("x-agent-id");
-      const sig = c.req.header("x-artifact-sig");
-      if (!agentId || !sig) {
-        return c.json({ error: "auth_required" }, 401);
+      if (authMode === "required") {
+        const agentId = c.req.header("x-agent-id");
+        const sig = c.req.header("x-artifact-sig");
+        if (!agentId || !sig) {
+          return c.json({ error: "auth_required" }, 401);
+        }
+        if (!isAgentRegistered(db, agentId)) {
+          return c.json({ error: "agent_not_registered" }, 403);
+        }
+        if (!verifyArtifactSignature(agentId, hash, sig)) {
+          return c.json({ error: "invalid_signature" }, 403);
+        }
+        ownerAgentId = agentId;
       }
-      if (!isAgentRegistered(db, agentId)) {
-        return c.json({ error: "agent_not_registered" }, 403);
-      }
-      if (!verifyArtifactSignature(agentId, hash, sig)) {
-        return c.json({ error: "invalid_signature" }, 403);
-      }
-      ownerAgentId = agentId;
-    }
 
-    const blob = await c.req.arrayBuffer();
-    const computed = createHash("sha256").update(Buffer.from(blob)).digest("hex");
-    if (computed !== hash) {
-      return c.json({ error: "hash_mismatch" }, 400);
-    }
+      const blob = await c.req.arrayBuffer();
+      const computed = createHash("sha256").update(Buffer.from(blob)).digest("hex");
+      if (computed !== hash) {
+        return c.json({ error: "hash_mismatch" }, 400);
+      }
 
-    if (authMode === "required" && ownerAgentId) {
-      if (!artifactExists(db, hash)) {
-        const used = agentArtifactBytes(db, ownerAgentId);
-        if (used + blob.byteLength > artifactQuotaBytes()) {
-          return c.json({ error: "quota_exceeded" }, 413);
+      if (authMode === "required" && ownerAgentId) {
+        if (!artifactExists(db, hash)) {
+          const used = agentArtifactBytes(db, ownerAgentId);
+          if (used + blob.byteLength > artifactQuotaBytes()) {
+            return c.json({ error: "quota_exceeded" }, 413);
+          }
         }
       }
-    }
 
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO artifacts (hash, blob, created_at, owner_agent_id)
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO artifacts (hash, blob, created_at, owner_agent_id)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(hash) DO NOTHING`,
-    ).run(hash, Buffer.from(blob), now, ownerAgentId);
+      ).run(hash, Buffer.from(blob), now, ownerAgentId);
 
-    return c.body(null, 204);
-  });
+      return c.body(null, 204);
+    },
+  );
 
   routes.get("/artifact/:hash", (c) => {
     const hash = c.req.param("hash");

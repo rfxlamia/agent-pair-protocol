@@ -98,8 +98,8 @@ describe("artifact relay routes", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("auth_required");
 
-    const row = app.request(`/artifact/${hash}`).then((response) => response.status);
-    expect(await row).toBe(404);
+    const getRes = await app.request(`/artifact/${hash}`);
+    expect(getRes.status).toBe(404);
   });
 
   it("rejects forged signatures", async () => {
@@ -248,6 +248,16 @@ describe("artifact relay routes", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("invalid_signature");
+  });
+
+  it("accepts exactly 10 MiB artifact PUT with auth", async () => {
+    const { app } = createRelayApp();
+    await registerAgent(app, owner);
+    const blob = new Uint8Array(10 * 1024 * 1024);
+    blob.fill(0xab);
+
+    const { res } = await putArtifact(app, owner, blob);
+    expect(res.status).toBe(204);
   });
 
   it("rejects artifact sig with padded canonical encoding (loose-valid)", async () => {

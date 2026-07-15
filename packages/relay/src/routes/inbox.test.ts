@@ -667,6 +667,18 @@ describe("inbox relay routes", () => {
   });
 
   describe("M2.6 envelope size cap", () => {
+    const INBOX_MAX_WIRE_BYTES = 128 * 1024;
+
+    it("returns 413 envelope_too_large when POST body exceeds inbox body limit", async () => {
+      const wire = "a".repeat(INBOX_MAX_WIRE_BYTES + 1);
+      expect(wireUtf8Length(wire)).toBe(INBOX_MAX_WIRE_BYTES + 1);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("envelope_too_large");
+    });
+
     it("returns 413 envelope_too_large when wire UTF-8 exceeds MAX_ENVELOPE_WIRE_BYTES", async () => {
       const beforeCount = (
         db
@@ -2340,7 +2352,7 @@ describe("inbox global turn-taking seq (isolated db)", () => {
     expect(burstEnvelopes.map((envelope) => bodyFromGetItem(envelope).seq).sort()).toEqual([1, 4]);
   });
 
-  it("returns 409 for duplicate envelope id on POST", async () => {
+  it("returns 204 for byte-identical duplicate envelope id on POST", async () => {
     const thread = "bb0e8400-e29b-41d4-a716-446655440099";
     const envelope = createOuterEnvelope({
       sender: alice,
@@ -2365,9 +2377,48 @@ describe("inbox global turn-taking seq (isolated db)", () => {
       headers: { "Content-Type": "application/json" },
       body: serializeOuterEnvelope(envelope),
     });
-    expect(second.status).toBe(409);
-    const body = (await second.json()) as { error: string };
-    expect(body.error).toBe("duplicate_envelope_id");
+    expect(second.status).toBe(204);
+  });
+
+  it("returns 409 envelope_id_collision when same id has different wire bytes", async () => {
+    const thread = "bc0e8400-e29b-41d4-a716-446655440099";
+    const envelopeId = crypto.randomUUID();
+    const first = createOuterEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "suggestion",
+      thread,
+      seq: 1,
+      ttl: futureTtl(),
+      payload: utf8ToBytes("first"),
+      id: envelopeId,
+    });
+    const second = createOuterEnvelope({
+      sender: alice,
+      recipientAgentId: bobId,
+      type: "suggestion",
+      thread,
+      seq: 2,
+      ttl: futureTtl(),
+      payload: utf8ToBytes("second"),
+      id: envelopeId,
+    });
+
+    const firstRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeOuterEnvelope(first),
+    });
+    expect(firstRes.status).toBe(204);
+
+    const secondRes = await fetch(`${GLOBAL_SEQ_BASE}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeOuterEnvelope(second),
+    });
+    expect(secondRes.status).toBe(409);
+    const body = (await secondRes.json()) as { error: string };
+    expect(body.error).toBe("envelope_id_collision");
   });
 });
 
