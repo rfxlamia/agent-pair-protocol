@@ -20,8 +20,7 @@ export function createPairRoutes(
       `INSERT INTO pair_sessions (session_id, message_json, created_at, expires_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
-         message_json = excluded.message_json,
-         expires_at = excluded.expires_at`,
+         message_json = excluded.message_json`,
     ).run(sessionId, messageJson, now, expiresAt);
 
     return c.body(null, 204);
@@ -34,12 +33,12 @@ export function createPairRoutes(
       .get(sessionId) as { message_json: string; expires_at: number } | undefined;
 
     if (!row) {
-      return c.json({ error: "session_not_found" }, 404);
+      return c.json({ error: "pair_not_found" }, 404);
     }
 
     if (row.expires_at < Date.now()) {
       db.prepare("DELETE FROM pair_sessions WHERE session_id = ?").run(sessionId);
-      return c.json({ error: "session_expired" }, 410);
+      return c.json({ error: "pair_session_lost" }, 410);
     }
 
     return c.body(row.message_json, 200, {
