@@ -1,4 +1,5 @@
 import {
+  MAX_ENVELOPE_WIRE_BYTES,
   type OuterEnvelope,
   createOuterEnvelope,
   deserializeOuterEnvelope,
@@ -14,6 +15,7 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRateLimiter } from "../middleware/rate-limit.js";
 import { createRelayApp } from "../server.js";
+import { padWireToSize, wireUtf8Length } from "../test/wire-padding.js";
 import { type AllowlistBody, signChallenge } from "./allowlist.js";
 import { createInboxRoutes } from "./inbox.js";
 
@@ -115,6 +117,14 @@ describe("inbox relay routes", () => {
       });
     });
   });
+
+  async function postV1Wire(wire: string) {
+    return fetch(`${BASE_URL}/inbox/${bobId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: wire,
+    });
+  }
 
   async function postEnvelope(
     recipientId: string,
@@ -636,6 +646,96 @@ describe("inbox relay routes", () => {
     expect(res.status).toBe(403);
   });
 
+  describe("M2.6 envelope size cap", () => {
+    it("returns 413 envelope_too_large when wire UTF-8 exceeds MAX_ENVELOPE_WIRE_BYTES", async () => {
+      const beforeCount = (
+        db
+          .prepare("SELECT COUNT(*) AS count FROM inbox WHERE sender_agent_id = ?")
+          .get(aliceId) as {
+          count: number;
+        }
+      ).count;
+
+      const wire = "a".repeat(MAX_ENVELOPE_WIRE_BYTES + 1);
+      expect(wireUtf8Length(wire)).toBe(MAX_ENVELOPE_WIRE_BYTES + 1);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("envelope_too_large");
+
+      const afterCount = (
+        db
+          .prepare("SELECT COUNT(*) AS count FROM inbox WHERE sender_agent_id = ?")
+          .get(aliceId) as {
+          count: number;
+        }
+      ).count;
+      expect(afterCount).toBe(beforeCount);
+    });
+
+    it("accepts valid v1 envelope padded to exactly MAX_ENVELOPE_WIRE_BYTES with 204", async () => {
+      const envelopeId = crypto.randomUUID();
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "core.msg",
+        thread: "cc0e8400-e29b-41d4-a716-446655440011",
+        seq: 42,
+        ttl: futureTtl(),
+        payload: utf8ToBytes("max-size"),
+        id: envelopeId,
+      });
+      const wire = padWireToSize(serializeOuterEnvelope(outer), MAX_ENVELOPE_WIRE_BYTES);
+      expect(wireUtf8Length(wire)).toBe(MAX_ENVELOPE_WIRE_BYTES);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(204);
+    });
+
+    it("returns envelope_too_large (not unsupported_version) for oversized wire with v:2", async () => {
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "core.msg",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 201,
+        ttl: futureTtl(),
+        payload: utf8ToBytes("v2-oversized"),
+      });
+      const parsed = JSON.parse(serializeOuterEnvelope(outer)) as Record<string, unknown>;
+      parsed.v = 2;
+      const wire = padWireToSize(JSON.stringify(parsed), MAX_ENVELOPE_WIRE_BYTES + 1);
+      expect(wireUtf8Length(wire)).toBeGreaterThan(MAX_ENVELOPE_WIRE_BYTES);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("envelope_too_large");
+    });
+
+    it("returns unsupported_version for valid-size wire with outer.v === 2", async () => {
+      const outer = createOuterEnvelope({
+        sender: alice,
+        recipientAgentId: bobId,
+        type: "core.msg",
+        thread: "550e8400-e29b-41d4-a716-446655440000",
+        seq: 202,
+        ttl: futureTtl(),
+        payload: utf8ToBytes("v2-valid-size"),
+      });
+      const parsed = JSON.parse(serializeOuterEnvelope(outer)) as Record<string, unknown>;
+      parsed.v = 2;
+      const wire = JSON.stringify(parsed);
+      expect(wireUtf8Length(wire)).toBeLessThanOrEqual(MAX_ENVELOPE_WIRE_BYTES);
+
+      const res = await postV1Wire(wire);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("unsupported_version");
+    });
+  });
+
   describe("v1 outer envelope wire", () => {
     async function pullInbox(since = 0) {
       const challengeRes = await fetch(`${BASE_URL}/inbox/${bobId}?since=${since}`);
@@ -644,14 +744,6 @@ describe("inbox relay routes", () => {
       return fetch(
         `${BASE_URL}/inbox/${bobId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
       );
-    }
-
-    async function postV1Wire(wire: string) {
-      return fetch(`${BASE_URL}/inbox/${bobId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: wire,
-      });
     }
 
     it("accepts valid v1 outer POST with 204 and stores exact wire bytes", async () => {

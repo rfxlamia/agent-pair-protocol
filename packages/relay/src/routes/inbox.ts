@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  MAX_ENVELOPE_WIRE_BYTES,
   type OuterEnvelope,
   agentIdToPublicKey,
   deserializeOuterEnvelope,
@@ -295,6 +296,12 @@ export function createInboxRoutes(
     const recipientAgentId = c.req.param("agentId");
     const wireText = await c.req.text();
 
+    // size gate (before any JSON parse)
+    if (utf8ToBytes(wireText).length > MAX_ENVELOPE_WIRE_BYTES) {
+      return c.json({ error: "envelope_too_large" }, 413);
+    }
+
+    // parseOuterVersion → deserialize → body parse
     const outerVersion = parseOuterVersion(wireText);
     if (outerVersion !== null && outerVersion !== 1) {
       return c.json({ error: "unsupported_version" }, 400);
@@ -313,18 +320,22 @@ export function createInboxRoutes(
     }
     const body = parsedBody;
 
+    // version_mismatch
     if (body.v !== outer.v) {
       return c.json({ error: "version_mismatch" }, 400);
     }
 
+    // routing (path only for now)
     if (body.to !== recipientAgentId) {
       return c.json({ error: "routing_mismatch" }, 400);
     }
 
+    // ttl
     if (!Number.isFinite(body.ttl) || body.ttl <= 0) {
       return c.json({ error: "envelope_expired" }, 400);
     }
 
+    // verify
     let senderPublicKey: Uint8Array;
     try {
       senderPublicKey = agentIdToPublicKey(body.from);
@@ -336,6 +347,7 @@ export function createInboxRoutes(
       return c.json({ error: "invalid_signature" }, 403);
     }
 
+    // allowlist
     if (!isSenderAllowed(db, recipientAgentId, body.from)) {
       return c.json({ error: "recipient_not_allowed" }, 403);
     }
