@@ -162,9 +162,10 @@ describe("allowlist relay routes — sign-the-blob cutover", () => {
     expect(payload.error).toBe("invalid_json");
   });
 
-  it("rejects agent_id mismatch between blob and URL", async () => {
+  it("rejects agent_id mismatch after signature verifies", async () => {
+    // Blob agent_id is ownerId but signed with peer key; path is peerId → verify ok, schema mismatch.
     const { app } = createRelayApp();
-    const body = encodeAllowlistPush(ownerId, [peerId], owner.secretKey);
+    const body = encodeAllowlistPush(ownerId, [peerId], peer.secretKey);
 
     const res = await app.request(`/allowlist/${peerId}`, {
       method: "PUT",
@@ -174,6 +175,18 @@ describe("allowlist relay routes — sign-the-blob cutover", () => {
     expect(res.status).toBe(400);
     const payload = (await res.json()) as { error: string };
     expect(payload.error).toBe("agent_id_mismatch");
+  });
+
+  it("rejects null JSON body with invalid_allowlist (not 500)", async () => {
+    const { app } = createRelayApp();
+    const res = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: "null",
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe("invalid_allowlist");
   });
 
   it("rejects invalid allowlist shape", async () => {

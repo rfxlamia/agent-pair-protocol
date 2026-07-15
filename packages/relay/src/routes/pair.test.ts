@@ -75,4 +75,24 @@ describe("pair relay routes — fixed TTL and §10 error codes", () => {
     const missingBody = (await missingRes.json()) as { error: string };
     expect(missingBody.error).toBe("pair_not_found");
   });
+
+  it("returns 410 pair_session_lost at exact T0+5min boundary", async () => {
+    const { app } = createRelayApp();
+    const sessionId = "session-exact-ttl";
+    const message = JSON.stringify({ phase: "pake" });
+
+    await app.request(`/pair/${sessionId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: message,
+    });
+
+    // expires_at is T0+5min; inclusive check must treat exact boundary as lost
+    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+
+    const res = await app.request(`/pair/${sessionId}`);
+    expect(res.status).toBe(410);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("pair_session_lost");
+  });
 });
