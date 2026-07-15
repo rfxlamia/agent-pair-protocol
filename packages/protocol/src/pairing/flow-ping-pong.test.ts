@@ -9,7 +9,10 @@ import {
   pairJoin,
 } from "./flow.js";
 import { init as initPake } from "./pake-adapter.js";
-import { violateJoinerPostsWithoutConsume } from "./ping-pong-violation.js";
+import {
+  violateInitiatorDoublePosts,
+  violateJoinerPostsWithoutConsume,
+} from "./ping-pong-violation.js";
 import { MemoryAllowlistStore, MockRelayClient } from "./test-helpers.js";
 
 describe("§6.2 ping-pong violation", () => {
@@ -111,4 +114,33 @@ describe("§6.2 ping-pong violation", () => {
     expect(joinResult.status).not.toBe("rolled_back");
     expectZeroAllowlist();
   }, 20_000);
+
+  it("initiator double-posts pake before joiner consumes — pake_failed, slot overwrite, zero allowlist", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+    });
+
+    const { firstInitiatorPake, secondInitiatorPake } = await violateInitiatorDoublePosts({
+      relay,
+      sessionId: pending.sessionId,
+      code: pending.code,
+    });
+
+    expect(firstInitiatorPake).not.toBe(secondInitiatorPake);
+    await expectSlotOverwroteInitiatorPake(firstInitiatorPake, pending.sessionId);
+    const currentSlot = await relay.pollPakeMessage(pending.sessionId);
+    expect(currentSlot).toBe(secondInitiatorPake);
+
+    const { initResult, joinResult } = await runAfterViolation(pending);
+
+    expect(joinResult.status).toBe("pake_failed");
+    expect(initResult.status).toBe("pake_failed");
+    expect(initResult.status).not.toBe("rolled_back");
+    expect(joinResult.status).not.toBe("rolled_back");
+    expectZeroAllowlist();
+  }, 35_000);
 });

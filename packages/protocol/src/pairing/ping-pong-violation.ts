@@ -2,7 +2,7 @@ import { encodeBase64Url } from "../crypto/base64url.js";
 import type { KeyPair } from "../crypto/keys.js";
 import { publicKeyToAgentId } from "../crypto/keys.js";
 import { REFERENCE_PROFILES } from "../profile/reference.js";
-import { respond } from "./pake-adapter.js";
+import { respond, start } from "./pake-adapter.js";
 import type { MockRelayClient } from "./test-helpers.js";
 
 const BOGUS_FINGERPRINT = "0".repeat(64);
@@ -56,4 +56,25 @@ export async function violateJoinerPostsWithoutConsume(
   joiner.session.free();
 
   return { overwrittenInitiatorPake };
+}
+
+/** B2: initiator double-posts pake before joiner consumes first post (slot overwrite). */
+export async function violateInitiatorDoublePosts(
+  input: PingPongViolationInput,
+): Promise<{ firstInitiatorPake: string; secondInitiatorPake: string }> {
+  const profiles = resolveProfiles(input.profiles);
+  const firstInitiatorPake = lastInitiatorPakeBody(input.relay);
+
+  const second = start("initiator", input.code, input.sessionId);
+  const secondInitiatorPake = JSON.stringify({
+    phase: "pake",
+    role: "initiator",
+    payload: encodeBase64Url(second.message),
+    profiles,
+  });
+
+  await input.relay.postPakeMessage(input.sessionId, secondInitiatorPake);
+  second.session.free();
+
+  return { firstInitiatorPake, secondInitiatorPake };
 }
