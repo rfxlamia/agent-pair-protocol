@@ -34,10 +34,10 @@ Breaking change; everything else builds on it. Land first.
 - [x] **M2.1** Spillover (§5): payload > cap → auto-encrypt artifact (fresh key), PUT to relay, send `{artifact_hash, size, content_type, summary}`; receiver auto-fetch + decrypt. `label:protocol` `size:L` — done 2026-07-13 (#28)
 - [x] **M2.2** Profile advertisement in pairing `confirm` (§6.4): bond record stores contract intersection; sending outside contract → `profile_not_supported`. `label:protocol` `size:M`
   — Note (post identity-binding, 2026-07-12): joiner's `confirm` now rides its `pake` message (§6.2 step 1–2); profiles must ride the same message AND be cryptographically bound (into the fingerprint preimage with `u16_be` length prefix, or a MAC per `bond_ok` tag pattern). Unbound fields on the pairing wire re-open the relay-tamper class just fixed. §6.4 wording ("during confirm") needs touch-up. See docs/pocket/spec/2026-07-11-identity-bound-pairing-fingerprint/.
-- [ ] **M2.3** N5 — unbond closes every non-terminal session (`bond_revoked`); co-sign records retained as evidence. `label:protocol` `size:M`
-- [ ] **M2.4** N7 — `budget.deadline` REQUIRED (`invalid_payload` if absent); local expiry → `closed` (`deadline_expired`), no peer message needed. `label:protocol` `size:M`
-- [ ] **M2.5** N6 audit — turn count derived from wire only, both directions; property test that peer-reported counters are never trusted. `label:testing` `size:S`
-- [ ] **M2.6** Relay: optional envelope signature verification on POST /inbox (reject garbage early, never decrypt). `label:relay` `size:S`
+- [x] **M2.3** N5 — unbond closes every non-terminal session (`bond_revoked`); co-sign records retained as evidence. `label:protocol` `size:M` — done 2026-07-15 (#30)
+- [x] **M2.4** N7 — `budget.deadline` REQUIRED (`invalid_payload` if absent); local expiry → `closed` (`deadline_expired`), no peer message needed. `label:protocol` `size:M` — done 2026-07-15 (#31)
+- [x] **M2.5** N6 audit — turn count derived from wire only, both directions; property test that peer-reported counters are never trusted. `label:testing` `size:S` — done 2026-07-15 (#32)
+- [x] **M2.6** Relay inbox conformance: size gate, pre-verify routing cross-check, strict base64url sig decode on inbox/allowlist/artifact (reject garbage early, never decrypt). `label:relay` `size:S` — done 2026-07-15 (#33)
 - [ ] **M2.7** Conformance checklist doc: table of every MUST in §3–§7 → test that covers it. Gaps become issues. `label:testing` `size:M`
 
 **Exit:** Core + Negotiation profiles pass conformance checklist end-to-end over a real relay (docker compose, two hosts).
