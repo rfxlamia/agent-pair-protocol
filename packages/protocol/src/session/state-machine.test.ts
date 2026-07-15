@@ -2446,5 +2446,32 @@ describe("session state machine", () => {
       });
       expect(result).toEqual({ ok: false, error: "thread_closed" });
     });
+
+    it.each([
+      { label: "inflated peer counter", turn_count: 999 },
+      { label: "zero peer counter", turn_count: 0 },
+      { label: "negative peer counter", turn_count: -5 },
+      { label: "absent peer counter", turn_count: undefined },
+    ])(
+      "increments wire-derived count ignoring peer turn_count ($label)",
+      async ({ turn_count }) => {
+        const thread = await liveSessionAtTurnCountTwo();
+
+        const accepted = await aliceMachine.handleIncomingEnvelope({
+          from: bobId,
+          type: "nego.turn",
+          thread,
+          payload: peerTurnEnvelope(turn_count),
+        });
+        expect(accepted).toEqual({ ok: true, thread, type: "turn" });
+
+        const after = await aliceMachine.handleStatus({ thread });
+        expect(after.ok).toBe(true);
+        if (!after.ok) {
+          return;
+        }
+        expect(after.turn_count).toBe(3);
+      },
+    );
   });
 });

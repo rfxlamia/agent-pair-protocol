@@ -761,8 +761,7 @@ export function createSessionStateMachine(
           if (found.session.status !== "live") {
             return { ok: false, error: "session_not_live" };
           }
-          const turnCount = turnPayload.data.turn_count ?? found.session.turnCount;
-          const nextTurnCount = Math.max(found.session.turnCount, turnCount);
+          const nextTurnCount = found.session.turnCount + 1;
           const msgType = turnPayload.data.msg_type;
           const msgBody = turnPayload.data.body;
           let lockedSections = found.session.lockedSections;
