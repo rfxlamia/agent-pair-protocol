@@ -8,7 +8,12 @@ import {
 import { handleHumanApprove } from "./human-approve.js";
 import { handleInbox } from "./inbox.js";
 import { createAgentContext } from "./pair.js";
-import { handleSessionMsg, handleSessionOpen, handleSessionStatus } from "./session.js";
+import {
+  handleSessionMsg,
+  handleSessionOpen,
+  handleSessionStatus,
+  processSessionInboxEnvelope,
+} from "./session.js";
 
 function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
@@ -202,7 +207,7 @@ describe("inbox session negotiation fixes", () => {
     expect(status.peer_messages?.[0]?.body).toBe(proposalBody);
   });
 
-  it("handles legacy peer_turn envelopes with turn_count only", async () => {
+  it("ignores peer-reported turn_count on first nego.turn (wire-derived count)", async () => {
     const alice = await createDualAgent(env, "legacy-alice");
     const bob = await createDualAgent(env, "legacy-bob");
     await runPairingFlow(alice, bob);
@@ -210,7 +215,7 @@ describe("inbox session negotiation fixes", () => {
     const opened = structured(
       await handleSessionOpen(alice.ctx, {
         to: bob.agentId,
-        goal: "Legacy peer_turn probe",
+        goal: "Wire-derived turn count probe",
         acceptance: [{ id: "A1", test: "executable", desc: "probe", runner: "vitest" }],
         budget: { max_turns: 10, deadline: TEST_DEADLINE },
         mandate: { agent_may: ["propose"], human_required: ["sign_final"] },
@@ -230,7 +235,6 @@ describe("inbox session negotiation fixes", () => {
       via_human: true,
     });
 
-    const { processSessionInboxEnvelope } = await import("./session.js");
     const legacyTurn = structured(
       await processSessionInboxEnvelope(bob.ctx, {
         from: alice.agentId,
@@ -238,7 +242,7 @@ describe("inbox session negotiation fixes", () => {
         thread: opened.thread,
         payload: JSON.stringify({
           thread: opened.thread,
-          turn_count: 1,
+          turn_count: 7,
         }),
       }),
     );
