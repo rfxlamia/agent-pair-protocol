@@ -2,9 +2,9 @@
 
 Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Core), §3–§7 to tests in this repository. Rows marked **(SHOULD)** in the SPEC column are included for completeness but are not normative MUSTs.
 
-**Inventory (full table):** 59 rows — 55 `covered`, 2 `invariant`, 1 `partial`, 1 `gap` (→ [#53](https://github.com/rfxlamia/agent-pair-protocol/issues/53)).
+**Inventory (full table):** 59 rows — 56 `covered`, 2 `invariant`, 1 `partial`, 0 `gap`.
 
-**MUST-scope tally** (excludes 3 informational rows below): 56 rows — 52 `covered`, 2 `invariant`, 1 `partial`, 1 `gap`.
+**MUST-scope tally** (excludes 3 informational rows below): 56 rows — 53 `covered`, 2 `invariant`, 1 `partial`, 0 `gap`.
 
 | Excluded from MUST tally | ID | Reason |
 |--------------------------|-----|--------|
@@ -109,7 +109,7 @@ Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Cor
 | ID | SPEC MUST | Test(s) | Status |
 |----|-----------|---------|--------|
 | §6.2-pake | SPAKE2 over `/pair/{session_id}` with code as secret | `packages/protocol/src/pairing/pake-adapter.test.ts`; `pake-spike.test.ts` — matching keys with same code | covered |
-| §6.2-ping-pong | Party MUST NOT post until peer's previous message consumed (strict ping-pong) | Relay overwrite behavior only — no host adversarial test for violation | gap → [#53](https://github.com/rfxlamia/agent-pair-protocol/issues/53) |
+| §6.2-ping-pong | Party MUST NOT post until peer's previous message consumed (strict ping-pong) | `packages/relay/src/routes/pair.test.ts` — single-slot overwrite; `packages/protocol/src/pairing/flow-ping-pong.test.ts` — joiner post-without-consume, initiator double-post → `pake_failed`, slot overwrite, zero allowlist | covered |
 | §6.2-profiles-on-pake | Each `pake` message MUST carry supported `profiles` | `packages/protocol/src/pairing/flow.test.ts` — profile contract tests; `pairRetry includes profiles on initiator pake wire` | covered |
 | §6.2-fingerprint | Confirm fingerprint formula (identity-bound v2) | `packages/protocol/src/pairing/pair-confirm-fingerprint.test.ts`; `packages/protocol/src/fixtures/pair-confirm-fingerprint-v2.json` | covered |
 | §6.2-fingerprint-golden | Golden vector MUST match for conformance | `packages/protocol/src/pairing/pair-confirm-fingerprint.test.ts` (v2 vector from SPEC §6.2) | covered |
@@ -168,9 +168,7 @@ Tracked elsewhere in [ROADMAP.md](../ROADMAP.md):
 
 ## Gap issues
 
-| Checklist ID | Issue | Summary |
-|--------------|-------|---------|
-| §6.2-ping-pong | [#53](https://github.com/rfxlamia/agent-pair-protocol/issues/53) | Adversarial test: host posts PAKE message before consuming peer slot |
+None — all MUST-scope checklist rows are covered, invariant, or partial (see table above).
 
 ---
 
