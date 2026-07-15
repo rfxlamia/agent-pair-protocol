@@ -1,27 +1,26 @@
-import { agentIdToPublicKey, decodeBase64UrlStrict, sign, verify } from "@agentpair/protocol";
+import {
+  agentIdToPublicKey,
+  decodeAllowlistBlob,
+  decodeBase64UrlStrict,
+  sign,
+  validateAllowlistSchema,
+  verifyAllowlistPush,
+} from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
 import type { RelayDatabase } from "../db/index.js";
 
-export interface AllowlistBody {
-  agent_id: string;
-  allowed: string[];
+export interface AllowlistPushBody {
+  blob: string;
   sig: string;
 }
 
-function canonicalAllowlistBytes(agentId: string, allowed: string[]): Uint8Array {
-  const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
-  return utf8ToBytes(JSON.stringify(ordered));
+function isLegacyAllowlistBody(body: Record<string, unknown>): boolean {
+  return "agent_id" in body || "allowed" in body;
 }
 
-function verifyAllowlistSignature(body: AllowlistBody): boolean {
-  try {
-    const publicKey = agentIdToPublicKey(body.agent_id);
-    const signature = decodeBase64UrlStrict(body.sig);
-    return verify(signature, canonicalAllowlistBytes(body.agent_id, body.allowed), publicKey);
-  } catch {
-    return false;
-  }
+function isSignTheBlobBody(body: Record<string, unknown>): boolean {
+  return typeof body.blob === "string" && typeof body.sig === "string";
 }
 
 export function isSenderAllowed(
@@ -46,24 +45,62 @@ export function createAllowlistRoutes(db: RelayDatabase) {
 
   routes.put("/allowlist/:agentId", async (c) => {
     const agentId = c.req.param("agentId");
-    let body: AllowlistBody;
+    let raw: Record<string, unknown>;
 
     try {
-      body = (await c.req.json()) as AllowlistBody;
+      raw = (await c.req.json()) as Record<string, unknown>;
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
 
-    if (body.agent_id !== agentId) {
-      return c.json({ error: "agent_id_mismatch" }, 400);
-    }
-
-    if (!Array.isArray(body.allowed) || typeof body.sig !== "string") {
+    if (isLegacyAllowlistBody(raw) || !isSignTheBlobBody(raw)) {
       return c.json({ error: "invalid_allowlist" }, 400);
     }
 
-    if (!verifyAllowlistSignature(body)) {
+    const push = raw as unknown as AllowlistPushBody;
+
+    let blobBytes: Uint8Array;
+    try {
+      blobBytes = decodeBase64UrlStrict(push.blob);
+    } catch {
+      return c.json({ error: "invalid_allowlist" }, 400);
+    }
+
+    try {
+      const preview = JSON.parse(Buffer.from(blobBytes).toString("utf8")) as {
+        agent_id?: string;
+      };
+      if (typeof preview.agent_id === "string" && preview.agent_id !== agentId) {
+        return c.json({ error: "agent_id_mismatch" }, 400);
+      }
+    } catch {
+      // Unparseable blob — signature verification below returns invalid_signature.
+    }
+
+    let publicKey: Uint8Array;
+    try {
+      publicKey = agentIdToPublicKey(agentId);
+    } catch {
+      return c.json({ error: "invalid_allowlist" }, 400);
+    }
+
+    if (!verifyAllowlistPush(push, publicKey)) {
       return c.json({ error: "invalid_signature" }, 403);
+    }
+
+    let decoded: ReturnType<typeof decodeAllowlistBlob>;
+    try {
+      decoded = decodeAllowlistBlob(push);
+    } catch {
+      return c.json({ error: "invalid_allowlist" }, 400);
+    }
+
+    const schema = validateAllowlistSchema(decoded, agentId);
+    if (!schema.ok) {
+      if (schema.error === "agent_id_mismatch") {
+        return c.json({ error: "agent_id_mismatch" }, 400);
+      }
+      return c.json({ error: "invalid_allowlist" }, 400);
     }
 
     const now = Date.now();
@@ -71,7 +108,7 @@ export function createAllowlistRoutes(db: RelayDatabase) {
       `INSERT INTO allowlists (agent_id, allowed_json, updated_at)
        VALUES (?, ?, ?)
        ON CONFLICT(agent_id) DO UPDATE SET allowed_json = excluded.allowed_json, updated_at = excluded.updated_at`,
-    ).run(agentId, JSON.stringify(body.allowed), now);
+    ).run(agentId, JSON.stringify(decoded.allowed), now);
 
     return c.body(null, 204);
   });

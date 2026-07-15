@@ -3,6 +3,7 @@ import {
   type OuterEnvelope,
   createOuterEnvelope,
   deserializeOuterEnvelope,
+  encodeAllowlistPush,
   generateKeyPair,
   parseEnvelopeBody,
   publicKeyToAgentId,
@@ -16,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRateLimiter } from "../middleware/rate-limit.js";
 import { createRelayApp } from "../server.js";
 import { padWireToSize, wireUtf8Length } from "../test/wire-padding.js";
-import { type AllowlistBody, signChallenge } from "./allowlist.js";
+import { signChallenge } from "./allowlist.js";
 import { createInboxRoutes } from "./inbox.js";
 
 const TEST_PORT = 13001;
@@ -27,14 +28,9 @@ function futureTtl(seconds = 3600): number {
   return Math.floor(Date.now() / 1000) + seconds;
 }
 
-function signedAllowlist(
-  owner: ReturnType<typeof generateKeyPair>,
-  allowed: string[],
-): AllowlistBody {
+function signedAllowlist(owner: ReturnType<typeof generateKeyPair>, allowed: string[]) {
   const agentId = publicKeyToAgentId(owner.publicKey);
-  const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
-  const sig = signChallenge(JSON.stringify(ordered), owner.secretKey);
-  return { agent_id: agentId, allowed, sig };
+  return encodeAllowlistPush(agentId, allowed, owner.secretKey);
 }
 
 function bodyFromGetItem(item: Record<string, unknown>) {

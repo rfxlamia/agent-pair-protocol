@@ -1,21 +1,16 @@
 import { createHash } from "node:crypto";
-import { generateKeyPair, publicKeyToAgentId } from "@agentpair/protocol";
+import { encodeAllowlistPush, generateKeyPair, publicKeyToAgentId } from "@agentpair/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRelayApp } from "../server.js";
-import { type AllowlistBody, signChallenge } from "./allowlist.js";
+import { signChallenge } from "./allowlist.js";
 
 function sha256Hex(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-function signedAllowlist(
-  owner: ReturnType<typeof generateKeyPair>,
-  allowed: string[] = [],
-): AllowlistBody {
+function signedAllowlist(owner: ReturnType<typeof generateKeyPair>, allowed: string[] = []) {
   const agentId = publicKeyToAgentId(owner.publicKey);
-  const ordered = { agent_id: agentId, allowed: [...allowed].sort() };
-  const sig = signChallenge(JSON.stringify(ordered), owner.secretKey);
-  return { agent_id: agentId, allowed, sig };
+  return encodeAllowlistPush(agentId, allowed, owner.secretKey);
 }
 
 function artifactAuthHeaders(
@@ -33,8 +28,8 @@ async function registerAgent(
   app: ReturnType<typeof createRelayApp>["app"],
   owner: ReturnType<typeof generateKeyPair>,
 ): Promise<string> {
+  const agentId = publicKeyToAgentId(owner.publicKey);
   const body = signedAllowlist(owner);
-  const agentId = body.agent_id;
   const res = await app.request(`/allowlist/${agentId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
