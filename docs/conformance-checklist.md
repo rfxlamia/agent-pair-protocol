@@ -2,6 +2,16 @@
 
 Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Core), §3–§7 to tests in this repository. Rows marked **(SHOULD)** in the SPEC column are included for completeness but are not normative MUSTs.
 
+**Inventory (full table):** 59 rows — 55 `covered`, 2 `invariant`, 1 `partial`, 1 `gap` (→ [#53](https://github.com/rfxlamia/agent-pair-protocol/issues/53)).
+
+**MUST-scope tally** (excludes 3 informational rows below): 56 rows — 52 `covered`, 2 `invariant`, 1 `partial`, 1 `gap`.
+
+| Excluded from MUST tally | ID | Reason |
+|--------------------------|-----|--------|
+| SHOULD, not MUST | §6.3-revoke-push | SPEC §6.3: push allowlist on revoke is SHOULD |
+| Optional, not MUST | §7-core-ack | SPEC §7: optional delivery acknowledgment |
+| Fixture row | §4-golden-happy | M1.6 golden-vector wire; not a standalone SPEC MUST sentence |
+
 | Status | Meaning |
 |--------|---------|
 | `covered` | At least one automated test asserts the requirement |
