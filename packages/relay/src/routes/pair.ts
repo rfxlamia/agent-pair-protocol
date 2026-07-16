@@ -36,7 +36,8 @@ export function createPairRoutes(
       return c.json({ error: "pair_not_found" }, 404);
     }
 
-    if (row.expires_at < Date.now()) {
+    // Inclusive boundary: at exact expires_at the session is lost (410), not still served.
+    if (row.expires_at <= Date.now()) {
       db.prepare("DELETE FROM pair_sessions WHERE session_id = ?").run(sessionId);
       return c.json({ error: "pair_session_lost" }, 410);
     }
