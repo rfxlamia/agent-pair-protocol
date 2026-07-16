@@ -9,9 +9,12 @@ import {
   parseNegoSignedPayload,
   parseNegoTurnPayload,
 } from "../envelope/schema.js";
+import { REFERENCE_PROFILES } from "../profile/reference.js";
+import { gateActive, signCeremonyComplete, testsLegal } from "./atest-gate.js";
 import { isEphemeralBond } from "./bond.js";
 import type { SessionStateMachineDeps } from "./deps.js";
 import { type SessionStore, createSessionStore } from "./store.js";
+import { setRunnerReport } from "./test-reports.js";
 import type {
   AcceptanceCriterion,
   SessionBudget,
@@ -81,11 +84,6 @@ function parseJsonBody<T>(body: string): T | { error: string } {
   }
 }
 
-function bothTestReportsPass(session: SessionRecord, artifactHash: string): boolean {
-  const reports = session.testReports[artifactHash];
-  return Boolean(reports?.initiator?.passed && reports?.recipient?.passed);
-}
-
 function bothChallengesFiled(session: SessionRecord): boolean {
   return Boolean(session.challenges.initiator && session.challenges.recipient);
 }
@@ -107,6 +105,11 @@ export function createSessionStateMachine(
   store: SessionStore = createSessionStore(),
 ) {
   const now = deps.now ?? (() => Date.now());
+
+  function bondProfilesFor(session: SessionRecord): string[] {
+    const peer = peerFor(session, deps.agentId);
+    return [...(deps.bonds.find(deps.agentId, peer)?.profiles ?? REFERENCE_PROFILES)];
+  }
 
   function upsert(session: SessionRecord): SessionRecord {
     store.upsert(session);
@@ -705,19 +708,13 @@ export function createSessionStateMachine(
             return { ok: false, error: "thread_closed" };
           }
           const { artifact_hash: artifactHash, passed, runner, details } = testReportPayload.data;
-          const existing = found.session.testReports[artifactHash] ?? {};
-          const testReports = {
-            ...found.session.testReports,
-            [artifactHash]: {
-              ...existing,
-              [participant.role]: {
-                artifact_hash: artifactHash,
-                passed,
-                runner,
-                details,
-              },
-            },
-          };
+          const testReports = setRunnerReport(
+            found.session.testReports,
+            artifactHash,
+            runner,
+            participant.role,
+            { artifact_hash: artifactHash, passed, runner, details },
+          );
           upsert({ ...found.session, testReports });
           return { ok: true, thread: input.thread, type: "test_report" };
         }
@@ -869,14 +866,13 @@ export function createSessionStateMachine(
           return { ok: false, error: report.error };
         }
         const role = roleFor(session, deps.agentId);
-        const existing = session.testReports[report.artifact_hash] ?? {};
-        const testReports = {
-          ...session.testReports,
-          [report.artifact_hash]: {
-            ...existing,
-            [role]: report,
-          },
-        };
+        const testReports = setRunnerReport(
+          session.testReports,
+          report.artifact_hash,
+          report.runner,
+          role,
+          report,
+        );
         const updated = upsert({ ...session, testReports });
         await notifyPeer(updated, "atest.report", {
           thread: updated.thread,
@@ -952,11 +948,14 @@ export function createSessionStateMachine(
         return { ok: false, error: "session_not_live" };
       }
 
-      if (!bothChallengesFiled(session)) {
-        return { ok: false, error: "challenges_incomplete" };
-      }
-      if (!bothTestReportsPass(session, input.artifact_hash)) {
-        return { ok: false, error: "tests_not_green" };
+      const profiles = bondProfilesFor(session);
+      if (gateActive(session, profiles)) {
+        if (!bothChallengesFiled(session)) {
+          return { ok: false, error: "challenges_incomplete" };
+        }
+        if (!signCeremonyComplete(session, profiles, input.artifact_hash)) {
+          return { ok: false, error: "tests_not_green" };
+        }
       }
 
       const role = roleFor(session, deps.agentId);
@@ -1098,10 +1097,7 @@ export function createSessionStateMachine(
         reject_reason: current.rejectReason,
         artifact_hash: current.artifactHash,
         co_signed_hash: current.coSignedHash,
-        tests_legal:
-          current.artifactHash !== undefined &&
-          bothTestReportsPass(current, current.artifactHash) &&
-          bothChallengesFiled(current),
+        tests_legal: testsLegal(current, bondProfilesFor(current)),
         ratify_approved: current.ratifyApproved,
         expires_at: current.expiresAt,
         ...(pendingOpen
