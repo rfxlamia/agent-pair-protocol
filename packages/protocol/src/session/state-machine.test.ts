@@ -985,6 +985,7 @@ describe("session state machine", () => {
   it("removes ratify pending when ratifying by thread without pending_id", async () => {
     const thread = await openAndApprove();
     const artifactHash = "sha256:thread-only-ratify";
+    ensureAtestCapableBonds();
 
     for (const machine of [aliceMachine, bobMachine]) {
       await machine.handleMsg({
@@ -1174,6 +1175,7 @@ describe("session state machine", () => {
   async function openSignAndAliceRatify(): Promise<{ thread: string; artifactHash: string }> {
     const thread = await openAndApprove();
     const artifactHash = "sha256:non-participant-guard";
+    ensureAtestCapableBonds();
 
     for (const machine of [aliceMachine, bobMachine]) {
       await machine.handleMsg({
