@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeBase64UrlStrict } from "../crypto/base64url.js";
 import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
 import type { Bond, LocalAllowlistStore } from "../pairing/flow.js";
+import { REFERENCE_PROFILES } from "../profile/reference.js";
 import type {
   BudgetExtendPendingInput,
   RatifyPendingInput,
@@ -281,7 +282,52 @@ describe("session state machine", () => {
     return opened.thread as string;
   }
 
+  const NEGO_ONLY = [...REFERENCE_PROFILES];
+  const ATEST_CAPABLE = [...REFERENCE_PROFILES, "atest/1"];
+
+  function wireBondProfiles(
+    profiles: string[],
+    capture?: Parameters<typeof createLinkedMachines>[0],
+  ) {
+    aliceBonds.add(aliceId, {
+      peer: bobId,
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      profiles,
+    });
+    bobBonds.add(bobId, {
+      peer: aliceId,
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      profiles,
+    });
+    const linked = createLinkedMachines(capture);
+    aliceMachine = linked.alice;
+    bobMachine = linked.bob;
+  }
+
+  function wireNegoOnlyBonds(capture?: Parameters<typeof createLinkedMachines>[0]) {
+    wireBondProfiles(NEGO_ONLY, capture);
+  }
+
+  function wireAtestCapableBonds(capture?: Parameters<typeof createLinkedMachines>[0]) {
+    wireBondProfiles(ATEST_CAPABLE, capture);
+  }
+
+  function ensureAtestCapableBonds(): void {
+    for (const [agentId, peerId, bonds] of [
+      [aliceId, bobId, aliceBonds],
+      [bobId, aliceId, bobBonds],
+    ] as const) {
+      const bond = bonds.find(agentId, peerId);
+      if (bond) {
+        bonds.add(agentId, { ...bond, profiles: [...ATEST_CAPABLE] });
+      }
+    }
+  }
+
   async function signFlowToSigned(thread: string, artifactHash: string): Promise<void> {
+    ensureAtestCapableBonds();
     await aliceMachine.handleMsg({ thread, type: "challenge", body: "{}" });
     await bobMachine.handleMsg({ thread, type: "challenge", body: "{}" });
     await aliceMachine.handleMsg({
@@ -844,92 +890,8 @@ describe("session state machine", () => {
     expect(status.locked_sections).toContain("timestamp");
   });
 
-  it("session_sign is legal only when both test_reports pass", async () => {
-    const thread = await openAndApprove();
-    const artifactHash = "sha256:draft-hash-abc";
-
-    const aliceFailBeforeChallenges = await aliceMachine.handleSign({
-      thread,
-      artifact_hash: artifactHash,
-    });
-    expect(aliceFailBeforeChallenges.ok).toBe(false);
-    if (aliceFailBeforeChallenges.ok) {
-      return;
-    }
-    expect(aliceFailBeforeChallenges.error).toBe("challenges_incomplete");
-
-    await aliceMachine.handleMsg({
-      thread,
-      type: "challenge",
-      body: JSON.stringify({ report: "adversarial pass" }),
-    });
-    await bobMachine.handleMsg({
-      thread,
-      type: "challenge",
-      body: JSON.stringify({ report: "adversarial pass" }),
-    });
-
-    const aliceFail = await aliceMachine.handleSign({ thread, artifact_hash: artifactHash });
-    expect(aliceFail.ok).toBe(false);
-    if (aliceFail.ok) {
-      return;
-    }
-    expect(aliceFail.error).toBe("tests_not_green");
-
-    await aliceMachine.handleMsg({
-      thread,
-      type: "test_report",
-      body: JSON.stringify({
-        artifact_hash: artifactHash,
-        passed: true,
-        runner: "payload-size",
-      }),
-    });
-    await bobMachine.handleMsg({
-      thread,
-      type: "test_report",
-      body: JSON.stringify({
-        artifact_hash: artifactHash,
-        passed: false,
-        runner: "payload-size",
-      }),
-    });
-
-    const aliceStillIllegal = await aliceMachine.handleSign({
-      thread,
-      artifact_hash: artifactHash,
-    });
-    expect(aliceStillIllegal.ok).toBe(false);
-    if (aliceStillIllegal.ok) {
-      return;
-    }
-    expect(aliceStillIllegal.error).toBe("tests_not_green");
-
-    await bobMachine.handleMsg({
-      thread,
-      type: "test_report",
-      body: JSON.stringify({
-        artifact_hash: artifactHash,
-        passed: true,
-        runner: "payload-size",
-      }),
-    });
-
-    const aliceSign = await aliceMachine.handleSign({ thread, artifact_hash: artifactHash });
-    expect(aliceSign.ok).toBe(true);
-
-    const bobSign = await bobMachine.handleSign({ thread, artifact_hash: artifactHash });
-    expect(bobSign.ok).toBe(true);
-
-    const status = await aliceMachine.handleStatus({ thread });
-    expect(status.ok).toBe(true);
-    if (!status.ok) {
-      return;
-    }
-    expect(status.status).toBe("signed");
-  });
-
   it("ratification requires human_approve on both sides before co-sign", async () => {
+    wireAtestCapableBonds();
     const thread = await openAndApprove();
     const artifactHash = "sha256:final-hash-xyz";
 
@@ -1057,7 +1019,8 @@ describe("session state machine", () => {
     expect(alicePending.list().filter((item) => item.kind === "ratify")).toHaveLength(0);
   });
 
-  it("session_sign rejects when codegen-compile test_report is red", async () => {
+  it("session_sign rejects when payload-size test_report is red", async () => {
+    wireAtestCapableBonds();
     const thread = await openAndApprove();
     const artifactHash = "sha256:codegen-red-hash";
 
@@ -1077,7 +1040,7 @@ describe("session state machine", () => {
       body: JSON.stringify({
         artifact_hash: artifactHash,
         passed: true,
-        runner: "codegen-compile",
+        runner: "payload-size",
       }),
     });
     await bobMachine.handleMsg({
@@ -1086,7 +1049,7 @@ describe("session state machine", () => {
       body: JSON.stringify({
         artifact_hash: artifactHash,
         passed: false,
-        runner: "codegen-compile",
+        runner: "payload-size",
         details: "xtensa-esp-elf-gcc syntax error",
       }),
     });
@@ -1152,6 +1115,7 @@ describe("session state machine", () => {
   });
 
   it("finalize removes ephemeral bond from allowlist", async () => {
+    wireAtestCapableBonds();
     const thread = await openAndApprove();
     const artifactHash = "sha256:cleanup-hash";
 
@@ -1318,7 +1282,7 @@ describe("session state machine", () => {
       if (!status.ok) {
         return;
       }
-      expect(status.tests_legal).toBe(false);
+      expect(status.tests_legal).toBe(true);
     });
 
     it("rejects open_approved from a non-participant without going live", async () => {
@@ -1439,7 +1403,7 @@ describe("session state machine", () => {
       if (!status.ok) {
         return;
       }
-      expect(status.tests_legal).toBe(false);
+      expect(status.tests_legal).toBe(true);
     });
 
     it("accepts atest.challenge from a participant via handleIncomingEnvelope", async () => {
@@ -1458,7 +1422,7 @@ describe("session state machine", () => {
       if (!status.ok) {
         return;
       }
-      expect(status.tests_legal).toBe(false);
+      expect(status.tests_legal).toBe(true);
     });
 
     it("rejects malformed atest.challenge payloads", async () => {
@@ -2607,6 +2571,246 @@ describe("session state machine", () => {
         expect(sendExhausted).toEqual({ ok: false, error: "budget_exhausted" });
         expect(budgetExtendCount(thread)).toBe(1);
       });
+    });
+  });
+
+  describe("M3.1 atest profile extraction", () => {
+    const judgmentOpenPayload = {
+      goal: "Human-reviewed contract",
+      acceptance: [{ id: "J1", test: "judgment" as const, desc: "human review" }],
+      budget: { max_turns: 30, deadline: FUTURE_DEADLINE },
+      mandate: openPayload.mandate,
+    };
+
+    const dualRunnerOpenPayload = {
+      goal: "Dual-runner executable gate",
+      acceptance: [
+        { id: "A1", test: "executable" as const, desc: "size", runner: "payload-size" },
+        { id: "A2", test: "executable" as const, desc: "lint", runner: "spectral" },
+      ],
+      budget: { max_turns: 30, deadline: FUTURE_DEADLINE },
+      mandate: openPayload.mandate,
+    };
+
+    async function openWithPayload(payload: typeof openPayload): Promise<string> {
+      const opened = await aliceMachine.handleOpen({ to: bobId, ...payload });
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) {
+        throw new Error("session open failed");
+      }
+      const bobPendingItems = bobPending.list().filter((item) => item.kind === "session_open");
+      expect(bobPendingItems.length).toBe(1);
+      const pending = bobPendingItems[0];
+      if (!pending) {
+        throw new Error("expected session_open pending item");
+      }
+      const approved = await bobMachine.handleApproveOpen({
+        pending_id: pending.id,
+        via_human: true,
+      });
+      expect(approved.ok).toBe(true);
+      return opened.thread as string;
+    }
+
+    function reportBody(hash: string, runner: string, passed = true): string {
+      return JSON.stringify({ artifact_hash: hash, passed, runner });
+    }
+
+    beforeEach(() => {
+      wireNegoOnlyBonds();
+    });
+
+    it("nego-only bond signs without atest ceremony", async () => {
+      const thread = await openAndApprove();
+      const hash = "sha256:m31-nego-only";
+      const aliceSign = await aliceMachine.handleSign({ thread, artifact_hash: hash });
+      expect(aliceSign.ok).toBe(true);
+      const bobSign = await bobMachine.handleSign({ thread, artifact_hash: hash });
+      expect(bobSign.ok).toBe(true);
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("signed");
+    });
+
+    it("nego-only bond has tests_legal true on live session", async () => {
+      const thread = await openAndApprove();
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.tests_legal).toBe(true);
+    });
+
+    it("judgment-only session with atest/1 signs without ceremony", async () => {
+      wireAtestCapableBonds();
+      const thread = await openWithPayload(judgmentOpenPayload);
+      const hash = "sha256:m31-judgment-only";
+      expect((await aliceMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
+      expect((await bobMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("signed");
+      expect(status.tests_legal).toBe(true);
+    });
+
+    it("executable + atest/1 returns challenges_incomplete then tests_not_green", async () => {
+      wireAtestCapableBonds();
+      const thread = await openAndApprove();
+      const hash = "sha256:m31-exec-gate-order";
+
+      const beforeChallenges = await aliceMachine.handleSign({ thread, artifact_hash: hash });
+      expect(beforeChallenges.ok).toBe(false);
+      if (beforeChallenges.ok) {
+        return;
+      }
+      expect(beforeChallenges.error).toBe("challenges_incomplete");
+
+      await aliceMachine.handleMsg({
+        thread,
+        type: "challenge",
+        body: JSON.stringify({ report: "adversarial pass" }),
+      });
+      await bobMachine.handleMsg({
+        thread,
+        type: "challenge",
+        body: JSON.stringify({ report: "adversarial pass" }),
+      });
+
+      const beforeReports = await aliceMachine.handleSign({ thread, artifact_hash: hash });
+      expect(beforeReports.ok).toBe(false);
+      if (beforeReports.ok) {
+        return;
+      }
+      expect(beforeReports.error).toBe("tests_not_green");
+    });
+
+    it("executable + atest/1 full ceremony succeeds when all runners green both sides", async () => {
+      wireAtestCapableBonds();
+      const thread = await openAndApprove();
+      const hash = "sha256:m31-full-ceremony";
+
+      await aliceMachine.handleMsg({ thread, type: "challenge", body: "{}" });
+      await bobMachine.handleMsg({ thread, type: "challenge", body: "{}" });
+      await aliceMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: reportBody(hash, "payload-size"),
+      });
+      await bobMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: reportBody(hash, "payload-size"),
+      });
+
+      expect((await aliceMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
+      expect((await bobMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.status).toBe("signed");
+    });
+
+    it("two runners with partial reports blocks sign with tests_not_green", async () => {
+      wireAtestCapableBonds();
+      const thread = await openWithPayload(dualRunnerOpenPayload);
+      const hash = "sha256:m31-dual-partial";
+
+      await aliceMachine.handleMsg({ thread, type: "challenge", body: "{}" });
+      await bobMachine.handleMsg({ thread, type: "challenge", body: "{}" });
+      await aliceMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: reportBody(hash, "payload-size"),
+      });
+      await bobMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: reportBody(hash, "payload-size"),
+      });
+
+      const blocked = await aliceMachine.handleSign({ thread, artifact_hash: hash });
+      expect(blocked.ok).toBe(false);
+      if (blocked.ok) {
+        return;
+      }
+      expect(blocked.error).toBe("tests_not_green");
+    });
+
+    it("second report for a different runner does not overwrite the first", async () => {
+      wireAtestCapableBonds();
+      const thread = await openWithPayload(dualRunnerOpenPayload);
+      const hash = "sha256:m31-no-overwrite";
+
+      await aliceMachine.handleMsg({ thread, type: "challenge", body: "{}" });
+      await bobMachine.handleMsg({ thread, type: "challenge", body: "{}" });
+
+      await aliceMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: reportBody(hash, "payload-size"),
+      });
+      await bobMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: reportBody(hash, "payload-size"),
+      });
+      await aliceMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: reportBody(hash, "spectral"),
+      });
+
+      const stillBlocked = await aliceMachine.handleSign({ thread, artifact_hash: hash });
+      expect(stillBlocked.ok).toBe(false);
+      if (stillBlocked.ok) {
+        return;
+      }
+      expect(stillBlocked.error).toBe("tests_not_green");
+
+      await bobMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: reportBody(hash, "spectral"),
+      });
+      expect((await aliceMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
+      expect((await bobMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
+    });
+
+    it("judgment + atest/1 records inbound atest.challenge but sign gate stays inert", async () => {
+      wireAtestCapableBonds();
+      const thread = await openWithPayload(judgmentOpenPayload);
+
+      const inbound = await bobMachine.handleIncomingEnvelope({
+        from: aliceId,
+        type: "atest.challenge",
+        thread,
+        payload: "{}",
+      });
+      expect(inbound.ok).toBe(true);
+
+      const stored = bobMachine.store.get(thread);
+      expect(stored).toBeDefined();
+      expect(stored?.challenges.initiator).toBe(true);
+
+      const liveStatus = await bobMachine.handleStatus({ thread });
+      expect(liveStatus.ok).toBe(true);
+      if (!liveStatus.ok) {
+        return;
+      }
+      expect(liveStatus.tests_legal).toBe(true);
+
+      const hash = "sha256:m31-judgment-challenge";
+      expect((await aliceMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
+      expect((await bobMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
     });
   });
 });
