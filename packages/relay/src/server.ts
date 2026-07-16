@@ -9,7 +9,6 @@ import { createPairRoutes } from "./routes/pair.js";
 
 export interface RelayConfig {
   dbPath?: string;
-  maxBodyBytes?: number;
   rateLimitWindowMs?: number;
   rateLimitMax?: number;
   trustProxy?: boolean;

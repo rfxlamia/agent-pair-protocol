@@ -45,30 +45,36 @@ export function createAllowlistRoutes(db: RelayDatabase) {
 
   routes.put("/allowlist/:agentId", async (c) => {
     const agentId = c.req.param("agentId");
-    let raw: unknown;
+    let raw: Record<string, unknown>;
 
     try {
-      raw = await c.req.json();
+      raw = (await c.req.json()) as Record<string, unknown>;
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
 
-    // null / array / primitive: fail closed as invalid_allowlist (not 500 via `in` on non-object)
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    if (isLegacyAllowlistBody(raw) || !isSignTheBlobBody(raw)) {
       return c.json({ error: "invalid_allowlist" }, 400);
     }
 
-    const body = raw as Record<string, unknown>;
-    if (isLegacyAllowlistBody(body) || !isSignTheBlobBody(body)) {
-      return c.json({ error: "invalid_allowlist" }, 400);
-    }
+    const push = raw as unknown as AllowlistPushBody;
 
-    const push = body as unknown as AllowlistPushBody;
-
+    let blobBytes: Uint8Array;
     try {
-      decodeBase64UrlStrict(push.blob);
+      blobBytes = decodeBase64UrlStrict(push.blob);
     } catch {
       return c.json({ error: "invalid_allowlist" }, 400);
+    }
+
+    try {
+      const preview = JSON.parse(Buffer.from(blobBytes).toString("utf8")) as {
+        agent_id?: string;
+      };
+      if (typeof preview.agent_id === "string" && preview.agent_id !== agentId) {
+        return c.json({ error: "agent_id_mismatch" }, 400);
+      }
+    } catch {
+      // Unparseable blob — signature verification below returns invalid_signature.
     }
 
     let publicKey: Uint8Array;
@@ -78,7 +84,6 @@ export function createAllowlistRoutes(db: RelayDatabase) {
       return c.json({ error: "invalid_allowlist" }, 400);
     }
 
-    // Verify signature first (crypto hygiene); agent_id_mismatch comes from schema after verify.
     if (!verifyAllowlistPush(push, publicKey)) {
       return c.json({ error: "invalid_signature" }, 403);
     }
