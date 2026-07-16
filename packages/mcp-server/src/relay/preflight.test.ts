@@ -9,6 +9,8 @@ import {
 
 const RELAY_U1 = "http://relay-u1.test";
 const RELAY_U2 = "http://relay-u2.test";
+/** Non-.test host exercises production default-deny (POST envelope), not probe-recipient GET. */
+const RELAY_PROD = "http://relay.example";
 
 const compatibleHealth = {
   status: "ok",
@@ -176,5 +178,43 @@ describe("ensurePreflight", () => {
     observeRelayResponse(RELAY_U1, 500, true);
     await ensurePreflight(RELAY_U1);
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterPass);
+  });
+
+  it("production default-deny uses POST envelope on non-.test host", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.endsWith("/health")) {
+        return new Response(JSON.stringify(compatibleHealth), { status: 200 });
+      }
+      if (url.includes("/inbox/") && method === "GET" && !url.includes("challenge=")) {
+        return new Response(JSON.stringify({ challenge: "probe-challenge" }), { status: 401 });
+      }
+      if (url.includes("/inbox/") && method === "GET" && url.includes("challenge=")) {
+        return new Response(JSON.stringify({ envelopes: [], rowids: [], cursor: 0 }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/inbox/") && method === "POST") {
+        return new Response(JSON.stringify({ error: "recipient_not_allowed" }), { status: 403 });
+      }
+      return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+    });
+
+    await expect(ensurePreflight(RELAY_PROD)).resolves.toBeUndefined();
+    expect(
+      fetchMock.mock.calls.some(([, init]) => (init?.method ?? "GET").toUpperCase() === "POST"),
+    ).toBe(true);
+    const postUrl = fetchMock.mock.calls.find(
+      ([, init]) => (init?.method ?? "GET").toUpperCase() === "POST",
+    )?.[0];
+    const postHref =
+      typeof postUrl === "string"
+        ? postUrl
+        : postUrl instanceof URL
+          ? postUrl.href
+          : ((postUrl as Request | undefined)?.url ?? "");
+    expect(postHref).toContain("/inbox/");
+    expect(postHref).not.toContain("probe-recipient");
   });
 });
