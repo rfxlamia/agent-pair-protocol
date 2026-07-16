@@ -97,6 +97,20 @@ export {
   type PendingPair,
   type RolledBackReason,
 } from "./pairing/flow.js";
+export {
+  assertAtestEnvelopeAllowed,
+  gateActive,
+  runnersRequired,
+  signCeremonyComplete,
+  testsLegal,
+} from "./session/atest-gate.js";
+export {
+  createEmptyTestReports,
+  DEFAULT_RUNNER_BUCKET,
+  normalizeLegacyTestReports,
+  setRunnerReport,
+  type TestReports,
+} from "./session/test-reports.js";
 export { isEphemeralBond } from "./session/bond.js";
 export { pairBondOkTag } from "./pairing/pair-bond-ok-tag.js";
 export {

@@ -57,7 +57,7 @@ export interface SessionRecord {
   turnCount: number;
   peerMessages: PeerNegotiationMessage[];
   lockedSections: string[];
-  testReports: Record<string, { initiator?: TestReport; recipient?: TestReport }>;
+  testReports: Record<string, Record<string, { initiator?: TestReport; recipient?: TestReport }>>;
   challenges: { initiator?: boolean; recipient?: boolean };
   signHashes: { initiator?: string; recipient?: string };
   ratifyApproved: { initiator?: boolean; recipient?: boolean };
