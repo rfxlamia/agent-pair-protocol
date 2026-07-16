@@ -25,10 +25,10 @@ describe("e2e happy path", () => {
 
     await runPairingFlow(alice, bob);
 
-    const artifactHash = "sha256:e2e-happy-path-artifact";
-    const result = await runSessionHappyPath(alice, bob, artifactHash);
+    const result = await runSessionHappyPath(alice, bob);
 
-    expect(result.coSignedHash).toBe(artifactHash);
+    expect(result.coSignedHash).toBe(result.artifactHash);
+    expect(result.artifactHash).toMatch(/^[0-9a-f]{64}$/);
     expect(result.thread).toBeTruthy();
 
     await syncInboxes([alice.ctx, bob.ctx]);

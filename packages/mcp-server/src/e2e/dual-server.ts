@@ -8,6 +8,7 @@ import {
   agentIdToPublicKey,
   decryptEnvelopePayload,
   deserializeOuterEnvelope,
+  hashArtifactBlob,
   parseEnvelopeBody,
   publicKeyToAgentId,
 } from "@agentpair/protocol";
@@ -18,6 +19,7 @@ import { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
 import { createKeyStore } from "../store/keys.js";
 import { createPendingQueue } from "../store/pending.js";
+import { handleAtestRun } from "../tools/atest-run.js";
 import { handleHumanApprove } from "../tools/human-approve.js";
 import {
   type AgentContext,
@@ -58,6 +60,11 @@ export interface SessionHappyPathResult {
   artifactHash: string;
   coSignedHash: string;
 }
+
+const E2E_PAYLOAD_SIZE_SCHEMA = {
+  type: "object",
+  properties: { id: { type: "string" } },
+};
 
 const SESSION_OPEN_PAYLOAD = {
   goal: "Agree telemetry API contract v1",
@@ -228,11 +235,19 @@ export async function runPairingFlow(
   };
 }
 
+async function putE2eArtifact(agent: DualAgent, blob: Uint8Array, hash: string): Promise<void> {
+  const keyPair = await agent.ctx.keyStore.loadOrCreate();
+  await agent.ctx.relay.putArtifact(hash, blob, agent.agentId, keyPair.secretKey);
+}
+
 export async function runSessionHappyPath(
   initiator: DualAgent,
   joiner: DualAgent,
-  artifactHash = "sha256:e2e-happy-path-artifact",
 ): Promise<SessionHappyPathResult> {
+  const schemaBytes = new TextEncoder().encode(JSON.stringify(E2E_PAYLOAD_SIZE_SCHEMA));
+  const artifactHash = hashArtifactBlob(schemaBytes);
+  await putE2eArtifact(initiator, schemaBytes, artifactHash);
+
   const opened = structured(
     await handleSessionOpen(initiator.ctx, {
       to: joiner.agentId,
@@ -278,26 +293,36 @@ export async function runSessionHappyPath(
   });
   await syncInboxes([initiator.ctx, joiner.ctx]);
 
-  await handleSessionMsg(initiator.ctx, {
-    thread,
-    type: "test_report",
-    body: JSON.stringify({
+  const initiatorAtest = structured(
+    await handleAtestRun(initiator.ctx, {
+      thread,
+      criterion_id: "A1",
       artifact_hash: artifactHash,
-      passed: true,
-      runner: "payload-size",
     }),
-  });
+  );
+  if (!initiatorAtest.ok) {
+    const detail =
+      "error" in initiatorAtest && /unavailable/i.test(initiatorAtest.error)
+        ? " (install json-schema-faker dev dependency for payload-size runner)"
+        : "";
+    throw new Error(`initiator atest_run failed: ${JSON.stringify(initiatorAtest)}${detail}`);
+  }
   await syncInboxes([initiator.ctx, joiner.ctx]);
 
-  await handleSessionMsg(joiner.ctx, {
-    thread,
-    type: "test_report",
-    body: JSON.stringify({
+  const joinerAtest = structured(
+    await handleAtestRun(joiner.ctx, {
+      thread,
+      criterion_id: "A1",
       artifact_hash: artifactHash,
-      passed: true,
-      runner: "payload-size",
     }),
-  });
+  );
+  if (!joinerAtest.ok) {
+    const detail =
+      "error" in joinerAtest && /unavailable/i.test(joinerAtest.error)
+        ? " (install json-schema-faker dev dependency for payload-size runner)"
+        : "";
+    throw new Error(`joiner atest_run failed: ${JSON.stringify(joinerAtest)}${detail}`);
+  }
   await syncInboxes([initiator.ctx, joiner.ctx]);
 
   const aliceSign = structured(
