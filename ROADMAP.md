@@ -44,7 +44,7 @@ Breaking change; everything else builds on it. Land first.
 
 ## Milestone 3 — Profile Separation + Hardening (Jul 23–29)
 
-- [ ] **M3.1** Extract `atest/1` (§9): `atest.challenge` / `atest.report` envelopes; runners become the atest implementation; Negotiation must work with zero runner infra. `label:protocol` `size:L`
+- [x] **M3.1** Extract `atest/1` (§9): `atest.challenge` / `atest.report` envelopes; runners become the atest implementation; Negotiation must work with zero runner infra. `label:protocol` `size:L`
 - [ ] **M3.2** Security self-audit vs §11: injection containment (peer payloads presented as data, length caps), replay, decode-DoS, pairing single-use codes, gate flag provenance (A4). Findings → issues, fix P0/P1. `label:security` `size:M`
   — Deferred here from identity-binding work (2026-07-12): (a) `pairRetry` reuses the pairing code across sessions vs §11.3 "codes MUST be single-use" — resolve the tension; (b) tighten §11.2 "relay can never read or forge content" — relay CAN forge `bond_fail` (acknowledged courtesy-only signal); wording is overbroad.
 - [ ] **M3.3** Adversarial e2e suite: tampered outer `to`, replayed seq, oversized envelope, unbonded sender, self-approval attempt, redelivered `nego.open` in every state. `label:testing` `size:M`
