@@ -1,7 +1,6 @@
 import {
   agentIdToPublicKey,
   decodeAllowlistBlob,
-  decodeBase64UrlStrict,
   sign,
   validateAllowlistSchema,
   verifyAllowlistPush,
@@ -66,24 +65,6 @@ export function createAllowlistRoutes(db: RelayDatabase) {
 
     const push = body as unknown as AllowlistPushBody;
 
-    let blobBytes: Uint8Array;
-    try {
-      blobBytes = decodeBase64UrlStrict(push.blob);
-    } catch {
-      return c.json({ error: "invalid_allowlist" }, 400);
-    }
-
-    try {
-      const preview = JSON.parse(Buffer.from(blobBytes).toString("utf8")) as {
-        agent_id?: string;
-      };
-      if (typeof preview.agent_id === "string" && preview.agent_id !== agentId) {
-        return c.json({ error: "agent_id_mismatch" }, 400);
-      }
-    } catch {
-      // Unparseable blob — signature verification below returns invalid_signature.
-    }
-
     let publicKey: Uint8Array;
     try {
       publicKey = agentIdToPublicKey(agentId);
@@ -91,6 +72,7 @@ export function createAllowlistRoutes(db: RelayDatabase) {
       return c.json({ error: "invalid_allowlist" }, 400);
     }
 
+    // Verify signature first; agent_id_mismatch comes from schema after verify.
     if (!verifyAllowlistPush(push, publicKey)) {
       return c.json({ error: "invalid_signature" }, 403);
     }

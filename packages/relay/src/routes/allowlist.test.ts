@@ -174,9 +174,10 @@ describe("allowlist relay routes — sign-the-blob cutover", () => {
     expect(payload.error).toBe("invalid_allowlist");
   });
 
-  it("rejects agent_id mismatch between blob and URL", async () => {
+  it("rejects agent_id mismatch after signature verifies", async () => {
+    // Blob agent_id is ownerId but signed with peer key; path is peerId → verify ok, schema mismatch.
     const { app } = createRelayApp();
-    const body = encodeAllowlistPush(ownerId, [peerId], owner.secretKey);
+    const body = encodeAllowlistPush(ownerId, [peerId], peer.secretKey);
 
     const res = await app.request(`/allowlist/${peerId}`, {
       method: "PUT",
@@ -188,6 +189,21 @@ describe("allowlist relay routes — sign-the-blob cutover", () => {
     expect(payload.error).toBe("agent_id_mismatch");
   });
 
+  it("returns invalid_signature (not agent_id_mismatch) when sig is not for path agent", async () => {
+    // Same content mismatch as above, but signed by owner → verify fails first.
+    const { app } = createRelayApp();
+    const body = encodeAllowlistPush(ownerId, [peerId], owner.secretKey);
+
+    const res = await app.request(`/allowlist/${peerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(403);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe("invalid_signature");
+  });
+
   it("rejects invalid allowlist shape", async () => {
     const { app } = createRelayApp();
     const res = await app.request(`/allowlist/${ownerId}`, {
@@ -195,9 +211,9 @@ describe("allowlist relay routes — sign-the-blob cutover", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ blob: "not-valid", sig: "also-not" }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(403);
     const payload = (await res.json()) as { error: string };
-    expect(payload.error).toBe("invalid_allowlist");
+    expect(payload.error).toBe("invalid_signature");
   });
 
   it("rejects allowlist sig with padding (YQ== loose-valid)", async () => {
