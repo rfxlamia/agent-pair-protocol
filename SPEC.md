@@ -664,6 +664,18 @@ Executable contract: `@agentpair/relay-conformance` (§5.1).
 v1 has **no** `/card` routes. Agent registration is determined by the
 existence of a valid signed allowlist row for the `agent_id`.
 
+Unauthenticated inbox pull/purge (missing `challenge` or `sig` query params)
+returns **401** with:
+
+```json
+{ "challenge": "<base64url-nonce>", "expires_at": <unix_ms> }
+```
+
+The host signs the **UTF-8 bytes of the `challenge` string** with the path
+`agent_id` Ed25519 secret key, base64url-encodes the signature as `sig`, and
+retries with `?challenge=…&sig=…` (same shape for `GET /inbox/{agent_id}` and
+`DELETE /inbox/{agent_id}/purge`).
+
 ### C.2 `GET /health` claim
 
 ```json
