@@ -10,7 +10,12 @@ import {
   parseNegoTurnPayload,
 } from "../envelope/schema.js";
 import { REFERENCE_PROFILES } from "../profile/reference.js";
-import { gateActive, signCeremonyComplete, testsLegal } from "./atest-gate.js";
+import {
+  assertAtestEnvelopeAllowed,
+  gateActive,
+  signCeremonyComplete,
+  testsLegal,
+} from "./atest-gate.js";
 import { isEphemeralBond } from "./bond.js";
 import type { SessionStateMachineDeps } from "./deps.js";
 import { type SessionStore, createSessionStore } from "./store.js";
@@ -861,6 +866,10 @@ export function createSessionStateMachine(
       }
 
       if (input.type === "test_report") {
+        const profileCheck = assertAtestEnvelopeAllowed("atest.report", bondProfilesFor(session));
+        if (!profileCheck.ok) {
+          return profileCheck;
+        }
         const report = parseJsonBody<TestReport>(input.body);
         if ("error" in report) {
           return { ok: false, error: report.error };
@@ -885,6 +894,13 @@ export function createSessionStateMachine(
       }
 
       if (input.type === "challenge") {
+        const profileCheck = assertAtestEnvelopeAllowed(
+          "atest.challenge",
+          bondProfilesFor(session),
+        );
+        if (!profileCheck.ok) {
+          return profileCheck;
+        }
         const role = roleFor(session, deps.agentId);
         const challenges = { ...session.challenges, [role]: true };
         const updated = upsert({ ...session, challenges });

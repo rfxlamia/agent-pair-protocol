@@ -2574,6 +2574,123 @@ describe("session state machine", () => {
     });
   });
 
+  describe("M3.1 outbound profile gating", () => {
+    type RelayCapture = { type: string; to: string; thread: string; payload: string };
+
+    function wireBondsMissingProfilesField() {
+      aliceBonds.add(aliceId, {
+        peer: bobId,
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      } as Bond);
+      bobBonds.add(bobId, {
+        peer: aliceId,
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      } as Bond);
+    }
+
+    function relinkMachines(capture?: { aliceSends?: RelayCapture[]; bobSends?: RelayCapture[] }) {
+      const linked = createLinkedMachines(capture);
+      aliceMachine = linked.alice;
+      bobMachine = linked.bob;
+    }
+
+    it("rejects session_msg challenge on nego-only bond without mutating challenges or relay send", async () => {
+      const aliceSends: RelayCapture[] = [];
+      wireNegoOnlyBonds({ aliceSends });
+
+      const thread = await openAndApprove();
+      const before = aliceMachine.store.get(thread);
+      expect(before).toBeDefined();
+
+      const result = await aliceMachine.handleMsg({
+        thread,
+        type: "challenge",
+        body: JSON.stringify({ report: "blocked" }),
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.error).toBe("profile_not_supported");
+
+      const after = aliceMachine.store.get(thread);
+      expect(after).toBeDefined();
+      if (!after || !before) {
+        return;
+      }
+      expect(after.challenges).toEqual(before.challenges);
+      expect(aliceSends.filter((s) => s.type.startsWith("atest."))).toHaveLength(0);
+    });
+
+    it("rejects session_msg test_report on nego-only bond without mutating testReports", async () => {
+      const aliceSends: RelayCapture[] = [];
+      wireNegoOnlyBonds({ aliceSends });
+
+      const thread = await openAndApprove();
+      const hash = "sha256:m31-outbound-report";
+      const before = aliceMachine.store.get(thread);
+      expect(before).toBeDefined();
+
+      const result = await aliceMachine.handleMsg({
+        thread,
+        type: "test_report",
+        body: JSON.stringify({
+          artifact_hash: hash,
+          passed: true,
+          runner: "payload-size",
+        }),
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.error).toBe("profile_not_supported");
+
+      const after = aliceMachine.store.get(thread);
+      expect(after).toBeDefined();
+      if (!after || !before) {
+        return;
+      }
+      expect(after.testReports).toEqual(before.testReports);
+      expect(aliceSends.filter((s) => s.type.startsWith("atest."))).toHaveLength(0);
+    });
+
+    it("uses REFERENCE_PROFILES fallback when bond lacks profiles field", async () => {
+      wireBondsMissingProfilesField();
+      const aliceSends: RelayCapture[] = [];
+      relinkMachines({ aliceSends });
+
+      const thread = await openAndApprove();
+      const result = await aliceMachine.handleMsg({
+        thread,
+        type: "challenge",
+        body: "{}",
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.error).toBe("profile_not_supported");
+      expect(aliceSends.filter((s) => s.type.startsWith("atest."))).toHaveLength(0);
+    });
+
+    it("allows atest outbound when bond advertises atest/1", async () => {
+      const aliceSends: RelayCapture[] = [];
+      wireAtestCapableBonds({ aliceSends });
+
+      const thread = await openAndApprove();
+      const result = await aliceMachine.handleMsg({
+        thread,
+        type: "challenge",
+        body: JSON.stringify({ report: "allowed" }),
+      });
+      expect(result.ok).toBe(true);
+      expect(aliceSends.some((s) => s.type === "atest.challenge")).toBe(true);
+    });
+  });
+
   describe("M3.1 atest profile extraction", () => {
     const judgmentOpenPayload = {
       goal: "Human-reviewed contract",
