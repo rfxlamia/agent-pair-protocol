@@ -42,4 +42,16 @@ describe("relay /health conformance claim", () => {
     expect(body).not.toHaveProperty("artifact_quota_bytes");
     expect(body).not.toHaveProperty("artifact_retention_ms");
   });
+
+  it("omits optional fields when env values are zero or negative", async () => {
+    vi.stubEnv("AGENTPAIR_ARTIFACT_QUOTA_BYTES", "0");
+    vi.stubEnv("AGENTPAIR_ARTIFACT_RETENTION_MS", "-1");
+
+    const { app } = createRelayApp();
+    const res = await app.request("/health");
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(body).not.toHaveProperty("artifact_quota_bytes");
+    expect(body).not.toHaveProperty("artifact_retention_ms");
+  });
 });

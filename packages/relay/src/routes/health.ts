@@ -12,7 +12,8 @@ function buildHealthClaim(): Record<string, unknown> {
   const quotaRaw = process.env.AGENTPAIR_ARTIFACT_QUOTA_BYTES;
   if (quotaRaw) {
     const parsed = Number(quotaRaw);
-    if (Number.isFinite(parsed)) {
+    // Align with artifact route: only positive finite values are enforced there.
+    if (Number.isFinite(parsed) && parsed > 0) {
       claim.artifact_quota_bytes = parsed;
     }
   }
@@ -20,7 +21,7 @@ function buildHealthClaim(): Record<string, unknown> {
   const retentionRaw = process.env.AGENTPAIR_ARTIFACT_RETENTION_MS;
   if (retentionRaw) {
     const parsed = Number(retentionRaw);
-    if (Number.isFinite(parsed)) {
+    if (Number.isFinite(parsed) && parsed > 0) {
       claim.artifact_retention_ms = parsed;
     }
   }
