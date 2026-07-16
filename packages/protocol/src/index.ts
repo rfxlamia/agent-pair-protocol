@@ -107,6 +107,8 @@ export {
 export {
   createEmptyTestReports,
   DEFAULT_RUNNER_BUCKET,
+  hasLegacyTestReports,
+  isValidTestReports,
   normalizeLegacyTestReports,
   setRunnerReport,
   type TestReports,

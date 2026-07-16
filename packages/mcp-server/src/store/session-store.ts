@@ -1,4 +1,9 @@
-import type { SessionRecord, SessionStore } from "@agentpair/protocol";
+import {
+  type SessionRecord,
+  type SessionStore,
+  hasLegacyTestReports,
+  normalizeLegacyTestReports,
+} from "@agentpair/protocol";
 import { parseSessionRecords } from "./persistence-validate.js";
 import { createJsonPersistentStore, resolveDataDir, storePath } from "./persistent-store.js";
 
@@ -34,8 +39,24 @@ export function createFileSessionStore(
     validate: validateSessionsFile,
   });
 
+  function ensureTestReportsMigrated(): void {
+    const sessions = backing.read().sessions;
+    const hasLegacy = Object.values(sessions).some((session) =>
+      hasLegacyTestReports(session.testReports),
+    );
+    if (!hasLegacy) {
+      return;
+    }
+    backing.mutate((data) => {
+      for (const session of Object.values(data.sessions)) {
+        session.testReports = normalizeLegacyTestReports(session.testReports);
+      }
+    });
+  }
+
   return {
     get(thread) {
+      ensureTestReportsMigrated();
       const session = backing.read().sessions[thread];
       return session ? structuredClone(session) : undefined;
     },
@@ -45,6 +66,7 @@ export function createFileSessionStore(
       });
     },
     list() {
+      ensureTestReportsMigrated();
       return Object.values(backing.read().sessions).map((session) => structuredClone(session));
     },
     flush: () => backing.flush(),

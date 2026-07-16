@@ -3,6 +3,7 @@ import {
   type SessionRecord,
   type SessionStatus,
   isValidProfilesArray,
+  isValidTestReports,
 } from "@agentpair/protocol";
 
 const BOND_MODES = new Set(["ephemeral_until_session_closes", "bonded_contact"]);
@@ -75,8 +76,7 @@ export function isSessionRecord(value: unknown): value is SessionRecord {
     typeof session.turnCount === "number" &&
     Array.isArray(session.peerMessages) &&
     Array.isArray(session.lockedSections) &&
-    typeof session.testReports === "object" &&
-    session.testReports !== null &&
+    isValidTestReports(session.testReports) &&
     typeof session.challenges === "object" &&
     session.challenges !== null &&
     typeof session.signHashes === "object" &&
