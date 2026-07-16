@@ -2,9 +2,9 @@
 
 Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Core), §3–§7 to tests in this repository. Rows marked **(SHOULD)** in the SPEC column are included for completeness but are not normative MUSTs.
 
-**Inventory (full table):** 59 rows — 56 `covered`, 2 `invariant`, 1 `partial`, 0 `gap`.
+**Inventory (full table):** 64 rows — 60 `covered`, 2 `invariant`, 2 `partial`, 0 `gap`.
 
-**MUST-scope tally** (excludes 3 informational rows below): 56 rows — 53 `covered`, 2 `invariant`, 1 `partial`, 0 `gap`.
+**MUST-scope tally** (excludes 3 informational rows below): 61 rows — 57 `covered`, 2 `invariant`, 2 `partial`, 0 `gap`.
 
 | Excluded from MUST tally | ID | Reason |
 |--------------------------|-----|--------|
@@ -79,19 +79,24 @@ Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Cor
 
 ## §5 Relay Protocol
 
-| ID | SPEC MUST | Test(s) | Status |
-|----|-----------|---------|--------|
-| §5-no-decrypt | Relay MUST NOT read payloads; blobs opaque | `packages/relay/src/` has no decrypt/import of envelope crypto — verified by absence of decrypt path | invariant |
-| §5-default-deny | Relay MUST reject `POST /inbox/{A}` unless sender in A's signed allowlist | `packages/relay/src/routes/inbox.test.ts` — unbonded sender rejected | covered |
-| §5-challenge | `GET /inbox` MUST use challenge-response auth | `packages/relay/src/routes/inbox.test.ts` — challenge issue, sig verify, reused nonce rejected | covered |
-| §5-no-unauth-inbox | Relay MUST NOT hand inbox to unauthenticated caller | `packages/relay/src/routes/inbox.test.ts` — `returns 401 challenge when GET inbox has no signature` | covered |
-| §5-artifact-hash | Relay MUST verify SHA-256 hash matches content on artifact PUT | `packages/relay/src/routes/artifact.test.ts` — `returns hash_mismatch before auth side effects` | covered |
-| §5-artifact-ciphertext | Uploaders MUST encrypt artifact client-side before PUT | `packages/protocol/src/artifact/encrypt.test.ts` — golden vector `artifact-spillover.json`; `packages/mcp-server/src/e2e/spillover-roundtrip.test.ts` | covered |
-| §5-spill-ref | Spill ref fields (`spill`, `artifact_hash`, `size`, `content_type`, `summary`, `artifact_key`) | `packages/protocol/src/artifact/schema.test.ts`; `packages/protocol/src/artifact/spill.test.ts` | covered |
-| §5-spill-plaintext-cap | Receiver local spillover plaintext cap 10 MiB (`size` check before GET) | `packages/protocol/src/artifact/encrypt.test.ts` — `MAX_SPILLOVER_PLAINTEXT_BYTES as 10 MiB`; `resolve.test.ts` — `artifact_too_large before GET`; `spill.test.ts` | covered |
-| §5-pair-ttl | Pairing sessions expire after 5 minutes (relay-enforced) | `packages/relay/src/routes/pair.test.ts` — `returns 410 session_expired and deletes the row after TTL` | covered |
-| §5-pair-slot | `/pair/{session_id}` stores at most one message (single-slot overwrite) | `packages/relay/src/routes/pair.test.ts` — `overwrites message_json on POST conflict` | covered |
-| §5-allowlist-sig | Signed allowlist push | `packages/relay/src/routes/allowlist.test.ts` | covered |
+| ID | SPEC MUST | Specified where? | Test(s) | Status |
+|----|-----------|------------------|---------|--------|
+| §5-no-decrypt | Relay MUST NOT read payloads; blobs opaque | SPEC §5 | `packages/relay/src/` has no decrypt/import of envelope crypto — verified by absence of decrypt path | invariant |
+| §5-default-deny | Relay MUST reject `POST /inbox/{A}` unless sender in A's signed allowlist | SPEC §5; probe `default-deny` | `packages/relay/src/routes/inbox.test.ts` — unbonded sender rejected; `packages/relay-conformance` | covered |
+| §5-challenge | `GET /inbox` MUST use challenge-response auth | SPEC §5; probe `challenge-roundtrip` | `packages/relay/src/routes/inbox.test.ts` — challenge issue, sig verify, reused nonce rejected; `packages/relay-conformance` | covered |
+| §5-no-unauth-inbox | Relay MUST NOT hand inbox to unauthenticated caller | SPEC §5 | `packages/relay/src/routes/inbox.test.ts` — `returns 401 challenge when GET inbox has no signature` | covered |
+| §5-artifact-hash | Relay MUST verify SHA-256 hash matches content on artifact PUT | SPEC §5; probe `hash-verify` | `packages/relay/src/routes/artifact.test.ts` — `returns hash_mismatch before auth side effects`; `packages/relay-conformance` | covered |
+| §5-artifact-ciphertext | Uploaders MUST encrypt artifact client-side before PUT | SPEC §5 | `packages/protocol/src/artifact/encrypt.test.ts` — golden vector `artifact-spillover.json`; `packages/mcp-server/src/e2e/spillover-roundtrip.test.ts` | covered |
+| §5-spill-ref | Spill ref fields (`spill`, `artifact_hash`, `size`, `content_type`, `summary`, `artifact_key`) | SPEC §5 | `packages/protocol/src/artifact/schema.test.ts`; `packages/protocol/src/artifact/spill.test.ts` | covered |
+| §5-spill-plaintext-cap | Receiver local spillover plaintext cap 10 MiB (`size` check before GET) | SPEC §5 | `packages/protocol/src/artifact/encrypt.test.ts` — `MAX_SPILLOVER_PLAINTEXT_BYTES as 10 MiB`; `resolve.test.ts` — `artifact_too_large before GET`; `spill.test.ts` | covered |
+| §5-pair-ttl | Pairing sessions expire after 5 minutes (relay-enforced, fixed from creation) | SPEC §5; Appendix C.5; probe `pair-ttl` | `packages/relay/src/routes/pair.test.ts` — `does not extend expires_at on POST activity`; `returns 410 pair_session_lost after TTL and deletes row` | covered |
+| §5-pair-slot | `/pair/{session_id}` stores at most one message (single-slot overwrite) | SPEC §5 | `packages/relay/src/routes/pair.test.ts` — `overwrites message_json on POST conflict` | covered |
+| §5-pair-errors | Pair GET: `404` → `pair_not_found`; `410` → `pair_session_lost` | Appendix C.5 | `packages/relay/src/routes/pair.test.ts` — `returns 404 pair_not_found for unknown session`; `returns 410 pair_session_lost after TTL` | covered |
+| §5-allowlist-blob | Allowlist push uses sign-the-blob `{blob, sig}`; cap 1024 entries | Appendix C.3; probe `allowlist-blob` | `packages/relay/src/routes/allowlist.test.ts` — sign-the-blob cutover; `packages/protocol/src/allowlist/encode.test.ts` — `ALLOWLIST_MAX_ALLOWED = 1024`; `packages/mcp-server/src/relay/client-allowlist.test.ts` | covered |
+| §5-inbox-idempotency | Same envelope `id`: byte-identical retry → `204`; different bytes → `409 envelope_id_collision` | SPEC §5; Appendix C.6; probe `inbox-idempotency` | `packages/relay/src/routes/inbox.test.ts` — `returns 409 envelope_id_collision when same id has different wire bytes`; `packages/relay-conformance` | covered |
+| §5-at-least-once | Delivery at-least-once; receivers rely on §4.3 idempotency | SPEC §5 | `packages/protocol/src/receive-envelope.test.ts` — `stale_seq` idempotency; host retry paths in `packages/mcp-server/src/relay/client.ts` (indirect) | partial |
+| §5-health-claim | `/health` exposes `spec_version` + `relay_conformance` conformance claim | Appendix C.2; §5.1 preflight | `packages/relay/src/routes/health.test.ts`; `packages/mcp-server/src/relay/preflight.test.ts` — claim mismatch → `relay_not_conformant` | covered |
+| §5-preflight | Runtime preflight hard block → host `relay_not_conformant` | SPEC §5.1; §10 | `packages/mcp-server/src/relay/preflight.test.ts` — `hard blocks with relay_not_conformant on claim mismatch` | covered |
 
 ---
 

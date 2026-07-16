@@ -167,19 +167,7 @@ The relay is an HTTP server. It MUST NOT be able to read payloads and MUST
 treat blobs as opaque. Decryption happens **only** on the receiving agent
 host: the payload key is derived from the recipient's secret key, which never
 exists relay-side. The relay MAY verify envelope signatures (a public-key
-operation) to reject garbage early; it can never decrypt. Reference API:
-
-```
-GET  /health
-GET  /card/{agent_id}                # public card / key discovery
-PUT  /allowlist/{agent_id}           # signed allowlist push
-POST /pair/{session_id}              # PAKE message drop (TTL 5 min)
-GET  /pair/{session_id}              # PAKE message poll
-POST /inbox/{agent_id}               # envelope drop
-GET  /inbox/{agent_id}?since=T       # challenge-response pull
-PUT  /artifact/{hash}                # opaque blob store (content-addressed)
-GET  /artifact/{hash}
-```
+operation) to reject garbage early; it can never decrypt.
 
 Normative relay behavior:
 
@@ -208,9 +196,32 @@ Normative relay behavior:
   - **Spill ref fields:** `spill`, `artifact_hash`, `size`, `content_type`,
     `summary`, `artifact_key` (base64url strict, 32-byte raw key).
   - **Receiver local spillover plaintext cap:** 10 MiB (`size` check before GET).
-- The relay MAY drop messages (queue overflow, TTL). Delivery is at-least-once
-  from the sender's perspective; receivers rely on §4.3 idempotency, and
-  hosts SHOULD retry sends with backoff.
+- **Pair channel.** Pairing sessions over `/pair/{session_id}` expire after
+  **5 minutes** (relay-enforced TTL, fixed from session creation — no TTL
+  refresh on activity). The channel stores **at most one message**
+  (single-slot overwrite); see §6.2 for the ping-pong invariant.
+- **Inbox POST idempotency.** When an envelope with the same `id` is posted
+  again, the relay MUST return success (`204`) only if the wire bytes are
+  byte-identical to the stored envelope; otherwise it MUST reject with
+  `envelope_id_collision` (`409`). The relay MUST NOT report success for an
+  envelope it did not store.
+- **At-least-once delivery.** The relay MAY drop messages (queue overflow,
+  TTL). Delivery is at-least-once from the sender's perspective; receivers
+  rely on §4.3 idempotency, and hosts SHOULD retry sends with backoff.
+
+### 5.1 Conformance verification
+
+Two mechanisms verify relay behavior against this specification:
+
+| Mechanism | When | Scope |
+|---|---|---|
+| **Offline conformance suite** (`@agentpair/relay-conformance`) | CI / operator | Full wire contract; slow/large probes gated (`--slow`, `--large`) |
+| **Runtime preflight** | Host connect | Cheap subset: `GET /health` claim + challenge roundtrip + default-deny inbox; `AGENTPAIR_PREFLIGHT` modes (`warn` default, `strict`, `off`) |
+
+Preflight hard failure surfaces as host error `relay_not_conformant` (§10),
+distinct from `relay_unavailable`. The gold standard for relay conformance is
+suite green, not §5 prose alone. Informative wire shapes and relay HTTP error
+codes: Appendix C.
 
 ---
 
@@ -482,8 +493,16 @@ Core messaging: `thread_closed` — operation attempted on a thread that has bee
 
 Artifacts / spillover: `artifact_upload_failed`, `artifact_not_found`,
 `artifact_fetch_failed`, `artifact_decrypt_failed`, `artifact_too_large`,
-`relay_unavailable`. `relay_unavailable` is send-path only; `artifact_fetch_failed`
-is receive-path retryable (retry with `since = cursor - 1`).
+`relay_unavailable`, `relay_not_conformant`. `relay_unavailable` is send-path
+only; `artifact_fetch_failed` is receive-path retryable (retry with
+`since = cursor - 1`). `relay_not_conformant` is raised by the host when
+runtime preflight (§5.1) hard-blocks a relay that fails the cheap conformance
+subset — distinct from transient `relay_unavailable`.
+
+Relay HTTP response bodies carry additional implementation-defined error
+strings (e.g. `envelope_id_collision`, `payload_too_large`, `hash_mismatch`).
+These are documented in Appendix C for interoperability; they are not host
+error codes unless also listed above.
 
 Errors MUST NOT leak whether an unbonded recipient exists (§4.3 step 4).
 
@@ -538,6 +557,11 @@ this.** Therefore:
   metadata (who talks to whom, when, sizes). It can never read or forge
   content. Metadata privacy (sealed sender) is a future extension
   (Appendix B), not a v1 property — do not claim it.
+- **Artifact fetch is unauthenticated.** `GET /artifact/{hash}` returns the
+  stored ciphertext blob to any caller who knows the hash. The relay cannot
+  decrypt artifact content; confidentiality rests on the per-artifact key
+  delivered inside E2E-encrypted envelopes (§5). Operators SHOULD treat
+  artifact hashes as capability tokens.
 
 ### 11.3 Pairing
 
@@ -616,3 +640,98 @@ Binding guidance (hard-won):
 - Key rotation and bond re-keying.
 - Group sessions (>2 agents).
 - Additional cipher suite as protocol v2.
+
+## Appendix C — Relay Wire (informative)
+
+This appendix documents the v1 relay HTTP surface shipped by the reference
+implementation. It is informative — normative relay *behavior* lives in §5.
+Executable contract: `@agentpair/relay-conformance` (§5.1).
+
+### C.1 Routes
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | Liveness + conformance claim |
+| `PUT` | `/allowlist/{agent_id}` | Signed allowlist push |
+| `POST` | `/pair/{session_id}` | PAKE message drop |
+| `GET` | `/pair/{session_id}` | PAKE message poll |
+| `POST` | `/inbox/{agent_id}` | Envelope drop |
+| `GET` | `/inbox/{agent_id}?since=T&challenge=…&sig=…` | Challenge-response pull |
+| `DELETE` | `/inbox/{agent_id}/purge` | Purge inbox rows (challenge auth) |
+| `PUT` | `/artifact/{hash}` | Content-addressed blob store |
+| `GET` | `/artifact/{hash}` | Blob fetch (unauthenticated; §11.2) |
+
+v1 has **no** `/card` routes. Agent registration is determined by the
+existence of a valid signed allowlist row for the `agent_id`.
+
+### C.2 `GET /health` claim
+
+```json
+{
+  "status": "ok",
+  "spec_version": "1.0-draft",
+  "relay_conformance": "agentpair-relay/1",
+  "artifact_quota_bytes": 52428800,
+  "artifact_retention_ms": 2592000000
+}
+```
+
+- `spec_version` and `relay_conformance` are REQUIRED for runtime preflight.
+- `artifact_quota_bytes` and `artifact_retention_ms` are optional operator
+  advisories (mirrored from environment configuration).
+
+### C.3 Allowlist push — sign-the-blob
+
+`PUT /allowlist/{agent_id}` body:
+
+```json
+{ "blob": "<base64url(allowlist_json_bytes)>", "sig": "<base64url(Ed25519(blob_bytes))>" }
+```
+
+The relay verifies `sig` over the exact decoded `blob` bytes and
+schema-validates the JSON (`agent_id` must match the path, valid ids, no
+duplicates). Interop cap: `allowed` MUST NOT exceed **1024** entries
+(`ALLOWLIST_MAX_ALLOWED`). The relay MUST NOT reject on sort order; hosts
+SHOULD sort before push.
+
+### C.4 Per-route body limits
+
+| Route | Limit | Oversize error |
+|---|---|---|
+| `POST /inbox/{agent_id}` | ~128 KiB wire bytes | `envelope_too_large` (`413`) |
+| `PUT /artifact/{hash}` | ≥ 10 MiB | `payload_too_large` (`413`) |
+| Other routes | relay default | `payload_too_large` (`413`) |
+
+The inbox cap is a superset of the §4.3 64 KiB envelope MUST; hosts still
+enforce 64 KiB before decode.
+
+### C.5 Pair channel errors
+
+| Status | Body `error` | When |
+|---|---|---|
+| `404` | `pair_not_found` | Unknown `session_id` |
+| `410` | `pair_session_lost` | Session expired (fixed TTL from creation) |
+
+Hosts branch on HTTP status; body strings are informative.
+
+### C.6 Inbox POST idempotency
+
+| Condition | Response |
+|---|---|
+| First insert | `204` |
+| Same `id`, byte-identical wire | `204` |
+| Same `id`, different wire bytes | `409` + `envelope_id_collision` |
+
+### C.7 Conformance suite probes
+
+| Probe | Tier | Asserts |
+|---|---|---|
+| `default-deny` | REQUIRED | Unallowlisted inbox POST → `recipient_not_allowed` |
+| `challenge-roundtrip` | REQUIRED | Challenge issue + signed pull |
+| `allowlist-blob` | REQUIRED | Sign-the-blob allowlist PUT |
+| `inbox-idempotency` | REQUIRED | Byte-identical retry → `204` |
+| `hash-verify` | REQUIRED | Artifact PUT `hash_mismatch` |
+| `purge-dyad` | REQUIRED | Inbox purge with challenge auth |
+| `inbox-pull-shape` | REQUIRED | Pull JSON shape (`envelopes`, `rowids`, `cursor`) |
+| `pair-ttl` | slow (`--slow`) | Fixed TTL expiry → `410` |
+| `artifact-10mb` | large (`--large`) | 10 MiB artifact upload |
