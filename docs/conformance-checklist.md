@@ -2,9 +2,9 @@
 
 Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Core), §3–§7 to tests in this repository. Rows marked **(SHOULD)** in the SPEC column are included for completeness but are not normative MUSTs.
 
-**Inventory (full table):** 64 rows — 60 `covered`, 2 `invariant`, 2 `partial`, 0 `gap`.
+**Inventory (full table):** 66 rows — 62 `covered`, 2 `invariant`, 2 `partial`, 0 `gap`.
 
-**MUST-scope tally** (excludes 3 informational rows below): 61 rows — 57 `covered`, 2 `invariant`, 2 `partial`, 0 `gap`.
+**MUST-scope tally** (excludes 3 informational rows below): 63 rows — 59 `covered`, 2 `invariant`, 2 `partial`, 0 `gap`.
 
 | Excluded from MUST tally | ID | Reason |
 |--------------------------|-----|--------|
@@ -157,6 +157,15 @@ Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Cor
 
 ---
 
+## §9 Acceptance Testing (`atest/1`)
+
+| ID | SPEC MUST | Test(s) | Status |
+|----|-----------|---------|--------|
+| §9-report-runner | `atest.report` MUST identify its runner (`artifact_hash`, `passed`, `runner`, optional `details`) | `packages/protocol/src/envelope/schema.test.ts` — `atest.report` payload shape; `packages/mcp-server/src/tools/atest-run.test.ts` — registry emits report with runner id; `packages/protocol/src/session/state-machine.test.ts` — `M3.1 outbound profile gating` | covered |
+| §9-profile-gate | Peers MUST NOT send or record `atest.*` envelopes when bond contract lacks `atest/1` | `packages/protocol/src/session/atest-gate.test.ts` — `assertAtestEnvelopeAllowed`; `packages/protocol/src/session/state-machine.test.ts` — `M3.1 outbound profile gating`; `packages/protocol/src/profile/envelope-profile.test.ts` — inbound `profile_not_supported`; `packages/mcp-server/src/tools/atest-run.test.ts` — nego-only bond zero side effects; `packages/mcp-server/src/e2e/happy-path.test.ts` — challenges + `atest_run` + sign + ratify | covered |
+
+---
+
 ## Out of scope (M2.7)
 
 Tracked elsewhere in [ROADMAP.md](../ROADMAP.md):
@@ -167,7 +176,6 @@ Tracked elsewhere in [ROADMAP.md](../ROADMAP.md):
 | Human gate `via_human` provenance | §8.4, §11.3 | M3.2 security audit |
 | Single-use pairing codes (`pairRetry` tension) | §11.3 | M3.2 |
 | Adversarial e2e (tampered outer `to`, replay, self-approval) | §11.2 | M3.3 |
-| Acceptance testing `atest/1` | §9 | M3.1 |
 
 ---
 
