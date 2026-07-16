@@ -45,19 +45,26 @@ export function createAllowlistRoutes(db: RelayDatabase) {
 
   routes.put("/allowlist/:agentId", async (c) => {
     const agentId = c.req.param("agentId");
-    let raw: Record<string, unknown>;
+    let raw: unknown;
 
     try {
-      raw = (await c.req.json()) as Record<string, unknown>;
+      raw = await c.req.json();
     } catch {
       return c.json({ error: "invalid_json" }, 400);
     }
 
-    if (isLegacyAllowlistBody(raw) || !isSignTheBlobBody(raw)) {
+    // null / primitives: fail closed (avoid TypeError from `in` on non-object).
+    // Arrays are already invalid shape; guard keeps object-boundary consistent.
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return c.json({ error: "invalid_allowlist" }, 400);
     }
 
-    const push = raw as unknown as AllowlistPushBody;
+    const body = raw as Record<string, unknown>;
+    if (isLegacyAllowlistBody(body) || !isSignTheBlobBody(body)) {
+      return c.json({ error: "invalid_allowlist" }, 400);
+    }
+
+    const push = body as unknown as AllowlistPushBody;
 
     let blobBytes: Uint8Array;
     try {

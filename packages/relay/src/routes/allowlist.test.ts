@@ -162,6 +162,18 @@ describe("allowlist relay routes — sign-the-blob cutover", () => {
     expect(payload.error).toBe("invalid_json");
   });
 
+  it("rejects null JSON body with invalid_allowlist (not 500)", async () => {
+    const { app } = createRelayApp();
+    const res = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: "null",
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe("invalid_allowlist");
+  });
+
   it("rejects agent_id mismatch between blob and URL", async () => {
     const { app } = createRelayApp();
     const body = encodeAllowlistPush(ownerId, [peerId], owner.secretKey);
