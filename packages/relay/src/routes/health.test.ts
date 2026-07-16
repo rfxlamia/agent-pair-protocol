@@ -4,6 +4,9 @@ import { createRelayApp } from "../server.js";
 describe("relay /health conformance claim", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
+    // Hermetic: host env may set AGENTPAIR_ARTIFACT_*; clear after unstub restores it.
+    vi.stubEnv("AGENTPAIR_ARTIFACT_QUOTA_BYTES", undefined);
+    vi.stubEnv("AGENTPAIR_ARTIFACT_RETENTION_MS", undefined);
   });
 
   afterEach(() => {
