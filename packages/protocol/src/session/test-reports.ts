@@ -9,6 +9,30 @@ type RunnerBucket = { initiator?: TestReport; recipient?: TestReport };
 type LegacyHashBucket = { initiator?: TestReport; recipient?: TestReport };
 type HashBucket = Record<string, RunnerBucket>;
 
+function isTestReportSide(value: unknown): value is TestReport {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const report = value as Record<string, unknown>;
+  return typeof report.artifact_hash === "string" && typeof report.passed === "boolean";
+}
+
+function isRunnerBucket(value: unknown): value is RunnerBucket {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const bucket = value as Record<string, unknown>;
+  for (const [key, side] of Object.entries(bucket)) {
+    if (key !== "initiator" && key !== "recipient") {
+      return false;
+    }
+    if (side !== undefined && !isTestReportSide(side)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isLegacyHashBucket(value: unknown): value is LegacyHashBucket {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -45,6 +69,36 @@ export function setRunnerReport(
       },
     },
   };
+}
+
+export function isValidTestReports(reports: unknown): reports is TestReports {
+  if (typeof reports !== "object" || reports === null) {
+    return false;
+  }
+  for (const bucket of Object.values(reports)) {
+    if (isLegacyHashBucket(bucket)) {
+      for (const role of ["initiator", "recipient"] as const) {
+        const side = bucket[role];
+        if (side !== undefined && !isTestReportSide(side)) {
+          return false;
+        }
+      }
+      continue;
+    }
+    if (typeof bucket !== "object" || bucket === null) {
+      return false;
+    }
+    for (const runnerBucket of Object.values(bucket)) {
+      if (!isRunnerBucket(runnerBucket)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+export function hasLegacyTestReports(reports: TestReports): boolean {
+  return Object.values(reports).some((bucket) => isLegacyHashBucket(bucket));
 }
 
 export function normalizeLegacyTestReports(
