@@ -29,6 +29,12 @@ describe("HttpRelayClient ensurePreflight guards", () => {
     ["pullInbox", (c: HttpRelayClient) => c.pullInbox(keyPair)],
     ["postPakeMessage", (c: HttpRelayClient) => c.postPakeMessage("sess", "{}")],
     ["pollPakeMessage", (c: HttpRelayClient) => c.pollPakeMessage("sess")],
+    [
+      "putArtifact",
+      (c: HttpRelayClient) => c.putArtifact("h", new Uint8Array([1]), agentId, keyPair.secretKey),
+    ],
+    ["getArtifact", (c: HttpRelayClient) => c.getArtifact("h", 1)],
+    ["purgeInboxDyad", (c: HttpRelayClient) => c.purgeInboxDyad("peer", keyPair)],
   ] as const)("calls ensurePreflight before %s", async (_name, invoke) => {
     const client = new HttpRelayClient(BASE_URL);
     await invoke(client).catch(() => undefined); // wire body may be invalid; guard must still run first
