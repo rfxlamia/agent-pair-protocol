@@ -3,6 +3,7 @@ import {
   type PreflightError,
   ensurePreflight,
   invalidatePreflightCache,
+  observeRelayResponse,
   resetPreflightCache,
 } from "./preflight.js";
 
@@ -159,6 +160,20 @@ describe("ensurePreflight", () => {
 
     invalidatePreflightCache(RELAY_U1, { reason: "5xx_streak" });
 
+    await ensurePreflight(RELAY_U1);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterPass);
+  });
+
+  it("invalidates cache after consecutive 5xx via observeRelayResponse", async () => {
+    mockCompatibleRelay(fetchMock);
+    await ensurePreflight(RELAY_U1);
+    const callsAfterPass = fetchMock.mock.calls.length;
+
+    observeRelayResponse(RELAY_U1, 500, true);
+    await ensurePreflight(RELAY_U1);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterPass);
+
+    observeRelayResponse(RELAY_U1, 500, true);
     await ensurePreflight(RELAY_U1);
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterPass);
   });
