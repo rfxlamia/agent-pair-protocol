@@ -285,6 +285,40 @@ export function createSessionStateMachine(
     });
   }
 
+  async function recordTestReport(input: { thread: string; report: TestReport }) {
+    const found = getOrError(input.thread);
+    if (!found.ok) {
+      return found;
+    }
+    const session = ensureLiveNotExpired(found.session);
+    if (session.status !== "live" && session.status !== "signed") {
+      return { ok: false, error: "session_not_live" };
+    }
+
+    const profileCheck = assertAtestEnvelopeAllowed("atest.report", bondProfilesFor(session));
+    if (!profileCheck.ok) {
+      return profileCheck;
+    }
+
+    const role = roleFor(session, deps.agentId);
+    const testReports = setRunnerReport(
+      session.testReports,
+      input.report.artifact_hash,
+      input.report.runner,
+      role,
+      input.report,
+    );
+    const updated = upsert({ ...session, testReports });
+    await notifyPeer(updated, "atest.report", {
+      thread: updated.thread,
+      artifact_hash: input.report.artifact_hash,
+      passed: input.report.passed,
+      runner: input.report.runner,
+      details: input.report.details,
+    });
+    return { ok: true, thread: input.thread, type: "test_report" as const };
+  }
+
   async function removeEphemeralBond(peer: string) {
     const bond = deps.bonds.find(deps.agentId, peer);
     if (!isEphemeralBond(bond)) {
@@ -858,6 +892,8 @@ export function createSessionStateMachine(
       }
     },
 
+    recordTestReport,
+
     async handleMsg(input: { thread: string; type: string; body: string }) {
       const found = getOrError(input.thread);
       if (!found.ok) {
@@ -869,31 +905,11 @@ export function createSessionStateMachine(
       }
 
       if (input.type === "test_report") {
-        const profileCheck = assertAtestEnvelopeAllowed("atest.report", bondProfilesFor(session));
-        if (!profileCheck.ok) {
-          return profileCheck;
-        }
         const report = parseJsonBody<TestReport>(input.body);
         if ("error" in report) {
           return { ok: false, error: report.error };
         }
-        const role = roleFor(session, deps.agentId);
-        const testReports = setRunnerReport(
-          session.testReports,
-          report.artifact_hash,
-          report.runner,
-          role,
-          report,
-        );
-        const updated = upsert({ ...session, testReports });
-        await notifyPeer(updated, "atest.report", {
-          thread: updated.thread,
-          artifact_hash: report.artifact_hash,
-          passed: report.passed,
-          runner: report.runner,
-          details: report.details,
-        });
-        return { ok: true, thread: input.thread, type: "test_report" };
+        return recordTestReport({ thread: input.thread, report });
       }
 
       if (input.type === "challenge") {

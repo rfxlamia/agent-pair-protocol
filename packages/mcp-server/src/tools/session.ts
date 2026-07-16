@@ -1,6 +1,7 @@
 import {
   type SessionStateMachine,
   type SessionStatus,
+  type TestReport,
   createSessionStateMachine,
   defaultEnvelopeTtl,
   parseEnvelopeBody,
@@ -135,6 +136,13 @@ export async function handleSessionMsg(
   input: { thread: string; type: string; body: string },
 ) {
   return withSessionMachine(ctx, (machine) => machine.handleMsg(input));
+}
+
+export async function recordSessionTestReport(
+  ctx: AgentContext,
+  input: { thread: string; report: TestReport },
+) {
+  return withSessionMachine(ctx, (machine) => machine.recordTestReport(input));
 }
 
 export async function handleSessionSign(

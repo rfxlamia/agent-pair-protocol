@@ -5,6 +5,7 @@ import { HttpRelayClient, resolveRelayUrl } from "./relay/client.js";
 import { createKeyStore } from "./store/keys.js";
 import { createPendingQueue } from "./store/pending.js";
 import { resolveDataDir } from "./store/persistent-store.js";
+import { handleAtestRun } from "./tools/atest-run.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
 import { handleClose, handleInbox, handleSend } from "./tools/inbox.js";
 import { handleListBonds } from "./tools/list-bonds.js";
@@ -227,6 +228,21 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       },
     },
     async (input) => handleSessionMsg(context, input),
+  );
+
+  server.registerTool(
+    "atest_run",
+    {
+      title: "Run acceptance test",
+      description:
+        "Fetch an artifact, run the criterion's registered runner, and record the test report.",
+      inputSchema: {
+        thread: z.string(),
+        criterion_id: z.string(),
+        artifact_hash: z.string(),
+      },
+    },
+    async (input) => handleAtestRun(context, input),
   );
 
   server.registerTool(
