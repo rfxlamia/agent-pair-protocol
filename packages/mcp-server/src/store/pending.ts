@@ -54,6 +54,7 @@ export interface RatifyPending {
   thread: string;
   peer: string;
   artifactHash: string;
+  warnings?: string[];
   createdAt: number;
 }
 
@@ -173,6 +174,7 @@ function buildPendingQueue(
         thread: input.thread,
         peer: input.peer,
         artifactHash: input.artifactHash,
+        ...(input.warnings ? { warnings: input.warnings } : {}),
       };
       items.set(item.id, item);
       onAdd?.(item);

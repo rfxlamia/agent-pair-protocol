@@ -16,6 +16,7 @@ export interface RatifyPendingInput {
   thread: string;
   peer: string;
   artifactHash: string;
+  warnings?: string[];
 }
 
 export interface BudgetExtendPendingInput {

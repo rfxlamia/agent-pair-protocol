@@ -12,6 +12,7 @@ import {
 import { REFERENCE_PROFILES } from "../profile/reference.js";
 import {
   assertAtestEnvelopeAllowed,
+  buildExecutableWarnings,
   gateActive,
   signCeremonyComplete,
   testsLegal,
@@ -261,10 +262,12 @@ export function createSessionStateMachine(
       return undefined;
     }
     // Read-path side effect: re-queues a lost ratify entry for human_approve.
+    const warnings = buildExecutableWarnings(session, bondProfilesFor(session));
     return deps.pending.addRatify({
       thread: session.thread,
       peer: peerFor(session, deps.agentId),
       artifactHash: session.artifactHash,
+      ...(warnings.length > 0 ? { warnings } : {}),
     });
   }
 
@@ -989,6 +992,7 @@ export function createSessionStateMachine(
       });
 
       const pendingRatify = updated.status === "signed" ? ensureRatifyPending(updated) : undefined;
+      const warnings = buildExecutableWarnings(updated, profiles);
 
       return {
         ok: true,
@@ -996,6 +1000,7 @@ export function createSessionStateMachine(
         status: updated.status,
         artifact_hash: input.artifact_hash,
         ...(pendingRatify ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     },
 
@@ -1102,6 +1107,8 @@ export function createSessionStateMachine(
           ? ensureRatifyPending(session)
           : undefined;
       const current = store.get(session.thread) ?? session;
+      const profiles = bondProfilesFor(current);
+      const warnings = buildExecutableWarnings(current, profiles);
       return {
         ok: true,
         thread: current.thread,
@@ -1113,13 +1120,14 @@ export function createSessionStateMachine(
         reject_reason: current.rejectReason,
         artifact_hash: current.artifactHash,
         co_signed_hash: current.coSignedHash,
-        tests_legal: testsLegal(current, bondProfilesFor(current)),
+        tests_legal: testsLegal(current, profiles),
         ratify_approved: current.ratifyApproved,
         expires_at: current.expiresAt,
         ...(pendingOpen
           ? { pending_id: pendingOpen.id, pending_kind: "session_open" as const }
           : {}),
         ...(pendingRatify ? { pending_id: pendingRatify.id, pending_kind: "ratify" as const } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     },
 

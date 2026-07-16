@@ -2930,4 +2930,81 @@ describe("session state machine", () => {
       expect((await bobMachine.handleSign({ thread, artifact_hash: hash })).ok).toBe(true);
     });
   });
+
+  describe("M3.1 executable warnings without atest/1", () => {
+    beforeEach(() => {
+      wireNegoOnlyBonds();
+    });
+
+    it("handleStatus includes warnings when executable acceptance but nego-only bond", async () => {
+      const thread = await openAndApprove();
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.tests_legal).toBe(true);
+      expect(status.warnings).toBeDefined();
+      expect(status.warnings?.length).toBeGreaterThan(0);
+      expect(
+        status.warnings?.some(
+          (w) => w.toLowerCase().includes("verification") || w.toLowerCase().includes("atest"),
+        ),
+      ).toBe(true);
+    });
+
+    it("handleSign includes warnings on success for nego-only executable session", async () => {
+      const thread = await openAndApprove();
+      const hash = "sha256:m31-warn-sign";
+      const sign = await aliceMachine.handleSign({ thread, artifact_hash: hash });
+      expect(sign.ok).toBe(true);
+      if (!sign.ok) {
+        return;
+      }
+      expect(sign.warnings).toBeDefined();
+      expect(sign.warnings?.length).toBeGreaterThan(0);
+    });
+
+    it("ratify pending carries warnings after both parties sign", async () => {
+      const thread = await openAndApprove();
+      const hash = "sha256:m31-warn-ratify";
+
+      const aliceSign = await aliceMachine.handleSign({ thread, artifact_hash: hash });
+      expect(aliceSign.ok).toBe(true);
+      if (!aliceSign.ok) {
+        return;
+      }
+      expect(aliceSign.warnings?.length).toBeGreaterThan(0);
+
+      const bobSign = await bobMachine.handleSign({ thread, artifact_hash: hash });
+      expect(bobSign.ok).toBe(true);
+      if (!bobSign.ok) {
+        return;
+      }
+
+      const aliceRatify = alicePending.list().find((item) => item.kind === "ratify");
+      const bobRatify = bobPending.list().find((item) => item.kind === "ratify");
+      expect(aliceRatify).toBeDefined();
+      expect(bobRatify).toBeDefined();
+      if (aliceRatify?.kind !== "ratify" || bobRatify?.kind !== "ratify") {
+        return;
+      }
+      expect(aliceRatify.warnings).toBeDefined();
+      expect(aliceRatify.warnings?.length).toBeGreaterThan(0);
+      expect(bobRatify.warnings?.length).toBeGreaterThan(0);
+      expect(aliceRatify.warnings?.[0]).toBe(bobRatify.warnings?.[0]);
+    });
+
+    it("does not emit warnings when bond advertises atest/1", async () => {
+      wireAtestCapableBonds();
+
+      const thread = await openAndApprove();
+      const status = await aliceMachine.handleStatus({ thread });
+      expect(status.ok).toBe(true);
+      if (!status.ok) {
+        return;
+      }
+      expect(status.warnings ?? []).toHaveLength(0);
+    });
+  });
 });

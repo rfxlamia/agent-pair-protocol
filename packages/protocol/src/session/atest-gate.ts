@@ -69,3 +69,19 @@ export function assertAtestEnvelopeAllowed(
   }
   return { ok: false, error: "profile_not_supported" };
 }
+
+function hasExecutableAcceptance(session: SessionRecord): boolean {
+  return session.acceptance.some((criterion) => criterion.test === "executable");
+}
+
+export function buildExecutableWarnings(
+  session: SessionRecord,
+  bondProfiles: readonly string[],
+): string[] {
+  if (!hasExecutableAcceptance(session) || bondProfiles.includes(ATEST_PROFILE)) {
+    return [];
+  }
+  return [
+    "Machine verification unavailable: bond does not advertise atest/1 but session includes executable acceptance criteria.",
+  ];
+}
