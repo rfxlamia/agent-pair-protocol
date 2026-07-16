@@ -44,7 +44,7 @@ async function checkGapsStrippedAdvisory(baseUrl: string): Promise<string | null
     return null;
   }
 
-  const pullRes = await pullInbox(baseUrl, ctx.recipientId, ctx.recipient, 0);
+  const pullRes = await pullInbox(baseUrl, ctx.recipientId, ctx.recipient, ctx.pullSince);
   if (pullRes.status !== 200) {
     return null;
   }

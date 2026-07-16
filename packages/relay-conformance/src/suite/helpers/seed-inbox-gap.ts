@@ -16,12 +16,28 @@ export interface GapSeedContext {
   recipient: KeyPair;
   senderId: string;
   thread: string;
+  /** Incremental pull cursor after seq 1; advisory re-pulls here to observe the 1→3 gap. */
+  pullSince: number;
 }
 
 let lastGapSeed: GapSeedContext | null = null;
 
 export function getGapSeedContext(): GapSeedContext | null {
   return lastGapSeed;
+}
+
+async function authenticatedPull(
+  request: (path: string, init?: RequestInit) => Promise<Response>,
+  recipientId: string,
+  recipient: KeyPair,
+  since: number,
+): Promise<Response> {
+  const challengeRes = await request(`/inbox/${recipientId}?since=${since}`);
+  const { challenge } = (await challengeRes.json()) as { challenge: string };
+  const sig = signChallenge(challenge, recipient.secretKey);
+  return request(
+    `/inbox/${recipientId}?since=${since}&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+  );
 }
 
 export async function seedInboxSeqGap(relay: RelayApp, baseUrl: string): Promise<GapSeedContext> {
@@ -46,7 +62,7 @@ export async function seedInboxSeqGap(relay: RelayApp, baseUrl: string): Promise
     throw new Error(`seed allowlist failed: ${allowRes.status}`);
   }
 
-  for (const seq of [1, 2, 4] as const) {
+  async function postSeq(seq: number): Promise<void> {
     const envelope = createOuterEnvelope({
       sender,
       recipientAgentId: recipientId,
@@ -67,12 +83,18 @@ export async function seedInboxSeqGap(relay: RelayApp, baseUrl: string): Promise
     }
   }
 
-  const challengeRes = await request(`/inbox/${recipientId}?since=0`);
-  const { challenge } = (await challengeRes.json()) as { challenge: string };
-  const sig = signChallenge(challenge, recipient.secretKey);
-  const pullRes = await request(
-    `/inbox/${recipientId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
-  );
+  await postSeq(1);
+
+  const anchorPull = await authenticatedPull(request, recipientId, recipient, 0);
+  if (anchorPull.status !== 200) {
+    throw new Error(`seed anchor pull failed: ${anchorPull.status}`);
+  }
+  const anchorBody = (await anchorPull.json()) as { cursor: number };
+  const pullSince = anchorBody.cursor;
+
+  await postSeq(3);
+
+  const pullRes = await authenticatedPull(request, recipientId, recipient, pullSince);
   if (pullRes.status !== 200) {
     throw new Error(`seed inbox pull failed: ${pullRes.status}`);
   }
@@ -83,6 +105,6 @@ export async function seedInboxSeqGap(relay: RelayApp, baseUrl: string): Promise
     throw new Error("seed failed: expected gaps on unwrapped pull");
   }
 
-  lastGapSeed = { recipientId, recipient, senderId, thread };
+  lastGapSeed = { recipientId, recipient, senderId, thread, pullSince };
   return lastGapSeed;
 }

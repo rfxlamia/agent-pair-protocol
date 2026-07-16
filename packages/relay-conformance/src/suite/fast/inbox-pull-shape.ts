@@ -28,16 +28,6 @@ export const inboxPullShapeProbe: Probe = {
       throw new Error(`inbox POST failed: ${postRes.status}`);
     }
 
-    const midPost = await postEnvelope(baseUrl, recipientId, sender, 2, { thread });
-    if (midPost.status !== 204) {
-      throw new Error(`inbox POST seq=2 failed: ${midPost.status}`);
-    }
-
-    const gapPost = await postEnvelope(baseUrl, recipientId, sender, 4, { thread });
-    if (gapPost.status !== 204) {
-      throw new Error(`gap inbox POST failed: ${gapPost.status}`);
-    }
-
     const pullRes = await pullInbox(baseUrl, recipientId, recipient, 0);
     if (pullRes.status !== 200) {
       throw new Error(`inbox pull failed: ${pullRes.status}`);
@@ -47,20 +37,11 @@ export const inboxPullShapeProbe: Probe = {
     if (!Array.isArray(body.envelopes)) {
       throw new Error("pull response missing envelopes array");
     }
+    if (!Array.isArray(body.rowids)) {
+      throw new Error("pull response missing rowids array");
+    }
     if (typeof body.cursor !== "number") {
       throw new Error("pull response missing cursor number");
-    }
-    if (!Array.isArray(body.gaps)) {
-      throw new Error("pull response missing gaps array");
-    }
-    const gaps = body.gaps as Array<{
-      thread: string;
-      last_good_seq: number;
-      expected_seq: number;
-    }>;
-    const gap = gaps.find((entry) => entry.thread === thread);
-    if (!gap || gap.last_good_seq !== 2 || gap.expected_seq !== 3) {
-      throw new Error("expected seq 2→4 gap advisory in pull response");
     }
   },
 };

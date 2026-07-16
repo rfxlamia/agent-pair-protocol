@@ -23,7 +23,7 @@ This package is **not** preflight (live deployment checks — see T9). It runs l
 | `inbox-idempotency` | REQUIRED | Byte-identical inbox POST retry → `204` |
 | `hash-verify` | REQUIRED | Artifact PUT `hash_mismatch` |
 | `purge-dyad` | REQUIRED | Inbox purge with challenge auth |
-| `inbox-pull-shape` | REQUIRED | Inbox GET JSON shape (`envelopes`, `cursor`, `gaps`) |
+| `inbox-pull-shape` | REQUIRED | Inbox GET JSON shape (`envelopes`, `rowids`, `cursor`) |
 | `pair-ttl` | slow | Pair session expires after fixed TTL |
 | `artifact-10mb` | large | 10 MiB authenticated artifact upload |
 | `reference-divergent` | ADVISORY | Pull omits `gaps` when sequence gap exists |
