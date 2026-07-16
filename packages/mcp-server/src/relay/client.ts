@@ -9,6 +9,7 @@ import {
   sign,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import { ensurePreflight, observeRelayResponse } from "./preflight.js";
 
 const DEFAULT_RELAY_URL = "http://127.0.0.1:3001";
 
@@ -68,21 +69,33 @@ export class HttpRelayClient implements PairingRelayClient {
     this.baseUrl = baseUrl.replace(/\/$/, "");
   }
 
+  private async guardPreflight(): Promise<void> {
+    await ensurePreflight(this.baseUrl);
+  }
+
+  private noteRelayResponse(status: number, jsonCoherent = true): void {
+    observeRelayResponse(this.baseUrl, status, jsonCoherent);
+  }
+
   async postPakeMessage(sessionId: string, body: string): Promise<void> {
+    await this.guardPreflight();
     const res = await fetch(`${this.baseUrl}/pair/${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
     });
+    this.noteRelayResponse(res.status);
     if (!res.ok) {
       throw new Error(`relay pair post failed: ${res.status}`);
     }
   }
 
   async pollPakeMessage(sessionId: string, timeoutMs = 1500): Promise<string | null> {
+    await this.guardPreflight();
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const res = await fetch(`${this.baseUrl}/pair/${encodeURIComponent(sessionId)}`);
+      this.noteRelayResponse(res.status);
       if (res.status === 200) {
         return await res.text();
       }
@@ -99,12 +112,14 @@ export class HttpRelayClient implements PairingRelayClient {
     allowed: string[],
     secretKey: Uint8Array,
   ): Promise<{ ok: boolean }> {
+    await this.guardPreflight();
     const body = encodeAllowlistPush(agentId, allowed, secretKey);
     const res = await fetch(`${this.baseUrl}/allowlist/${encodeURIComponent(agentId)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    this.noteRelayResponse(res.status);
     return { ok: res.status === 204 };
   }
 
@@ -121,11 +136,13 @@ export class HttpRelayClient implements PairingRelayClient {
   }
 
   async sendEnvelope(recipientAgentId: string, outer: OuterEnvelope): Promise<void> {
+    await this.guardPreflight();
     const res = await fetch(`${this.baseUrl}/inbox/${encodeURIComponent(recipientAgentId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: serializeOuterEnvelope(outer),
     });
+    this.noteRelayResponse(res.status);
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`relay inbox post failed: ${res.status} ${body}`);
@@ -151,6 +168,7 @@ export class HttpRelayClient implements PairingRelayClient {
       }
     | { ok: false; error: string }
   > {
+    await this.guardPreflight();
     const agentId = publicKeyToAgentId(keyPair.publicKey);
     const bondedOnly = options.bonded_only !== false;
     const bondedQuery = bondedOnly ? "" : "&bonded_only=0";
@@ -162,20 +180,28 @@ export class HttpRelayClient implements PairingRelayClient {
       `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}${bondedQuery}${sendersQuery}`,
     );
     if (challengeRes.status !== 401) {
+      this.noteRelayResponse(challengeRes.status);
       return { ok: false, error: "unexpected_challenge_status" };
     }
 
-    const challengeBody = (await challengeRes.json()) as { challenge: string };
+    let challengeBody: { challenge: string };
+    try {
+      challengeBody = (await challengeRes.json()) as { challenge: string };
+    } catch {
+      this.noteRelayResponse(challengeRes.status, false);
+      return { ok: false, error: "unexpected_challenge_status" };
+    }
     const sig = signChallenge(challengeBody.challenge, keyPair.secretKey);
     const pullRes = await fetch(
       `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}?since=${since}${bondedQuery}${sendersQuery}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
     );
 
     if (!pullRes.ok) {
+      this.noteRelayResponse(pullRes.status);
       return { ok: false, error: `inbox_pull_failed_${pullRes.status}` };
     }
 
-    const payload = (await pullRes.json()) as {
+    let payload: {
       envelopes?: Array<string | Record<string, unknown>>;
       rowids?: number[];
       cursor?: number;
@@ -186,6 +212,13 @@ export class HttpRelayClient implements PairingRelayClient {
       }>;
       filtered_count?: number;
     };
+    try {
+      payload = (await pullRes.json()) as typeof payload;
+    } catch {
+      this.noteRelayResponse(pullRes.status, false);
+      return { ok: false, error: "inbox_pull_failed_parse" };
+    }
+    this.noteRelayResponse(pullRes.status);
     const wires = (payload.envelopes ?? []).map((raw) =>
       typeof raw === "string" ? raw : JSON.stringify(raw),
     );
@@ -203,6 +236,7 @@ export class HttpRelayClient implements PairingRelayClient {
     peerAgentId: string,
     keyPair: KeyPair,
   ): Promise<{ ok: true; deleted: number; peer_purged?: boolean } | { ok: false; error: string }> {
+    await this.guardPreflight();
     const agentId = publicKeyToAgentId(keyPair.publicKey);
     const senderQuery = `sender=${encodeURIComponent(peerAgentId)}`;
     const challengeRes = await fetch(
@@ -210,10 +244,17 @@ export class HttpRelayClient implements PairingRelayClient {
       { method: "DELETE" },
     );
     if (challengeRes.status !== 401) {
+      this.noteRelayResponse(challengeRes.status);
       return { ok: false, error: "unexpected_challenge_status" };
     }
 
-    const challengeBody = (await challengeRes.json()) as { challenge: string };
+    let challengeBody: { challenge: string };
+    try {
+      challengeBody = (await challengeRes.json()) as { challenge: string };
+    } catch {
+      this.noteRelayResponse(challengeRes.status, false);
+      return { ok: false, error: "unexpected_challenge_status" };
+    }
     const sig = signChallenge(challengeBody.challenge, keyPair.secretKey);
     const purgeRes = await fetch(
       `${this.baseUrl}/inbox/${encodeURIComponent(agentId)}/purge?${senderQuery}&challenge=${encodeURIComponent(challengeBody.challenge)}&sig=${encodeURIComponent(sig)}`,
@@ -221,10 +262,18 @@ export class HttpRelayClient implements PairingRelayClient {
     );
 
     if (!purgeRes.ok) {
+      this.noteRelayResponse(purgeRes.status);
       return { ok: false, error: `inbox_purge_failed_${purgeRes.status}` };
     }
 
-    const payload = (await purgeRes.json()) as { deleted?: number; peer_purged?: boolean };
+    let payload: { deleted?: number; peer_purged?: boolean };
+    try {
+      payload = (await purgeRes.json()) as { deleted?: number; peer_purged?: boolean };
+    } catch {
+      this.noteRelayResponse(purgeRes.status, false);
+      return { ok: false, error: "inbox_purge_failed_parse" };
+    }
+    this.noteRelayResponse(purgeRes.status);
     return { ok: true, deleted: payload.deleted ?? 0, peer_purged: payload.peer_purged };
   }
 
@@ -234,6 +283,7 @@ export class HttpRelayClient implements PairingRelayClient {
     agentId: string,
     secretKey: Uint8Array,
   ): Promise<void> {
+    await this.guardPreflight();
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}/artifact/${encodeURIComponent(hash)}`, {
@@ -250,16 +300,20 @@ export class HttpRelayClient implements PairingRelayClient {
     }
 
     if (res.status === 204) {
+      this.noteRelayResponse(res.status);
       return;
     }
 
     let error: string | undefined;
+    let jsonCoherent = true;
     try {
       const body = (await res.json()) as { error?: string };
       error = body.error;
     } catch {
+      jsonCoherent = false;
       // non-JSON error bodies map to artifact_upload_failed
     }
+    this.noteRelayResponse(res.status, jsonCoherent);
 
     if (error === "hash_mismatch") {
       throw new Error("hash_mismatch");
@@ -273,6 +327,7 @@ export class HttpRelayClient implements PairingRelayClient {
   }
 
   async getArtifact(hash: string, size: number): Promise<Uint8Array> {
+    await this.guardPreflight();
     const readLimit = artifactReadLimit(size);
     let res: Response;
     try {
@@ -282,12 +337,15 @@ export class HttpRelayClient implements PairingRelayClient {
     }
 
     if (res.status === 404) {
+      this.noteRelayResponse(res.status);
       throw relayError("artifact_not_found");
     }
 
     if (!res.ok) {
+      this.noteRelayResponse(res.status);
       throw relayError("artifact_fetch_failed");
     }
+    this.noteRelayResponse(res.status);
 
     const body = new Uint8Array(await res.arrayBuffer());
     if (body.length > readLimit) {
