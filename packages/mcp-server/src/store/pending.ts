@@ -158,7 +158,7 @@ function logApprovalCodeBestEffort(pendingId: string, code: string): void {
   }
 }
 
-function writeApprovalFileBestEffort(
+function writeApprovalFileOrThrow(
   dataDir: string,
   pendingId: string,
   input: { code: string; kind: string; peer?: string; thread?: string; createdAt: number },
@@ -274,7 +274,7 @@ function buildPendingQueue(
     const approval = createApprovalFields(secretKey);
 
     if (context.dataDir) {
-      writeApprovalFileBestEffort(context.dataDir, id, {
+      writeApprovalFileOrThrow(context.dataDir, id, {
         code: approval.code,
         kind: fileMeta.kind,
         peer: fileMeta.peer,

@@ -159,6 +159,11 @@ describe("approval-create — gated create-path + approval_path surfacing", () =
 
     const item = bob.ctx.pending.addBudgetExtend({ thread: "t1", peer: "ed25519:alice" });
     expect(typeof (item as { approvalCodeVerifier?: string }).approvalCodeVerifier).toBe("string");
+
+    const filePath = join(bob.dataDir, "approvals", item.id);
+    const fileStat = await stat(filePath);
+    expect(fileStat.mode & 0o777).toBe(0o600);
+
     await flushAgentContext(bob.ctx);
 
     const restarted = createAgentContext({

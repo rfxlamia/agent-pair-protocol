@@ -11,7 +11,11 @@ import {
   resolveSpillover,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
-import { PENDING_APPROVAL_SUGGESTED_NEXT, approvalPathForPending } from "./approval-surface.js";
+import {
+  APPROVAL_CHANNEL_UNAVAILABLE_HINT,
+  PENDING_APPROVAL_SUGGESTED_NEXT,
+  approvalPathForPending,
+} from "./approval-surface.js";
 import { sendEnvelopeWithSpill } from "./inbox-spill.js";
 import type { AgentContext } from "./pair.js";
 import { ensureAllowlistReady } from "./pair.js";
@@ -156,6 +160,7 @@ export async function handleInbox(
     error: string;
     cursor?: number;
     retryable?: boolean;
+    suggested_next?: string;
   }> = [];
 
   for (let i = 0; i < wiresToProcess.length; i += 1) {
@@ -228,11 +233,16 @@ export async function handleInbox(
       });
       const effect = processed.structuredContent;
       if (effect.ok === false && effect.error === "approval_channel_unavailable") {
+        const suggestedNext =
+          "suggested_next" in effect && typeof effect.suggested_next === "string"
+            ? effect.suggested_next
+            : APPROVAL_CHANNEL_UNAVAILABLE_HINT;
         rejected.push({
           id: body.id,
           error: "approval_channel_unavailable",
           cursor: rowid,
           retryable: true,
+          suggested_next: suggestedNext,
         });
         continue;
       }

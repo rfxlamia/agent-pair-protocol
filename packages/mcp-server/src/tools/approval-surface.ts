@@ -47,5 +47,5 @@ export function approvalChannelUnavailableResult(extra: Record<string, unknown> 
 }
 
 export function isApprovalChannelError(error: unknown): error is ApprovalChannelError {
-  return error instanceof ApprovalChannelError;
+  return error instanceof ApprovalChannelError && error.code === "approval_channel_unavailable";
 }
