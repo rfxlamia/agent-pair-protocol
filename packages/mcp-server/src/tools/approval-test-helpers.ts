@@ -9,3 +9,10 @@ export function readApprovalCode(dataDir: string, pendingId: string): string {
   }
   return match[1];
 }
+
+export function readApprovalCodeForAgent(agent: { dataDir?: string }, pendingId: string): string {
+  if (!agent.dataDir) {
+    throw new Error("agent context missing dataDir");
+  }
+  return readApprovalCode(agent.dataDir, pendingId);
+}

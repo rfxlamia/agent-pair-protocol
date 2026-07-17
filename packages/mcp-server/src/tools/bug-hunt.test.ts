@@ -20,7 +20,7 @@ import { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore, createFileAllowlistStore } from "../store/allowlist.js";
 import { MemoryBondStore } from "../store/bonds.js";
 import { createKeyStore } from "../store/keys.js";
-import { createPendingQueue } from "../store/pending.js";
+import { readApprovalCodeForAgent } from "./approval-test-helpers.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { completeInitiatorPairing } from "./human-approve.js";
 import { handleInbox, handleSend } from "./inbox.js";
@@ -57,10 +57,11 @@ async function pairBondedAgents(
   if (!joinQueued.ok) throw new Error("pair join failed");
 
   const completeInitPromise = completeInitiatorPairing(alice, initResult.code);
+  const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
   await handleHumanApprove(bob, {
     pending_id: joinQueued.pending_id,
     decision: "approve",
-    via_human: true,
+    approval_code: joinApprovalCode,
   });
   await completeInitPromise;
 
@@ -137,9 +138,9 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     return createAgentContext({
       keyStore: createKeyStore({ keyPath: join(dir, "keys.json") }),
       relay: new HttpRelayClient(RELAY_URL),
+      dataDir: dir,
       allowlist: new MemoryAllowlistStore(),
       bonds: new MemoryBondStore(),
-      pending: createPendingQueue(),
     });
   }
 
@@ -285,11 +286,12 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     }
 
     const completeInitPromise = handlePairInitComplete(alice, { code: initResult.code });
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
     const approved = structured(
       await handleHumanApprove(bob, {
         pending_id: joinQueued.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: joinApprovalCode,
       }),
     );
     const initComplete = await completeInitPromise;
@@ -326,10 +328,11 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
     }
 
     const completeInitPromise = completeInitiatorPairing(alice, initResult.code);
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
     await handleHumanApprove(bob, {
       pending_id: joinQueued.pending_id,
       decision: "approve",
-      via_human: true,
+      approval_code: joinApprovalCode,
     });
     const initComplete = await completeInitPromise;
 
@@ -415,10 +418,11 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
       expect(bobPending).toBeDefined();
       if (!bobPending) return;
 
+      const sessionApprovalCode = readApprovalCodeForAgent(bob, bobPending.id);
       await handleHumanApprove(bob, {
         pending_id: bobPending.id,
         decision: "approve",
-        via_human: true,
+        approval_code: sessionApprovalCode,
       });
       structured(await handleInbox(alice, { since: 0 }));
 
@@ -584,6 +588,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
       expect(sessionOpenPending).toBeDefined();
       if (!sessionOpenPending) return;
       const pendingId = sessionOpenPending.id;
+      const approvalCode = readApprovalCodeForAgent(alice, pendingId);
 
       const inboxBefore = await bob.relay.pullInbox(bobKeys, 0, { bonded_only: false });
       const cursorBefore = inboxBefore.ok ? (inboxBefore.cursor ?? 0) : 0;
@@ -595,7 +600,7 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
         await handleHumanApprove(alice, {
           pending_id: pendingId,
           decision: "approve",
-          via_human: true,
+          approval_code: approvalCode,
         }),
       );
       expect(approve.ok).toBe(false);
@@ -638,10 +643,11 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
       expect(bobPending).toBeDefined();
       if (!bobPending) return;
 
+      const sessionApprovalCode = readApprovalCodeForAgent(bob, bobPending.id);
       await handleHumanApprove(bob, {
         pending_id: bobPending.id,
         decision: "approve",
-        via_human: true,
+        approval_code: sessionApprovalCode,
       });
       structured(await handleInbox(alice, { since: 0 }));
 

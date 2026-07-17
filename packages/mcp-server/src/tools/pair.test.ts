@@ -10,11 +10,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
 import { createKeyStore } from "../store/keys.js";
-import { createPendingQueue } from "../store/pending.js";
+import { readApprovalCodeForAgent } from "./approval-test-helpers.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { getInitiatorCompletionTask } from "./pair-completion.js";
 import {
   createAgentContext,
+  ensurePendingApprovalReady,
   handlePairInit,
   handlePairInitComplete,
   handlePairInitCompleteTool,
@@ -75,8 +76,8 @@ describe("mcp pair tools", () => {
     return createAgentContext({
       keyStore: createKeyStore({ keyPath }),
       relay,
+      dataDir: dir,
       allowlist: new MemoryAllowlistStore(),
-      pending: createPendingQueue(),
     });
   }
 
@@ -109,11 +110,12 @@ describe("mcp pair tools", () => {
 
     const completeInitPromise = handlePairInitComplete(alice, { code: initResult.code });
 
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
     const approved = structured(
       await handleHumanApprove(bob, {
         pending_id: joinQueued.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: joinApprovalCode,
       }),
     );
     assertNoSecrets(approved);
@@ -160,11 +162,12 @@ describe("mcp pair tools", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
     const approved = structured(
       await handleHumanApprove(bob, {
         pending_id: joinQueued.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: joinApprovalCode,
       }),
     );
     expect(approved.ok).toBe(true);
@@ -207,11 +210,12 @@ describe("mcp pair tools", () => {
       return;
     }
 
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
     const approved = structured(
       await handleHumanApprove(bob, {
         pending_id: joinQueued.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: joinApprovalCode,
       }),
     );
     expect(approved.ok).toBe(true);
@@ -258,11 +262,12 @@ describe("mcp pair tools", () => {
       code: initResult.code,
     });
 
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
     const approved = structured(
       await handleHumanApprove(bob, {
         pending_id: joinQueued.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: joinApprovalCode,
       }),
     );
     expect(approved.ok).toBe(true);
@@ -311,11 +316,12 @@ describe("mcp pair tools", () => {
     bobRelay.failAllowlistFor = bobId;
 
     const completeInitPromise = handlePairInitComplete(alice, { code: initResult.code });
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
     const approved = structured(
       await handleHumanApprove(bob, {
         pending_id: joinQueued.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: joinApprovalCode,
       }),
     );
     const initComplete = await completeInitPromise;
@@ -336,6 +342,7 @@ describe("mcp pair tools", () => {
 
   it("human_approve rejects agent self-approval without via_human", async () => {
     const bob = await makeAgent("bob-self-approve");
+    await ensurePendingApprovalReady(bob);
     const pending = bob.pending.add({
       code: "1-kancil-senja",
       proposal: {
