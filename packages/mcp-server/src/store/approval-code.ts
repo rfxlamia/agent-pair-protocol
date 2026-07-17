@@ -29,7 +29,7 @@ export function generateApprovalCode(): string {
 }
 
 export function deriveApprovalMacKey(secretKey: Uint8Array): Buffer {
-  return hkdfSync("sha256", secretKey, Buffer.alloc(0), APPROVAL_HKDF_INFO, 32);
+  return Buffer.from(hkdfSync("sha256", secretKey, Buffer.alloc(0), APPROVAL_HKDF_INFO, 32));
 }
 
 export function hmacApprovalCode(key: Buffer, code: string): Buffer {
