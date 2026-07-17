@@ -6,6 +6,7 @@ import {
   startDualRelay,
   syncInboxes,
 } from "../e2e/dual-server.js";
+import { readApprovalCodeForAgent } from "./approval-test-helpers.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { handleClose, handleInbox, handleSend } from "./inbox.js";
 import {
@@ -63,11 +64,12 @@ async function runSessionToSigned(
     throw new Error("missing session_open pending_id");
   }
 
+  const sessionApprovalCode = readApprovalCodeForAgent(bob.ctx, bobStatus.pending_id);
   const approved = structured(
     await handleHumanApprove(bob.ctx, {
       pending_id: bobStatus.pending_id,
       decision: "approve",
-      via_human: true,
+      approval_code: sessionApprovalCode,
     }),
   );
   expect(approved.ok).toBe(true);
@@ -246,11 +248,12 @@ describe("inbox production path", () => {
     expect(statusBefore.status).toBe("pending");
     expect(statusBefore.pending_id).toBe(sessionOpen.pending_id);
 
+    const sessionApprovalCode = readApprovalCodeForAgent(bob.ctx, sessionOpen.pending_id);
     const approved = structured(
       await handleHumanApprove(bob.ctx, {
         pending_id: sessionOpen.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: sessionApprovalCode,
       }),
     );
     expect(approved.ok).toBe(true);
@@ -347,11 +350,12 @@ describe("inbox production path", () => {
       return;
     }
 
+    const ratifyApprovalCode = readApprovalCodeForAgent(alice.ctx, aliceStatus.pending_id);
     const approved = structured(
       await handleHumanApprove(alice.ctx, {
         pending_id: aliceStatus.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: ratifyApprovalCode,
       }),
     );
     expect(approved.ok).toBe(true);
@@ -636,11 +640,12 @@ describe("inbox production path", () => {
       return;
     }
 
+    const closeApprovalCode = readApprovalCodeForAgent(bob.ctx, bobStatus.pending_id);
     structured(
       await handleHumanApprove(bob.ctx, {
         pending_id: bobStatus.pending_id,
         decision: "approve",
-        via_human: true,
+        approval_code: closeApprovalCode,
       }),
     );
     await syncInboxes([alice.ctx, bob.ctx]);

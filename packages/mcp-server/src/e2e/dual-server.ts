@@ -18,7 +18,7 @@ import type { ServerType } from "@hono/node-server";
 import { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
 import { createKeyStore } from "../store/keys.js";
-import { createPendingQueue } from "../store/pending.js";
+import { readApprovalCodeForAgent } from "../tools/approval-test-helpers.js";
 import { handleAtestRun } from "../tools/atest-run.js";
 import { handleHumanApprove } from "../tools/human-approve.js";
 import {
@@ -31,7 +31,6 @@ import {
 import {
   handleSessionMsg,
   handleSessionOpen,
-  handleSessionRatify,
   handleSessionSign,
   handleSessionStatus,
   processSessionInboxEnvelope,
@@ -118,7 +117,11 @@ export async function startDualRelay(port = 13220): Promise<DualRelayEnv> {
           resolve();
         });
       });
-      await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+      await Promise.all(
+        tempDirs.map((dir) =>
+          rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+        ),
+      );
     },
   };
 }
@@ -131,7 +134,7 @@ export async function createDualAgent(env: DualRelayEnv, label: string): Promise
     keyStore: createKeyStore({ keyPath }),
     relay: new HttpRelayClient(env.relayUrl),
     allowlist: new MemoryAllowlistStore(),
-    pending: createPendingQueue(),
+    dataDir: dir,
   });
   const keyPair = await ctx.keyStore.loadOrCreate();
   const agentId = publicKeyToAgentId(keyPair.publicKey);
@@ -211,11 +214,12 @@ export async function runPairingFlow(
     profiles: initiatorProfiles,
   });
 
+  const joinApprovalCode = readApprovalCodeForAgent(joiner.ctx, joinResult.pending_id);
   const approved = structured(
     await handleHumanApprove(joiner.ctx, {
       pending_id: joinResult.pending_id,
       decision: "approve",
-      via_human: true,
+      approval_code: joinApprovalCode,
       profiles: joinerProfiles,
     }),
   );
@@ -266,11 +270,12 @@ export async function runSessionHappyPath(
     throw new Error("joiner missing session_open pending");
   }
 
+  const openApprovalCode = readApprovalCodeForAgent(joiner.ctx, bobPending.id);
   const approvedOpen = structured(
     await handleHumanApprove(joiner.ctx, {
       pending_id: bobPending.id,
       decision: "approve",
-      via_human: true,
+      approval_code: openApprovalCode,
     }),
   );
   if (!approvedOpen.ok) {
@@ -357,10 +362,12 @@ export async function runSessionHappyPath(
     );
   }
 
+  const aliceRatifyCode = readApprovalCodeForAgent(initiator.ctx, aliceRatifyStatus.pending_id);
   const aliceRatify = structured(
-    await handleSessionRatify(initiator.ctx, {
+    await handleHumanApprove(initiator.ctx, {
       pending_id: aliceRatifyStatus.pending_id,
-      via_human: true,
+      decision: "approve",
+      approval_code: aliceRatifyCode,
     }),
   );
   if (!aliceRatify.ok) {
@@ -368,10 +375,12 @@ export async function runSessionHappyPath(
   }
   await syncInboxes([initiator.ctx, joiner.ctx]);
 
+  const bobRatifyCode = readApprovalCodeForAgent(joiner.ctx, bobRatifyStatus.pending_id);
   const bobRatify = structured(
-    await handleSessionRatify(joiner.ctx, {
+    await handleHumanApprove(joiner.ctx, {
       pending_id: bobRatifyStatus.pending_id,
-      via_human: true,
+      decision: "approve",
+      approval_code: bobRatifyCode,
     }),
   );
   if (!bobRatify.ok) {

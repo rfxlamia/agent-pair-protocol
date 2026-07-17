@@ -5,6 +5,7 @@ import {
   runPairingFlow,
   startDualRelay,
 } from "../e2e/dual-server.js";
+import { readApprovalCodeForAgent } from "./approval-test-helpers.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { handleInbox } from "./inbox.js";
 import { createAgentContext } from "./pair.js";
@@ -57,10 +58,11 @@ describe("inbox session negotiation fixes", () => {
     expect(pending).toBeDefined();
     if (!pending) return;
 
+    const approvalCode = readApprovalCodeForAgent(bob.ctx, pending.id);
     await handleHumanApprove(bob.ctx, {
       pending_id: pending.id,
       decision: "approve",
-      via_human: true,
+      approval_code: approvalCode,
     });
 
     structured(await handleInbox(alice.ctx, { since: 0 }));
@@ -125,10 +127,11 @@ describe("inbox session negotiation fixes", () => {
     expect(pending).toBeDefined();
     if (!pending) return;
 
+    const approvalCode = readApprovalCodeForAgent(bob.ctx, pending.id);
     await handleHumanApprove(bob.ctx, {
       pending_id: pending.id,
       decision: "approve",
-      via_human: true,
+      approval_code: approvalCode,
     });
 
     structured(await handleInbox(alice.ctx, { since: 0 }));
@@ -181,10 +184,11 @@ describe("inbox session negotiation fixes", () => {
     expect(pending).toBeDefined();
     if (!pending) return;
 
+    const approvalCode = readApprovalCodeForAgent(bob.ctx, pending.id);
     await handleHumanApprove(bob.ctx, {
       pending_id: pending.id,
       decision: "approve",
-      via_human: true,
+      approval_code: approvalCode,
     });
     structured(await handleInbox(alice.ctx, { since: 0 }));
 
@@ -229,10 +233,11 @@ describe("inbox session negotiation fixes", () => {
     expect(pending).toBeDefined();
     if (!pending) return;
 
+    const approvalCode = readApprovalCodeForAgent(bob.ctx, pending.id);
     await handleHumanApprove(bob.ctx, {
       pending_id: pending.id,
       decision: "approve",
-      via_human: true,
+      approval_code: approvalCode,
     });
 
     const legacyTurn = structured(

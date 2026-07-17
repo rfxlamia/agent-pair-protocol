@@ -1,5 +1,6 @@
 import { hasSpillMarker } from "@agentpair/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readApprovalCodeForAgent } from "../tools/approval-test-helpers.js";
 import { handleHumanApprove } from "../tools/human-approve.js";
 import { handleInbox, handleSend } from "../tools/inbox.js";
 import { handleSessionMsg, handleSessionOpen } from "../tools/session.js";
@@ -82,10 +83,11 @@ describe("e2e spillover round-trip", () => {
       return;
     }
 
+    const spillApprovalCode = readApprovalCodeForAgent(bob.ctx, pending.id);
     await handleHumanApprove(bob.ctx, {
       pending_id: pending.id,
       decision: "approve",
-      via_human: true,
+      approval_code: spillApprovalCode,
     });
 
     structured(await handleInbox(alice.ctx, { since: 0 }));
