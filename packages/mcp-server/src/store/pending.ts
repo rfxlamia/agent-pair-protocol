@@ -150,6 +150,14 @@ function createApprovalFields(secretKey: Uint8Array): ApprovalFields & { code: s
   return { code, approvalCodeVerifier, approvalAttempts: 0 };
 }
 
+function logApprovalCodeBestEffort(pendingId: string, code: string): void {
+  try {
+    console.error(`[agentpair] approval code for pending ${pendingId}: ${code}`);
+  } catch {
+    // best-effort stderr; must not fail create
+  }
+}
+
 function writeApprovalFileBestEffort(
   dataDir: string,
   pendingId: string,
@@ -165,6 +173,7 @@ function writeApprovalFileBestEffort(
       thread: input.thread,
       createdAt: input.createdAt,
     });
+    logApprovalCodeBestEffort(pendingId, input.code);
   } catch {
     throw new ApprovalChannelError("approval_channel_unavailable", "Failed to write approval file");
   }

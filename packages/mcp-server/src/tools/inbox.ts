@@ -11,6 +11,7 @@ import {
   resolveSpillover,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import { PENDING_APPROVAL_SUGGESTED_NEXT, approvalPathForPending } from "./approval-surface.js";
 import { sendEnvelopeWithSpill } from "./inbox-spill.js";
 import type { AgentContext } from "./pair.js";
 import { ensureAllowlistReady } from "./pair.js";
@@ -226,6 +227,15 @@ export async function handleInbox(
         payload,
       });
       const effect = processed.structuredContent;
+      if (effect.ok === false && effect.error === "approval_channel_unavailable") {
+        rejected.push({
+          id: body.id,
+          error: "approval_channel_unavailable",
+          cursor: rowid,
+          retryable: true,
+        });
+        continue;
+      }
       if (effect.ok === true) {
         seen.add(body.id);
       }
@@ -261,6 +271,8 @@ export async function handleInbox(
       await processThreadClose(ctx, body.thread, reason);
     }
 
+    const approvalPath = pendingId ? approvalPathForPending(ctx, pendingId) : undefined;
+
     envelopes.push({
       id: body.id,
       from: body.from,
@@ -272,7 +284,17 @@ export async function handleInbox(
       payload: inboxPayload,
       sig: outer.sig,
       verified: true,
-      ...(pendingId ? { pending_id: pendingId } : {}),
+      ...(pendingId
+        ? {
+            pending_id: pendingId,
+            ...(approvalPath
+              ? {
+                  approval_path: approvalPath,
+                  suggested_next: PENDING_APPROVAL_SUGGESTED_NEXT,
+                }
+              : {}),
+          }
+        : {}),
       ...(sessionStatus ? { session_status: sessionStatus } : {}),
     });
   }

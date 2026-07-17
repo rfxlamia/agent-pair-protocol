@@ -8,6 +8,11 @@ import {
   publicKeyToAgentId,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import {
+  approvalChannelUnavailableResult,
+  isApprovalChannelError,
+  withPendingApprovalSurface,
+} from "./approval-surface.js";
 import { sendEnvelopeWithSpill } from "./inbox-spill.js";
 import { type AgentContext, ensureAllowlistReady, ensurePendingApprovalReady } from "./pair.js";
 import { nextThreadSeq, recordSentSeq } from "./thread-seq.js";
@@ -104,10 +109,19 @@ async function withSessionMachine<T extends Record<string, unknown>>(
   ctx: AgentContext,
   fn: (machine: SessionStateMachine) => Promise<T>,
 ) {
-  const machine = await getSessionMachine(ctx);
-  const result = await fn(machine);
-  assertNoSecrets(result);
-  return toolTextResult(result);
+  try {
+    const machine = await getSessionMachine(ctx);
+    const result = withPendingApprovalSurface(ctx, await fn(machine));
+    assertNoSecrets(result);
+    return toolTextResult(result);
+  } catch (error) {
+    if (isApprovalChannelError(error)) {
+      const result = approvalChannelUnavailableResult();
+      assertNoSecrets(result);
+      return toolTextResult(result);
+    }
+    throw error;
+  }
 }
 
 export async function handleSessionOpen(

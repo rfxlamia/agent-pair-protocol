@@ -33,6 +33,11 @@ import type { KeyStore } from "../store/keys.js";
 import { type PendingQueue, createFilePendingQueue, createPendingQueue } from "../store/pending.js";
 import { createFileSessionStore } from "../store/session-store.js";
 import {
+  approvalChannelUnavailableResult,
+  isApprovalChannelError,
+  withPendingApprovalSurface,
+} from "./approval-surface.js";
+import {
   runInitiatorCompletionOnce,
   scheduleInitiatorPairingCompletion,
 } from "./pair-completion.js";
@@ -226,19 +231,28 @@ export async function handlePairJoin(ctx: AgentContext, input: { code: string })
 
   await ensurePendingApprovalReady(ctx);
 
-  const pending = ctx.pending.add({
-    code: input.code,
-    proposal: pendingEntry.proposal,
-  });
+  try {
+    const pending = ctx.pending.add({
+      code: input.code,
+      proposal: pendingEntry.proposal,
+    });
 
-  const result = {
-    ok: true,
-    pending_id: pending.id,
-    proposal: pending.proposal,
-    message: "Human approval required before pairing completes",
-  };
-  assertNoSecrets(result);
-  return toolTextResult(result);
+    const result = withPendingApprovalSurface(ctx, {
+      ok: true as const,
+      pending_id: pending.id,
+      proposal: pending.proposal,
+      message: "Human approval required before pairing completes",
+    });
+    assertNoSecrets(result);
+    return toolTextResult(result);
+  } catch (error) {
+    if (isApprovalChannelError(error)) {
+      const result = approvalChannelUnavailableResult();
+      assertNoSecrets(result);
+      return toolTextResult(result);
+    }
+    throw error;
+  }
 }
 
 export async function executePairJoinApproval(
