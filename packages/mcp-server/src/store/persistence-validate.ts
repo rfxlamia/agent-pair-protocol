@@ -17,6 +17,16 @@ const SESSION_STATUSES = new Set<SessionStatus>([
 ]);
 const PENDING_KINDS = new Set(["pair_join", "session_open", "ratify", "budget_extend"]);
 
+function hasApprovalFields(item: Record<string, unknown>): boolean {
+  return (
+    typeof item.approvalCodeVerifier === "string" &&
+    item.approvalCodeVerifier.length > 0 &&
+    typeof item.approvalAttempts === "number" &&
+    Number.isInteger(item.approvalAttempts) &&
+    item.approvalAttempts >= 0
+  );
+}
+
 export function isBond(value: unknown): value is Bond {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -112,6 +122,9 @@ export function isPendingItemRecord(value: unknown): boolean {
   if (!PENDING_KINDS.has(item.kind as string)) {
     return false;
   }
+  if (!hasApprovalFields(item)) {
+    return false;
+  }
   switch (item.kind) {
     case "pair_join": {
       const proposal = item.proposal;
@@ -160,9 +173,10 @@ export function parsePendingItemRecords(
   const parsed: Record<string, Record<string, unknown>> = {};
   for (const [id, item] of Object.entries(items)) {
     if (!isPendingItemRecord(item)) {
-      return undefined;
+      console.error(`[agentpair] dropping invalid pending entry ${id}`);
+      continue;
     }
-    parsed[id] = item;
+    parsed[id] = item as Record<string, unknown>;
   }
   return parsed;
 }

@@ -42,6 +42,7 @@ import { assertNoSecrets, parseBondMode, toolTextResult } from "./util.js";
 export interface AgentContext {
   keyStore: KeyStore;
   relay: HttpRelayClient;
+  dataDir?: string;
   registry: PairingRegistry;
   allowlist: LocalAllowlistStore;
   bonds: BondStore;
@@ -56,6 +57,10 @@ type AllowlistWithInit = LocalAllowlistStore & {
   init?: (forAgentId: string) => Promise<void>;
 };
 
+type PendingWithInit = PendingQueue & {
+  init?: (secretKey: Uint8Array) => void;
+};
+
 export async function ensureAllowlistReady(ctx: AgentContext): Promise<void> {
   const allowlist = ctx.allowlist as AllowlistWithInit;
   if (typeof allowlist.init !== "function") {
@@ -64,6 +69,15 @@ export async function ensureAllowlistReady(ctx: AgentContext): Promise<void> {
   const keyPair = await ctx.keyStore.loadOrCreate();
   const agentId = publicKeyToAgentId(keyPair.publicKey);
   await allowlist.init(agentId);
+}
+
+export async function ensurePendingApprovalReady(ctx: AgentContext): Promise<void> {
+  const pending = ctx.pending as PendingWithInit;
+  if (typeof pending.init !== "function") {
+    return;
+  }
+  const keyPair = await ctx.keyStore.loadOrCreate();
+  pending.init(keyPair.secretKey);
 }
 
 export function createAgentContext(options: {
@@ -84,6 +98,7 @@ export function createAgentContext(options: {
   return {
     keyStore: options.keyStore,
     relay: options.relay,
+    dataDir: options.dataDir,
     registry: options.registry ?? new InMemoryPairingRegistry(),
     allowlist:
       options.allowlist ??
@@ -208,6 +223,8 @@ export async function handlePairJoin(ctx: AgentContext, input: { code: string })
     assertNoSecrets(result);
     return toolTextResult(result);
   }
+
+  await ensurePendingApprovalReady(ctx);
 
   const pending = ctx.pending.add({
     code: input.code,

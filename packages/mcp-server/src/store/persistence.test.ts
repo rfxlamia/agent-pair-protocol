@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,7 +48,8 @@ describe("file-backed stores restart simulation", () => {
 
   it("pending ratify survives restart", async () => {
     const dataDir = await tempDataDir();
-    const first = createFilePendingQueue({ dataDir });
+    const secretKey = randomBytes(32);
+    const first = createFilePendingQueue({ dataDir, secretKey });
     const item = first.addRatify({
       thread: "thread-1",
       peer: "bob",
@@ -55,8 +57,11 @@ describe("file-backed stores restart simulation", () => {
     });
     await first.flush();
 
-    const second = createFilePendingQueue({ dataDir });
+    const second = createFilePendingQueue({ dataDir, secretKey });
     expect(second.get(item.id)?.kind).toBe("ratify");
+    expect(
+      (second.get(item.id) as { approvalCodeVerifier?: string })?.approvalCodeVerifier,
+    ).toBeTruthy();
   });
 
   it("session survives restart", async () => {
@@ -261,6 +266,34 @@ describe("deadline presence guards", () => {
       budget: { max_turns: 5, deadline: "2030-01-01T00:00:00.000Z" },
       mandate: { agent_may: [], human_required: [] },
       expiresAt: 2,
+      approvalCodeVerifier: "ZmFrZQ",
+      approvalAttempts: 0,
+    };
+    expect(isPendingItemRecord(item)).toBe(true);
+  });
+
+  it("drops ratify pending missing approvalCodeVerifier/approvalAttempts", () => {
+    const item = {
+      id: "p1",
+      kind: "ratify" as const,
+      createdAt: 1,
+      thread: "t1",
+      peer: "ed25519:bob",
+      artifactHash: "abc",
+    };
+    expect(isPendingItemRecord(item)).toBe(false);
+  });
+
+  it("accepts ratify pending with approvalCodeVerifier/approvalAttempts", () => {
+    const item = {
+      id: "p1",
+      kind: "ratify" as const,
+      createdAt: 1,
+      thread: "t1",
+      peer: "ed25519:bob",
+      artifactHash: "abc",
+      approvalCodeVerifier: "ZmFrZQ",
+      approvalAttempts: 0,
     };
     expect(isPendingItemRecord(item)).toBe(true);
   });

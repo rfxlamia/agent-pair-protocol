@@ -9,7 +9,7 @@ import {
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { sendEnvelopeWithSpill } from "./inbox-spill.js";
-import { type AgentContext, ensureAllowlistReady } from "./pair.js";
+import { type AgentContext, ensureAllowlistReady, ensurePendingApprovalReady } from "./pair.js";
 import { nextThreadSeq, recordSentSeq } from "./thread-seq.js";
 import { assertNoSecrets, toolTextResult } from "./util.js";
 
@@ -62,6 +62,7 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
   }
 
   await ensureAllowlistReady(ctx);
+  await ensurePendingApprovalReady(ctx);
   const keyPair = await ctx.keyStore.loadOrCreate();
   const agentId = publicKeyToAgentId(keyPair.publicKey);
   const machine = createSessionStateMachine(
