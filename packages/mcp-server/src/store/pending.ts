@@ -264,10 +264,10 @@ function buildPendingQueue(
   onAdd?: (item: PendingItem) => void,
   onRemove?: (id: string) => void,
 ): PendingQueue {
-  const commitItem = (
-    build: (id: string, createdAt: number, approval: ApprovalFields) => PendingItem,
+  const commitItem = <T extends PendingItem>(
+    build: (id: string, createdAt: number, approval: ApprovalFields) => T,
     fileMeta: { kind: string; peer?: string; thread?: string },
-  ): PendingItem => {
+  ): T => {
     const secretKey = requireSecretKey(context);
     const id = crypto.randomUUID();
     const createdAt = Date.now();
