@@ -447,11 +447,12 @@ Normative rules:
 | Budget extension (both sides) | required |
 
 Gate mechanism: the host queues a `pending` item and exposes an approval
-operation that carries an explicit human-confirmation flag
-(`via_human=true` in the reference binding). The host MUST reject approvals
-without the flag (`self_approval_forbidden`). Bindings MUST source this flag
-from an actual human interaction, never from model output alone — see §11.3
-for why this is load-bearing.
+operation that requires proof of human presence out-of-band from the model
+(an opaque `approval_code` in the reference binding; see Appendix A4). The
+host MUST reject approvals without valid proof (`self_approval_forbidden` or
+binding-level equivalents). Bindings MUST source this proof from an actual
+human interaction, never from model output alone — see §11.3 for why this
+is load-bearing.
 
 ---
 
@@ -627,8 +628,43 @@ Binding guidance (hard-won):
   the model to converge or request a budget extension (human-gated, both
   sides). Models follow tool-result hints far more reliably than tool
   descriptions.
-- **A4 — Human gate flag.** The binding MUST NOT let the model set
-  `via_human=true` without an actual human confirmation in the client.
+- **A4 — Human gate (approval code).** The binding MUST NOT let the model
+  self-approve gated actions. The reference binding replaces a
+  model-settable boolean with an opaque `approval_code` on `human_approve`:
+
+  - **Create path.** When a gated pending is created (`pair_join`,
+    `session_open`, `ratify`, `budget_extend`), the host generates a
+    single-use approval code and an HMAC verifier derived from the agent
+    keystore. The code MUST be written to
+    `<dataDir>/approvals/<pending_id>` (mode `0600`) **before** the pending
+    is committed; write failure returns `approval_channel_unavailable` and
+    MUST NOT create the pending. The host SHOULD also print the code to
+    stderr (best-effort). Tool results surface `approval_path` and a
+    `suggested_next` hint — never the plaintext code or verifier.
+
+  - **Verify path.** `human_approve` accepts `pending_id`, `decision`, and
+    `approval_code` (opaque string). The model-facing schema MUST NOT expose
+    `via_human`. Missing or empty code → `self_approval_forbidden`.
+    Malformed code → `invalid_approval_code` (`malformed: true`; no attempt
+    consumed). Well-formed miss increments `approvalAttempts` (persisted);
+    fifth miss exhausts the pending. Reject decisions use the same code path
+    as approve.
+
+  - **Host obligation.** The gate protects against model output alone, not a
+    host that grants the model filesystem access to `dataDir` (e.g.
+    `~/.agentpair`). Host integrations MUST prevent the model from reading
+    approval files under `dataDir`/`approvals/`.
+
+  - **Binding-level errors** (not in §10): `invalid_approval_code`,
+    `approval_channel_unavailable`. `self_approval_forbidden` and
+    `pending_not_found` are listed in §10 but are reused here.
+
+  - **Known limitations.** (1) On transient downstream failures
+    (e.g. `relay_unavailable`), the pending and code remain valid — the model
+    may retry with a different decision while the code is still valid.
+    (2) Multi-process contention on a shared `dataDir` is unsupported.
+    (3) Once the human types the code into chat, it briefly appears in model
+    context; mitigated by single-use binding to `pending_id` and attempt cap.
 
 ## Appendix B — Future Extensions (non-normative)
 

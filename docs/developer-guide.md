@@ -31,7 +31,7 @@ agent-pair/
 
 - Kunci **tidak pernah** meninggalkan `mcp-server`
 - Relay hanya melihat metadata routing + ciphertext; tidak parse payload
-- Human gates diimplementasi sebagai `pending` queue + `human_approve(via_human=true)`
+- Human gates diimplementasi sebagai `pending` queue + `human_approve(approval_code)` (kode out-of-band; lihat § Human gate di bawah)
 - Default-deny inbox: relay + agent keduanya enforce allowlist
 
 ---
@@ -203,6 +203,47 @@ Semua tool mengembalikan via `toolTextResult()` (`tools/util.ts`):
 ```
 
 `assertNoSecrets()` dan `stripSecrets()` mencegah kebocoran kunci privat ke model AI.
+
+### Human gate (approval code)
+
+Gated actions (`pair_join`, `session_open`, `ratify`, `budget_extend`) membuat
+pending dengan kode persetujuan sekali pakai. Implementasi referensi
+(`store/approval-code.ts`, `tools/human-approve.ts`):
+
+| Tahap | Perilaku |
+|-------|----------|
+| **Create** | Generate kode 6 digit (CSPRNG) + HMAC verifier dari keystore → tulis `<dataDir>/approvals/<pending_id>` mode `0600` **sebelum** commit pending. Gagal tulis → `approval_channel_unavailable`, pending tidak dibuat. stderr SHOULD juga menampilkan kode. |
+| **Surface** | Tool result menyertakan `approval_path` + `suggested_next`; **tidak** menyertakan plaintext code atau verifier (`assertNoSecrets`). |
+| **Verify** | `human_approve(pending_id, decision, approval_code)` — schema **tanpa** `via_human`. Tanpa kode → `self_approval_forbidden`. Format salah → `invalid_approval_code` + `malformed: true` (tanpa attempt). Salah tapi well-formed → increment `approvalAttempts` (max 5, persist). |
+| **Consume** | Terminal outcome → hapus pending + file. Transient (mis. `relay_unavailable`) → pending + kode tetap valid untuk retry. |
+
+**Obligasi host:** integrasi MCP MUST mencegah model membaca `dataDir`
+(`~/.agentpair` / `AGENTPAIR_DATA_DIR`) — terutama `approvals/`. Gate melindungi
+dari output model saja, bukan host yang memberi model akses FS penuh.
+
+**Binding-level errors** (tidak ada di SPEC §10): `invalid_approval_code`,
+`approval_channel_unavailable`. `self_approval_forbidden` dan `pending_not_found`
+juga dipakai di sini dan terdaftar di §10.
+
+**Known limitations:** (1) jalur transient — model masih punya kode valid dan
+bisa mengubah decision saat retry; (2) multi-process shared `dataDir` tidak
+didukung; (3) kode singkat muncul di chat setelah operator mengetiknya.
+
+**Test / dev:** queue in-memory tanpa `dataDir` tetap memerlukan `secretKey`
+terikat untuk gated `add*` (verifier-only, tanpa file). Path produksi selalu
+file-backed di bawah `resolveDataDir()`.
+
+Contoh layout file persetujuan (SHOULD):
+
+```
+AgentPair approval code: 483920
+
+Approving: session_open — peer agent ab3f… , thread 9c21…
+Created:   2026-07-16T09:14Z
+
+Share this code ONLY if you expect and intend to approve this request.
+If you did not initiate this, do not share the code with anyone or anything.
+```
 
 ### Menambah tool MCP baru
 
@@ -448,7 +489,8 @@ sequenceDiagram
 
     AI->>MCP: pair_join(code)
     MCP-->>AI: pending_id
-    AI->>MCP: human_approve(via_human=true)
+    Note over AI: Human reads approval_path, types code
+    AI->>MCP: human_approve(approval_code)
     MCP->>Relay: SPAKE2 messages
     MCP->>Relay: PUT /allowlist (both sides)
     MCP-->>AI: bonded
@@ -457,7 +499,7 @@ sequenceDiagram
     MCP->>Relay: POST /inbox/{peer}
     Peer->>Relay: inbox pull
     Peer-->>AI: pending session_open
-    Peer->>MCP: human_approve
+    Peer->>MCP: human_approve(approval_code)
     Note over MCP,Peer: Session live — negotiate
 
     MCP->>Relay: artifact blobs + envelopes

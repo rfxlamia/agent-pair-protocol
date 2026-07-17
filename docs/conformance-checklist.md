@@ -119,7 +119,7 @@ Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Cor
 | §6.2-fingerprint | Confirm fingerprint formula (identity-bound v2) | `packages/protocol/src/pairing/pair-confirm-fingerprint.test.ts`; `packages/protocol/src/fixtures/pair-confirm-fingerprint-v2.json` | covered |
 | §6.2-fingerprint-golden | Golden vector MUST match for conformance | `packages/protocol/src/pairing/pair-confirm-fingerprint.test.ts` (v2 vector from SPEC §6.2) | covered |
 | §6.2-pake-failed | Verification failure MUST abort with `pake_failed` | `packages/protocol/src/pairing/flow.adversarial.test.ts` — cases 1–3, 5, 9; `flow.test.ts` — wrong code | covered |
-| §6.2-human-gate | Joiner's human MUST approve before `bond_ok` | `packages/protocol/src/pairing/flow.test.ts` — `returns rejection explanation to initiator with no bond` (`decision: { reject }`); `packages/mcp-server/src/tools/pair.test.ts` — `pair_join` queues pending, bonds only after `human_approve` with `via_human: true` | covered |
+| §6.2-human-gate | Joiner's human MUST approve before `bond_ok` | `packages/protocol/src/pairing/flow.test.ts` — `returns rejection explanation to initiator with no bond` (`decision: { reject }`); `packages/mcp-server/src/tools/pair.test.ts` — `pair_join` queues pending, bonds only after `human_approve` with valid `approval_code` | covered |
 | §6.2-bond-ok-tag | `bond_ok` tag formula | `packages/protocol/src/pairing/pair-bond-ok-tag.test.ts`; `packages/protocol/src/fixtures/pair-bond-ok-tag.test.ts` | covered |
 | §6.2-bond-ok-order | Joiner-first `bond_ok`, initiator replies, both push allowlists | `packages/protocol/src/pairing/flow.test.ts` — `does not push initiator allowlist before joiner bond_ok` | covered |
 | §6.2-bond-fail-courtesy | `bond_fail` MUST NOT be treated as security mechanism | `packages/protocol/src/pairing/flow.adversarial.test.ts` — cases 4, 5, 8 (inject/drop `bond_fail`, security rests on fingerprint/tags) | covered |
@@ -173,7 +173,7 @@ Tracked elsewhere in [ROADMAP.md](../ROADMAP.md):
 | Topic | SPEC | Milestone |
 |-------|------|-----------|
 | Negotiation rules N1–N7 | §8 | M2.3–M2.5 (done); session tests in `state-machine.test.ts` |
-| Human gate `via_human` provenance | §8.4, §11.3 | M3.2 security audit |
+| Human gate `approval_code` provenance | §8.4, A4, §11.3 | M3.2 security audit |
 | Single-use pairing codes (`pairRetry` tension) | §11.3 | M3.2 |
 | Adversarial e2e (tampered outer `to`, replay, self-approval) | §11.2 | M3.3 |
 

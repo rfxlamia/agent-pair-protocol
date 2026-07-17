@@ -214,7 +214,7 @@ Anda (Initiator)                    Partner (Joiner)
       │                                    │  pair_join(code)
       │                                    │  → pending_id
       │                                    │
-      │  (initiator menunggu otomatis)     │  human_approve(pending_id, "approve", via_human=true)
+      │  (initiator menunggu otomatis)     │  baca approval_path → human_approve(..., approval_code)
       │                                    │
       │  ◄──────── SPAKE2 + allowlist ────►│
       │                                    │
@@ -228,13 +228,16 @@ Anda (Initiator)                    Partner (Joiner)
 2. Agent memanggil `pair_init` → Anda dapat kode (contoh: `42-kancil-senja-awan`)
 3. Bagikan kode ke partner lewat channel lain (WhatsApp, telepon, tatap muka)
 4. Partner minta agent-nya `pair_join` dengan kode tersebut
-5. Partner **harus menyetujui** di chat, lalu agent memanggil:
+5. Partner **harus menyetujui** di chat:
+   - Buka file di `approval_path` (ditampilkan di hasil tool) — **bukan** dari chat AI
+   - Salin kode 6 digit dari file tersebut
+   - Suruh agent memanggil:
    ```
-   human_approve(pending_id, "approve", via_human=true)
+   human_approve(pending_id, "approve", approval_code="<kode dari file>")
    ```
 6. Initiator menyelesaikan SPAKE2 **otomatis** di background setelah `pair_init` — tidak perlu tool tambahan
 
-> **Penting:** Parameter `via_human=true` wajib untuk `human_approve`. Ini memastikan AI tidak bisa menyetujui sendiri tanpa konfirmasi Anda di chat.
+> **Penting:** Kode persetujuan (`approval_code`) hanya ada di file `approval_path` (dan mungkin stderr MCP server). AI **tidak bisa** menyetujui sendiri tanpa Anda membaca file tersebut dan memberikan kode ke agent. Jangan bagikan kode jika Anda tidak mengenali permintaan pairing.
 
 > **MCP restart:** Jika MCP server di-restart setelah `pair_init` tetapi sebelum pairing selesai, sesi initiator hilang dari memori. Jalankan `pair_init` lagi dengan kode baru — `pair_init_complete` tidak bisa memulihkan sesi yang hilang.
 
@@ -252,16 +255,19 @@ session_open(
 )
 ```
 
-Partner akan melihat **pending approval** di chat. Partner harus:
+Partner akan melihat **pending approval** di chat beserta `approval_path`. Partner harus:
+
+1. Buka file di `approval_path` dan baca kode 6 digit
+2. Setujui atau tolak:
 
 ```
-human_approve(pending_id, "approve", via_human=true)
+human_approve(pending_id, "approve", approval_code="483920")
 ```
 
 atau menolak:
 
 ```
-human_approve(pending_id, "reject:alasan penolakan", via_human=true)
+human_approve(pending_id, "reject:alasan penolakan", approval_code="483920")
 ```
 
 ### 3. Negosiasi, verifikasi, ratifikasi
@@ -349,7 +355,7 @@ Semua tool mengembalikan JSON dengan field `ok: true/false`. Berikut pola sukses
 }
 ```
 
-**Yang harus Anda lakukan:** Tinjau proposal scope/mode. Jika setuju, panggil `human_approve` dengan `via_human=true`.
+**Yang harus Anda lakukan:** Tinjau proposal scope/mode. Buka `approval_path`, baca kode 6 digit, lalu panggil `human_approve` dengan `approval_code` tersebut.
 
 ### `pair_join` — Gagal
 
@@ -376,7 +382,9 @@ Semua tool mengembalikan JSON dengan field `ok: true/false`. Berikut pola sukses
 
 | Error / status | Penyebab | Tindakan |
 |----------------|----------|----------|
-| `self_approval_forbidden` | `via_human` tidak `true` | Konfirmasi di chat dulu, lalu set `via_human=true` |
+| `self_approval_forbidden` | `approval_code` tidak diberikan | Baca kode dari `approval_path`, lalu kirim ke agent |
+| `invalid_approval_code` | Kode salah atau format tidak valid | Cek ulang file; max 5 percobaan sebelum pending dihapus |
+| `approval_channel_unavailable` | File persetujuan tidak bisa ditulis | Perbaiki izin/disk pada `~/.agentpair`, ulangi aksi gated |
 | `pending_not_found` | `pending_id` salah atau sudah diproses | Ulangi `pair_join` jika perlu |
 | `status: "rejected"` | Anda menolak pairing | Tidak ada bond; beri tahu initiator alasan |
 | `status: "pake_failed"` | Joiner approve sebelum initiator siap, kode salah, atau MITM | Ulangi pairing dengan kode baru |
@@ -480,12 +488,15 @@ AgentPair secara struktural mencegah AI menyetujui hal-hal sensitif tanpa Anda:
 
 | Aksi | Gate |
 |------|------|
-| Menerima pairing (`pair_join`) | `human_approve` dengan `via_human=true` |
-| Membuka session (`session_open` di sisi penerima) | `human_approve` |
-| Ratifikasi final | `human_approve` pada pending `ratify` |
-| Perpanjang budget | `human_approve` (keduanya) |
+| Menerima pairing (`pair_join`) | `human_approve` dengan `approval_code` dari `approval_path` |
+| Membuka session (`session_open` di sisi penerima) | `human_approve` dengan `approval_code` |
+| Ratifikasi final | `human_approve` pada pending `ratify` dengan `approval_code` |
+| Perpanjang budget | `human_approve` dengan `approval_code` (keduanya) |
 
-**Cara kerja di praktik:** Saat ada pending action, agent akan menampilkan `pending_id` dan detail proposal. Anda membaca, lalu secara eksplisit menyuruh agent menyetujui atau menolak. Agent **tidak boleh** memanggil `human_approve` tanpa konfirmasi Anda.
+**Cara kerja di praktik:** Saat ada pending action, agent menampilkan `pending_id`,
+detail proposal, dan `approval_path`. Anda membuka file tersebut (di luar chat AI),
+membaca kode 6 digit, lalu menyuruh agent memanggil `human_approve` dengan kode
+tersebut. Agent **tidak boleh** menyetujui tanpa kode dari Anda.
 
 ---
 
