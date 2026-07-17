@@ -6,6 +6,7 @@ import { createKeyStore } from "./store/keys.js";
 import { createPendingQueue } from "./store/pending.js";
 import { resolveDataDir } from "./store/persistent-store.js";
 import { handleAtestRun } from "./tools/atest-run.js";
+import { humanApproveInputSchema } from "./tools/human-approve-schema.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
 import { handleClose, handleInbox, handleSend } from "./tools/inbox.js";
 import { handleListBonds } from "./tools/list-bonds.js";
@@ -174,12 +175,8 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     {
       title: "Human approval gate",
       description:
-        "Approve or reject a pending human-gated action. Requires via_human=true after user confirmation in chat.",
-      inputSchema: {
-        pending_id: z.string(),
-        decision: z.string().describe('Use "approve" or "reject:<reason>"'),
-        via_human: z.boolean().optional().describe("Must be true when the human confirmed in chat"),
-      },
+        "Approve or reject a pending human-gated action. Requires an out-of-band approval_code from the human operator.",
+      inputSchema: humanApproveInputSchema.shape,
     },
     async (input) => handleHumanApprove(context, input),
   );

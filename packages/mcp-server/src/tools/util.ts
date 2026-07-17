@@ -14,7 +14,14 @@ export function toolTextResult(data: unknown): {
   };
 }
 
-const SECRET_PATTERNS = [/secretKey/i, /privateKey/i, /secret_key/i, /private_key/i];
+const SECRET_PATTERNS = [
+  /secretKey/i,
+  /privateKey/i,
+  /secret_key/i,
+  /private_key/i,
+  /approvalCodeVerifier/i,
+  /approval_code_verifier/i,
+];
 
 export function stripSecrets<T>(value: T): T {
   return scrub(value, new WeakSet()) as T;
