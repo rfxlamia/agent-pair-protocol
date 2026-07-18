@@ -31,7 +31,7 @@ Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Cor
 
 | ID | SPEC MUST | Test(s) | Status |
 |----|-----------|---------|--------|
-| §1.1-advertise | Implementation MUST advertise supported profiles during pairing | `packages/protocol/src/pairing/flow.test.ts` — `stores full profile contract when both sides advertise the reference set`; `pairRetry includes profiles on initiator pake wire`; `packages/mcp-server/src/e2e/profile-pairing.test.ts` | covered |
+| §1.1-advertise | Implementation MUST advertise supported profiles during pairing | `packages/protocol/src/pairing/flow.test.ts` — `stores full profile contract when both sides advertise the reference set`; `pairInit includes profiles on initiator pake wire`; `packages/mcp-server/src/e2e/profile-pairing.test.ts` | covered |
 | §1.1-contract | Peers MUST NOT send envelopes whose type belongs to a profile the recipient has not advertised | `packages/mcp-server/src/tools/inbox-profile.test.ts` — `send nego.open rejected with profile_not_supported before relay`, `receive nego.turn returns profile_not_supported with no side effects`; `packages/protocol/src/profile/envelope-profile.test.ts` | covered |
 
 ---
@@ -115,7 +115,7 @@ Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Cor
 |----|-----------|---------|--------|
 | §6.2-pake | SPAKE2 over `/pair/{session_id}` with code as secret | `packages/protocol/src/pairing/pake-adapter.test.ts`; `pake-spike.test.ts` — matching keys with same code | covered |
 | §6.2-ping-pong | Party MUST NOT post until peer's previous message consumed (strict ping-pong) | `packages/relay/src/routes/pair.test.ts` — single-slot overwrite; `packages/protocol/src/pairing/flow-ping-pong.test.ts` — joiner post-without-consume, initiator double-post → `pake_failed`, slot overwrite, zero allowlist | covered |
-| §6.2-profiles-on-pake | Each `pake` message MUST carry supported `profiles` | `packages/protocol/src/pairing/flow.test.ts` — profile contract tests; `pairRetry includes profiles on initiator pake wire` | covered |
+| §6.2-profiles-on-pake | Each `pake` message MUST carry supported `profiles` | `packages/protocol/src/pairing/flow.test.ts` — profile contract tests; `pairInit includes profiles on initiator pake wire` | covered |
 | §6.2-fingerprint | Confirm fingerprint formula (identity-bound v2) | `packages/protocol/src/pairing/pair-confirm-fingerprint.test.ts`; `packages/protocol/src/fixtures/pair-confirm-fingerprint-v2.json` | covered |
 | §6.2-fingerprint-golden | Golden vector MUST match for conformance | `packages/protocol/src/pairing/pair-confirm-fingerprint.test.ts` (v2 vector from SPEC §6.2) | covered |
 | §6.2-pake-failed | Verification failure MUST abort with `pake_failed` | `packages/protocol/src/pairing/flow.adversarial.test.ts` — cases 1–3, 5, 9; `flow.test.ts` — wrong code | covered |
@@ -174,7 +174,7 @@ Tracked elsewhere in [ROADMAP.md](../ROADMAP.md):
 |-------|------|-----------|
 | Negotiation rules N1–N7 | §8 | M2.3–M2.5 (done); session tests in `state-machine.test.ts` |
 | Human gate `approval_code` provenance | §8.4, A4, §11.3 | M3.2 security audit |
-| Single-use pairing codes (`pairRetry` tension) | §11.3 | M3.2 |
+| Single-use pairing codes | §11.3 | covered — `packages/protocol/src/pairing/flow.test.ts` — `InMemoryPairingRegistry consume/tombstone`; `single-use burn + reject poll (T2)` |
 | Adversarial e2e (tampered outer `to`, replay, self-approval) | §11.2 | M3.3 |
 
 ---
