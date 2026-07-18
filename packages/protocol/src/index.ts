@@ -85,7 +85,6 @@ export {
   pairInit,
   pairInitComplete,
   pairJoin,
-  pairRetry,
   type Bond,
   type BondMode,
   type LocalAllowlistStore,

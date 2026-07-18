@@ -149,6 +149,36 @@ function generateSessionId(): string {
   return crypto.randomUUID();
 }
 
+/** Cap untrusted reject reasons at 256 UTF-8 bytes without splitting a code point. */
+function truncateUtf8ToBytes(s: string, capBytes: number): string {
+  const bytes = new TextEncoder().encode(s);
+  if (bytes.length <= capBytes) {
+    return s;
+  }
+
+  let end = capBytes;
+  while (end > 0) {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end));
+    } catch {
+      end--;
+    }
+  }
+  return "";
+}
+
+const REJECT_REASON_MAX_BYTES = 256;
+
+/** Burn code then return a terminal PairFlowResult (bonded/rejected/pake_failed/rolled_back). */
+function returnTerminal(
+  registry: PairingRegistry,
+  code: string,
+  result: PairFlowResult,
+): PairFlowResult {
+  registry.consume(code);
+  return result;
+}
+
 function encodeWireMessage(message: PairWireMessage): string {
   return JSON.stringify(message);
 }
@@ -365,48 +395,6 @@ export async function pairInit(input: {
   return { code, sessionId, proposal, expiresAt };
 }
 
-export async function pairRetry(input: {
-  code: string;
-  keyPair: KeyPair;
-  relay: PairingRelayClient;
-  registry: PairingRegistry;
-  profiles?: string[];
-}): Promise<PairInitOutput> {
-  const pendingResult = lookupPending(input.registry, input.code);
-  if ("status" in pendingResult) {
-    throw new Error(`Cannot retry: ${pendingResult.status}`);
-  }
-
-  await init();
-
-  const profiles = resolveOwnProfiles(input.profiles);
-  const sessionId = generateSessionId();
-  input.registry.update(input.code, {
-    sessionId,
-    rolledBack: false,
-    rejectReason: undefined,
-  });
-
-  const { message, session } = start("initiator", input.code, sessionId);
-  input.registry.update(input.code, { initiatorSession: session });
-  await input.relay.postPakeMessage(
-    sessionId,
-    encodeWireMessage({
-      phase: "pake",
-      payload: encodePakePayload(message),
-      role: "initiator",
-      profiles,
-    }),
-  );
-
-  return {
-    code: input.code,
-    sessionId,
-    proposal: pendingResult.proposal,
-    expiresAt: pendingResult.expiresAt,
-  };
-}
-
 export async function pairJoin(input: {
   code: string;
   pakeCode?: string;
@@ -434,8 +422,11 @@ export async function pairJoin(input: {
         reason: input.decision.reject,
       }),
     );
-    input.registry.update(input.code, { rejectReason: input.decision.reject });
-    return { status: "rejected", reason: input.decision.reject };
+    // Wire reject owns initiator notification — do not write rejectReason on registry.
+    return returnTerminal(input.registry, input.code, {
+      status: "rejected",
+      reason: input.decision.reject,
+    });
   }
 
   await init();
@@ -447,18 +438,18 @@ export async function pairJoin(input: {
     (message) => message.phase === "pake" && message.role === "initiator",
   );
   if (!initiatorWire) {
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
   const initiatorPake = parseInitiatorPake(initiatorWire);
   if (!initiatorPake) {
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
 
   let initiatorMessage: Uint8Array;
   try {
     initiatorMessage = decodePakePayload(initiatorPake.payload);
   } catch {
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
   const joiner = respond(pakeCode, pending.sessionId, initiatorMessage);
   const sharedKey = finish(joiner.session, initiatorMessage);
@@ -492,13 +483,13 @@ export async function pairJoin(input: {
   );
   if (!initiatorWireConfirm || initiatorWireConfirm.phase === "bond_fail") {
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
 
   const initiatorConfirm = parseConfirmMessage(initiatorWireConfirm);
   if (!initiatorConfirm) {
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
 
   const expectedInitiatorFingerprint = pairConfirmFingerprintV2(
@@ -513,12 +504,15 @@ export async function pairJoin(input: {
     initiatorConfirm.agentId !== pending.proposal.initiatorAgentId
   ) {
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
 
   const contractProfiles = intersectProfiles(profilesInit, profilesJoin);
   if (!contractProfiles.includes("core/1")) {
-    return { status: "rolled_back", reason: "profile_not_supported" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "profile_not_supported",
+    });
   }
 
   const bond: Bond = {
@@ -546,7 +540,10 @@ export async function pairJoin(input: {
     BOND_COORDINATION_TIMEOUT_MS,
   );
   if (!peerBondWire || peerBondWire.phase === "bond_fail") {
-    return { status: "rolled_back", reason: "bond_aborted" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "bond_aborted",
+    });
   }
   const peerBond = parseBondOkMessage(peerBondWire);
   if (
@@ -554,7 +551,10 @@ export async function pairJoin(input: {
     peerBond.agentId !== pending.proposal.initiatorAgentId ||
     !bondOkTagMatches(sharedKey, peerBond.agentId, peerBond.tag)
   ) {
-    return { status: "rolled_back", reason: "bond_tag_mismatch" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "bond_tag_mismatch",
+    });
   }
 
   const previousAllowed = input.localAllowlist.get(joinerAgentId);
@@ -575,10 +575,13 @@ export async function pairJoin(input: {
       input.keyPair.secretKey,
     );
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "rolled_back", reason: "allowlist_push_failed" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "allowlist_push_failed",
+    });
   }
 
-  return { status: "bonded", bond };
+  return returnTerminal(input.registry, input.code, { status: "bonded", bond });
 }
 
 export async function pairInitComplete(input: {
@@ -598,30 +601,37 @@ export async function pairInitComplete(input: {
   const initiatorAgentId = publicKeyToAgentId(input.keyPair.publicKey);
   const profilesInit = resolveOwnProfiles(input.profiles);
 
-  if (pending.rejectReason) {
-    return { status: "rejected", reason: pending.rejectReason };
-  }
-
   await init();
 
+  // First poll: reject wins only before joiner-pake is consumed. After confirm, later
+  // polls ignore reject (bond_ok / bond_fail only) so late reject cannot override.
   const joinerWire = await pollWireMessage(
     input.relay,
     pending.sessionId,
     (message) =>
-      message.phase === "bond_fail" || (message.phase === "pake" && message.role === "joiner"),
+      message.phase === "reject" ||
+      message.phase === "bond_fail" ||
+      (message.phase === "pake" && message.role === "joiner"),
     PAKE_HANDSHAKE_TIMEOUT_MS,
   );
   if (!joinerWire || joinerWire.phase === "bond_fail") {
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
+  }
+  if (joinerWire.phase === "reject") {
+    const rawReason = typeof joinerWire.reason === "string" ? joinerWire.reason : "";
+    return returnTerminal(input.registry, input.code, {
+      status: "rejected",
+      reason: truncateUtf8ToBytes(rawReason, REJECT_REASON_MAX_BYTES),
+    });
   }
   const joinerPake = parseJoinerPakeWithConfirm(joinerWire);
   if (!joinerPake) {
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
 
   if (!pending.initiatorSession) {
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
 
   let joinerMessage: Uint8Array;
@@ -629,7 +639,7 @@ export async function pairInitComplete(input: {
     joinerMessage = decodePakePayload(joinerPake.payload);
   } catch {
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
   const sharedKey = finish(pending.initiatorSession, joinerMessage);
 
@@ -648,7 +658,7 @@ export async function pairInitComplete(input: {
   );
   if (joinerConfirm.fingerprint !== expectedJoinerFingerprint) {
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "pake_failed" };
+    return returnTerminal(input.registry, input.code, { status: "pake_failed" });
   }
 
   await input.relay.postPakeMessage(
@@ -668,7 +678,10 @@ export async function pairInitComplete(input: {
 
   const contractProfiles = intersectProfiles(profilesInit, profilesJoin);
   if (!contractProfiles.includes("core/1")) {
-    return { status: "rolled_back", reason: "profile_not_supported" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "profile_not_supported",
+    });
   }
 
   const bond: Bond = {
@@ -687,7 +700,10 @@ export async function pairInitComplete(input: {
     BOND_COORDINATION_TIMEOUT_MS,
   );
   if (!joinerBondWire || joinerBondWire.phase === "bond_fail") {
-    return { status: "rolled_back", reason: "bond_aborted" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "bond_aborted",
+    });
   }
   const joinerBond = parseBondOkMessage(joinerBondWire);
   if (
@@ -696,7 +712,10 @@ export async function pairInitComplete(input: {
     !bondOkTagMatches(sharedKey, joinerBond.agentId, joinerBond.tag)
   ) {
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
-    return { status: "rolled_back", reason: "bond_tag_mismatch" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "bond_tag_mismatch",
+    });
   }
 
   const previousAllowed = input.localAllowlist.get(initiatorAgentId);
@@ -719,7 +738,10 @@ export async function pairInitComplete(input: {
     );
     await input.relay.postPakeMessage(pending.sessionId, encodeWireMessage({ phase: "bond_fail" }));
     input.registry.update(input.code, { rolledBack: true });
-    return { status: "rolled_back", reason: "allowlist_push_failed" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "allowlist_push_failed",
+    });
   }
 
   await input.relay.postPakeMessage(
@@ -743,7 +765,10 @@ export async function pairInitComplete(input: {
         input.keyPair.secretKey,
       );
       input.registry.update(input.code, { rolledBack: true });
-      return { status: "rolled_back", reason: "bond_aborted" };
+      return returnTerminal(input.registry, input.code, {
+        status: "rolled_back",
+        reason: "bond_aborted",
+      });
     }
   }
 
@@ -762,8 +787,11 @@ export async function pairInitComplete(input: {
       input.keyPair.secretKey,
     );
     input.registry.update(input.code, { rolledBack: true });
-    return { status: "rolled_back", reason: "bond_aborted" };
+    return returnTerminal(input.registry, input.code, {
+      status: "rolled_back",
+      reason: "bond_aborted",
+    });
   }
 
-  return { status: "bonded", bond };
+  return returnTerminal(input.registry, input.code, { status: "bonded", bond });
 }

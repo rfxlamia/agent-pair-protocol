@@ -7,7 +7,6 @@ import {
   pairInit,
   pairInitComplete,
   pairJoin,
-  pairRetry,
 } from "./flow.js";
 import { CODE_WORDS, generatePairingCode } from "./pairing-words.js";
 import { init as initPake } from "./pake-adapter.js";
@@ -260,35 +259,47 @@ describe("pairing flow", () => {
   }, 15000);
 
   it("returns rejection explanation to initiator with no bond", async () => {
+    // Dual registry: production is per-process; joiner consume must not erase initiator pending.
+    const initiatorRegistry = new InMemoryPairingRegistry();
+    const joinerRegistry = new InMemoryPairingRegistry();
+
     const pending = await pairInit({
       scope: ["session.negotiate"],
       mode: "bonded_contact",
       keyPair: initiatorKeys,
       relay,
-      registry,
+      registry: initiatorRegistry,
+    });
+
+    joinerRegistry.register({
+      code: pending.code,
+      sessionId: pending.sessionId,
+      proposal: pending.proposal,
+      createdAt: Date.now(),
+      expiresAt: pending.expiresAt,
     });
 
     const joinResult = await pairJoin({
       code: pending.code,
       keyPair: joinerKeys,
       relay,
-      registry,
+      registry: joinerRegistry,
       localAllowlist: joinerAllowlist,
-      decision: { reject: "scope too broad" },
+      decision: { reject: "scope_too_broad" },
     });
 
     const initResult = await pairInitComplete({
       code: pending.code,
       keyPair: initiatorKeys,
       relay,
-      registry,
+      registry: initiatorRegistry,
       localAllowlist: initiatorAllowlist,
     });
 
     expect(joinResult.status).toBe("rejected");
     expect(initResult.status).toBe("rejected");
     if (initResult.status === "rejected") {
-      expect(initResult.reason).toBe("scope too broad");
+      expect(initResult.reason).toBe("scope_too_broad");
     }
 
     expect(initiatorAllowlist.get(initiatorId)).toEqual([]);
@@ -350,7 +361,7 @@ describe("pairing flow", () => {
     expect(initiatorPutBeforeJoinerBondOk).toBe(false);
   }, 15000);
 
-  it("rolls back allowlists on partial failure and allows retry with new session_id", async () => {
+  it("rolls back allowlists on partial failure and burns code (recovery needs new pairInit)", async () => {
     const pending = await pairInit({
       scope: ["session.negotiate"],
       mode: "ephemeral_until_session_closes",
@@ -393,25 +404,23 @@ describe("pairing flow", () => {
     expect(relay.getAllowlist(initiatorId)).toEqual([]);
     expect(relay.getAllowlist(joinerId)).toEqual([]);
 
-    const originalSessionId = pending.sessionId;
-    relay.failAllowlistFor = null;
+    // Same code is burned — recovery requires a new pairInit (no pairRetry).
+    expect(registry.lookup(pending.code)).toBeUndefined();
+    expect(registry.isConsumed(pending.code)).toBe(true);
 
-    const retry = await pairRetry({
-      code: pending.code,
+    relay.failAllowlistFor = null;
+    const fresh = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
       keyPair: initiatorKeys,
       relay,
       registry,
     });
-
-    expect(retry.code).toBe(pending.code);
-    expect(retry.sessionId).not.toBe(originalSessionId);
-
-    const entry = registry.lookup(pending.code);
-    expect(entry?.sessionId).toBe(retry.sessionId);
-    expect(entry?.expiresAt).toBe(pending.expiresAt);
+    expect(fresh.code).not.toBe(pending.code);
+    expect(fresh.sessionId).not.toBe(pending.sessionId);
 
     const joinRetryPromise = pairJoin({
-      code: pending.code,
+      code: fresh.code,
       keyPair: joinerKeys,
       relay,
       registry,
@@ -420,7 +429,7 @@ describe("pairing flow", () => {
     });
 
     const initRetry = await pairInitComplete({
-      code: pending.code,
+      code: fresh.code,
       keyPair: initiatorKeys,
       relay,
       registry,
@@ -608,8 +617,8 @@ describe("pairing flow", () => {
     }
   }, 15000);
 
-  it("pairRetry includes profiles on initiator pake wire", async () => {
-    const pending = await pairInit({
+  it("pairInit includes profiles on initiator pake wire", async () => {
+    await pairInit({
       scope: ["session.negotiate"],
       mode: "ephemeral_until_session_closes",
       keyPair: initiatorKeys,
@@ -618,47 +627,418 @@ describe("pairing flow", () => {
       profiles: ["core/1", "nego/1"],
     });
 
-    relay.failAllowlistFor = initiatorId;
-
-    const joinPromise = pairJoin({
-      code: pending.code,
-      keyPair: joinerKeys,
-      relay,
-      registry,
-      localAllowlist: joinerAllowlist,
-      decision: { approve: true },
-    });
-
-    await pairInitComplete({
-      code: pending.code,
-      keyPair: initiatorKeys,
-      relay,
-      registry,
-      localAllowlist: initiatorAllowlist,
-    });
-    await joinPromise;
-
-    relay.failAllowlistFor = null;
-    relay.postedPakeBodies = [];
-
-    await pairRetry({
-      code: pending.code,
-      keyPair: initiatorKeys,
-      relay,
-      registry,
-      profiles: ["core/1", "nego/1"],
-    });
-
-    const retryPake = relay.postedPakeBodies.find((body) => {
+    const initPake = relay.postedPakeBodies.find((body) => {
       const wire = JSON.parse(body) as { phase: string; role: string; profiles?: string[] };
       return wire.phase === "pake" && wire.role === "initiator";
     });
-    expect(retryPake).toBeDefined();
-    if (retryPake) {
-      const wire = JSON.parse(retryPake) as { profiles: string[] };
+    expect(initPake).toBeDefined();
+    if (initPake) {
+      const wire = JSON.parse(initPake) as { profiles: string[] };
       expect(wire.profiles).toEqual(["core/1", "nego/1"]);
     }
-  }, 20000);
+  });
+
+  describe("single-use burn + reject poll (T2)", () => {
+    // Shares parent beforeAll/beforeEach fixtures. Dual-registry tests construct local registries.
+
+    it("burns code on both sides after bonded", async () => {
+      const { code } = await runSuccessfulPairing();
+      expect(registry.lookup(code)).toBeUndefined();
+      expect(registry.isConsumed(code)).toBe(true);
+
+      const again = await pairJoin({
+        code,
+        keyPair: joinerKeys,
+        relay,
+        registry,
+        localAllowlist: joinerAllowlist,
+        decision: { approve: true },
+      });
+      expect(again.status).toBe("not_found");
+    }, 15000);
+
+    it("burns joiner code on reject decision (dual registry; initiator still live until poll)", async () => {
+      const initiatorRegistry = new InMemoryPairingRegistry();
+      const joinerRegistry = new InMemoryPairingRegistry();
+
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+        keyPair: initiatorKeys,
+        relay,
+        registry: initiatorRegistry,
+      });
+
+      // Joiner gets its own live copy (as MCP ensureJoinerRegistry would).
+      joinerRegistry.register({
+        code: pending.code,
+        sessionId: pending.sessionId,
+        proposal: pending.proposal,
+        createdAt: Date.now(),
+        expiresAt: pending.expiresAt,
+      });
+
+      const joinResult = await pairJoin({
+        code: pending.code,
+        keyPair: joinerKeys,
+        relay,
+        registry: joinerRegistry,
+        localAllowlist: joinerAllowlist,
+        decision: { reject: "scope_too_broad" },
+      });
+
+      expect(joinResult.status).toBe("rejected");
+      if (joinResult.status === "rejected") {
+        expect(joinResult.reason).toBe("scope_too_broad");
+      }
+      expect(joinerRegistry.lookup(pending.code)).toBeUndefined();
+      expect(joinerRegistry.isConsumed(pending.code)).toBe(true);
+      // Initiator registry still has the pending so pairInitComplete can poll wire reject.
+      expect(initiatorRegistry.lookup(pending.code)).toBeDefined();
+    });
+
+    it("initiator polls wire reject, returns rejected, and burns (not TTL wait)", async () => {
+      // Dual registry: model production (joiner consume does not touch initiator map).
+      const initiatorRegistry = new InMemoryPairingRegistry();
+      const joinerRegistry = new InMemoryPairingRegistry();
+
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+        keyPair: initiatorKeys,
+        relay,
+        registry: initiatorRegistry,
+      });
+
+      joinerRegistry.register({
+        code: pending.code,
+        sessionId: pending.sessionId,
+        proposal: pending.proposal,
+        createdAt: Date.now(),
+        expiresAt: pending.expiresAt,
+      });
+
+      const joinResult = await pairJoin({
+        code: pending.code,
+        keyPair: joinerKeys,
+        relay,
+        registry: joinerRegistry,
+        localAllowlist: joinerAllowlist,
+        decision: { reject: "scope_too_broad" },
+      });
+      expect(joinResult.status).toBe("rejected");
+
+      const started = Date.now();
+      const initResult = await pairInitComplete({
+        code: pending.code,
+        keyPair: initiatorKeys,
+        relay,
+        registry: initiatorRegistry,
+        localAllowlist: initiatorAllowlist,
+      });
+      const elapsed = Date.now() - started;
+
+      expect(initResult.status).toBe("rejected");
+      if (initResult.status === "rejected") {
+        expect(initResult.reason).toBe("scope_too_broad");
+      }
+      expect(initiatorRegistry.lookup(pending.code)).toBeUndefined();
+      expect(initiatorRegistry.isConsumed(pending.code)).toBe(true);
+      expect(elapsed).toBeLessThan(5_000);
+    });
+
+    it("truncates reject reason to exactly 256 UTF-8 bytes at protocol parse", async () => {
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+      });
+
+      const longReason = "r".repeat(300); // ASCII → 300 bytes; cap must yield exactly 256
+      await relay.postPakeMessage(
+        pending.sessionId,
+        JSON.stringify({ phase: "reject", reason: longReason }),
+      );
+
+      const initResult = await pairInitComplete({
+        code: pending.code,
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+        localAllowlist: initiatorAllowlist,
+      });
+
+      expect(initResult.status).toBe("rejected");
+      if (initResult.status === "rejected") {
+        expect(new TextEncoder().encode(initResult.reason).byteLength).toBe(256);
+        expect(initResult.reason.length).toBeLessThan(longReason.length);
+      }
+      expect(registry.lookup(pending.code)).toBeUndefined();
+    });
+
+    it("truncates multi-byte UTF-8 reject reason without splitting a code point", async () => {
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+      });
+
+      // "é" is 2 UTF-8 bytes; 200 of them = 400 bytes → truncate to ≤256 without orphan lead bytes
+      const longReason = "é".repeat(200);
+      await relay.postPakeMessage(
+        pending.sessionId,
+        JSON.stringify({ phase: "reject", reason: longReason }),
+      );
+
+      const initResult = await pairInitComplete({
+        code: pending.code,
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+        localAllowlist: initiatorAllowlist,
+      });
+
+      expect(initResult.status).toBe("rejected");
+      if (initResult.status === "rejected") {
+        const bytes = new TextEncoder().encode(initResult.reason);
+        expect(bytes.byteLength).toBeLessThanOrEqual(256);
+        expect(bytes.byteLength).toBeGreaterThan(250); // near cap
+        // Round-trip decode must succeed (no truncated mid-codepoint)
+        expect(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)).not.toThrow();
+      }
+    });
+
+    it("burns code on pake_failed (wrong code)", async () => {
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+      });
+
+      const joinPromise = pairJoin({
+        code: pending.code,
+        pakeCode: "wrong-code-xyz",
+        keyPair: joinerKeys,
+        relay,
+        registry,
+        localAllowlist: joinerAllowlist,
+        decision: { approve: true },
+      });
+
+      const initResult = await pairInitComplete({
+        code: pending.code,
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+        localAllowlist: initiatorAllowlist,
+      });
+      const joinResult = await joinPromise;
+
+      expect(joinResult.status).toBe("pake_failed");
+      expect(initResult.status).toBe("pake_failed");
+      expect(registry.lookup(pending.code)).toBeUndefined();
+    }, 15000);
+
+    it("burns on rolled_back allowlist_push_failed; recovery requires new pairInit", async () => {
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+      });
+
+      relay.failAllowlistFor = initiatorId;
+
+      const joinPromise = pairJoin({
+        code: pending.code,
+        keyPair: joinerKeys,
+        relay,
+        registry,
+        localAllowlist: joinerAllowlist,
+        decision: { approve: true },
+      });
+
+      const initResult = await pairInitComplete({
+        code: pending.code,
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+        localAllowlist: initiatorAllowlist,
+      });
+      await joinPromise;
+
+      expect(initResult.status).toBe("rolled_back");
+      expect(registry.lookup(pending.code)).toBeUndefined();
+
+      // Rewrite former pairRetry recovery: same code must not retry; new pairInit works.
+      const mod = await import("./flow.js");
+      expect("pairRetry" in mod).toBe(false);
+
+      relay.failAllowlistFor = null;
+      const fresh = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+      });
+      expect(fresh.code).not.toBe(pending.code);
+
+      const joinRetryPromise = pairJoin({
+        code: fresh.code,
+        keyPair: joinerKeys,
+        relay,
+        registry,
+        localAllowlist: joinerAllowlist,
+        decision: { approve: true },
+      });
+      const initRetry = await pairInitComplete({
+        code: fresh.code,
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+        localAllowlist: initiatorAllowlist,
+      });
+      const joinRetry = await joinRetryPromise;
+      expect(joinRetry.status).toBe("bonded");
+      expect(initRetry.status).toBe("bonded");
+    }, 20000);
+
+    it("late reject after joiner-pake already consumed does not override to rejected", async () => {
+      // MockRelayClient is single-slot: posting reject BEFORE pairInitComplete consumes
+      // joiner pake would overwrite the slot and incorrectly yield rejected. Correct scenario:
+      // initiator must pass the joiner-pake poll (consume slot) first; only then is a late
+      // reject "too late" for the reject branch (confirm/bond phase ignores reject override).
+      // Stabilize: inject reject only after initiator bond_ok is posted and joiner has had a
+      // chance to consume it — initiator's trailing bond_fail poll ignores phase:reject.
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+      });
+
+      const originalPost = relay.postPakeMessage.bind(relay);
+      let lateRejectPosted = false;
+      vi.spyOn(relay, "postPakeMessage").mockImplementation(async (sessionId, body) => {
+        await originalPost(sessionId, body);
+        if (lateRejectPosted) return;
+        const wire = JSON.parse(body) as { phase: string; agentId?: string };
+        // After initiator posts bond_ok, joiner-pake / confirm phases are done.
+        if (wire.phase === "bond_ok" && wire.agentId === initiatorId) {
+          lateRejectPosted = true;
+          // Yield so joiner can poll+consume initiator bond_ok before we overwrite the slot.
+          await new Promise((r) => setTimeout(r, 30));
+          await originalPost(sessionId, JSON.stringify({ phase: "reject", reason: "too_late" }));
+        }
+      });
+
+      const joinPromise = pairJoin({
+        code: pending.code,
+        keyPair: joinerKeys,
+        relay,
+        registry,
+        localAllowlist: joinerAllowlist,
+        decision: { approve: true },
+      });
+
+      const initPromise = pairInitComplete({
+        code: pending.code,
+        keyPair: initiatorKeys,
+        relay,
+        registry,
+        localAllowlist: initiatorAllowlist,
+      });
+
+      const initResult = await initPromise;
+      await joinPromise;
+
+      expect(lateRejectPosted).toBe(true);
+      expect(initResult.status).not.toBe("rejected");
+      vi.restoreAllMocks();
+    }, 20000);
+
+    it("clock-skew: joiner after initiator burn gets pake_failed and burns locally", async () => {
+      // pairJoin waits BOND_COORDINATION_TIMEOUT_MS (30s) for initiator confirm when
+      // initiator already burned and is not running pairInitComplete. Prefer stub that
+      // returns bond_fail on confirm-phase polls so we fail fast without 30s wall clock.
+      const initiatorRegistry = new InMemoryPairingRegistry();
+      const joinerRegistry = new InMemoryPairingRegistry();
+
+      const pending = await pairInit({
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        keyPair: initiatorKeys,
+        relay,
+        registry: initiatorRegistry,
+      });
+
+      joinerRegistry.register({
+        code: pending.code,
+        sessionId: pending.sessionId,
+        proposal: pending.proposal,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      });
+
+      initiatorRegistry.consume(pending.code);
+
+      // After joiner consumes initiator pake and posts joiner pake, confirm never arrives.
+      // Returning bond_fail after the initiator pake is consumed ends confirm wait immediately.
+      const originalPoll = relay.pollPakeMessage.bind(relay);
+      let sawInitiatorPake = false;
+      vi.spyOn(relay, "pollPakeMessage").mockImplementation(async (sessionId, timeoutMs) => {
+        const msg = await originalPoll(sessionId, timeoutMs);
+        if (msg) {
+          try {
+            const wire = JSON.parse(msg) as { phase?: string; role?: string };
+            if (wire.phase === "pake" && wire.role === "initiator") {
+              sawInitiatorPake = true;
+              return msg;
+            }
+          } catch {
+            // fall through
+          }
+        }
+        // Confirm phase (or empty slot after initiator pake): fail fast via bond_fail.
+        if (sawInitiatorPake) {
+          return JSON.stringify({ phase: "bond_fail" });
+        }
+        return msg;
+      });
+
+      const joinResult = await pairJoin({
+        code: pending.code,
+        keyPair: joinerKeys,
+        relay,
+        registry: joinerRegistry,
+        localAllowlist: joinerAllowlist,
+        decision: { approve: true },
+      });
+
+      expect(joinResult.status).toBe("pake_failed");
+      expect(joinerRegistry.lookup(pending.code)).toBeUndefined();
+      expect(joinerRegistry.isConsumed(pending.code)).toBe(true);
+      expect(initiatorAllowlist.get(initiatorId)).toEqual([]);
+      expect(joinerAllowlist.get(joinerId)).toEqual([]);
+      vi.restoreAllMocks();
+    }, 20000);
+
+    it("pairRetry is not exported from @agentpair/protocol pairing flow", async () => {
+      const flowMod = await import("./flow.js");
+      expect("pairRetry" in flowMod).toBe(false);
+      const pkg = await import("../index.js");
+      expect("pairRetry" in pkg).toBe(false);
+    });
+  });
 });
 
 describe("InMemoryPairingRegistry consume/tombstone", () => {
