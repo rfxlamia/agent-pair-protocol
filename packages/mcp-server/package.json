@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && cp src/runners/spectral-ruleset.yaml dist/runners/",
     "prepublishOnly": "pnpm build",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "typecheck": "pnpm --filter @agentpair/protocol build && tsc -p tsconfig.build.json --noEmit",
     "pretest": "pnpm --filter @agentpair/protocol build",
     "test": "vitest run --config vitest.config.ts --passWithNoTests"
   },

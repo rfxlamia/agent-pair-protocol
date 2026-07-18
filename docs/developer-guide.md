@@ -76,7 +76,7 @@ Compiled JS: `packages/protocol/dist/`, `packages/mcp-server/dist/`
 | Hook | Runs |
 |------|------|
 | **pre-commit** | Biome lint/format on staged `*.{ts,js,json}` only |
-| **pre-push** | `pnpm -r --if-present typecheck` then `pnpm test` (build runs via `pretest`) |
+| **pre-push** | build `@agentpair/protocol`, then `pnpm -r --if-present typecheck`, then `pnpm test` (full build also runs via root `pretest`) |
 
 Manual checks: `pnpm lint`, `pnpm format`, `pnpm test`.
 

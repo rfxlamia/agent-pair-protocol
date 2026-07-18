@@ -1,1 +1,3 @@
-pnpm -r --if-present typecheck && pnpm test
+# mcp-server typechecks against @agentpair/protocol dist types — rebuild first so
+# workspace consumers do not fail on stale declarations after protocol API changes.
+pnpm --filter @agentpair/protocol build && pnpm -r --if-present typecheck && pnpm test
