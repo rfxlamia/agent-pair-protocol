@@ -153,12 +153,27 @@ async function ensureJoinerRegistry(
   ctx: AgentContext,
   code: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (ctx.registry.lookup(code)) {
+  // Tombstone gate first — lookup alone is undefined for both consumed and never-seen.
+  if (ctx.registry.isConsumed(code)) {
+    return { ok: false, error: "pair_not_found" };
+  }
+
+  const existing = ctx.registry.lookup(code);
+  if (existing) {
+    if (existing.expiresAt < Date.now()) {
+      // Preferred: tombstone past-TTL so subsequent joins stay blocked without re-fetch.
+      ctx.registry.consume(code);
+      return { ok: false, error: "pair_not_found" };
+    }
     return { ok: true };
   }
 
   const manifest = await ctx.relay.fetchPairManifest(code);
   if (!manifest) {
+    return { ok: false, error: "pair_not_found" };
+  }
+
+  if (manifest.expiresAt < Date.now()) {
     return { ok: false, error: "pair_not_found" };
   }
 
@@ -226,7 +241,11 @@ export async function handlePairInitComplete(
   return runInitiatorCompletionOnce(ctx, input.code, input.profiles);
 }
 
+/** Joiner-side in-flight map: code → approval execution promise (binding-level only). */
+const joinerPairJoinInFlight = new Map<string, Promise<PairFlowResult>>();
+
 export async function handlePairJoin(ctx: AgentContext, input: { code: string }) {
+  // 1. Registry / tombstone / expiry gate
   const ensured = await ensureJoinerRegistry(ctx, input.code);
   if (!ensured.ok) {
     const result = { ok: false, error: ensured.error };
@@ -234,6 +253,37 @@ export async function handlePairJoin(ctx: AgentContext, input: { code: string })
     return toolTextResult(result);
   }
 
+  // 2. In-flight BEFORE reuse — pending stays queued for the whole approval window.
+  if (joinerPairJoinInFlight.has(input.code)) {
+    const result = { ok: false, error: "pair_join_in_flight" };
+    assertNoSecrets(result);
+    return toolTextResult(result);
+  }
+
+  // 3. Idempotent reuse for queued waiting-human pair_join
+  const active = ctx.pending.findActivePairJoinByCode(input.code);
+  if (active) {
+    await ensurePendingApprovalReady(ctx);
+    try {
+      const result = withPendingApprovalSurface(ctx, {
+        ok: true as const,
+        pending_id: active.id,
+        proposal: active.proposal,
+        message: "Human approval required before pairing completes",
+      });
+      assertNoSecrets(result);
+      return toolTextResult(result);
+    } catch (error) {
+      if (isApprovalChannelError(error)) {
+        const result = approvalChannelUnavailableResult();
+        assertNoSecrets(result);
+        return toolTextResult(result);
+      }
+      throw error;
+    }
+  }
+
+  // 4. Create new pending
   const pendingEntry = ctx.registry.lookup(input.code);
   if (!pendingEntry) {
     const result = { ok: false, error: "pair_not_found" };
@@ -267,7 +317,28 @@ export async function handlePairJoin(ctx: AgentContext, input: { code: string })
   }
 }
 
-export async function executePairJoinApproval(
+export function executePairJoinApproval(
+  ctx: AgentContext,
+  input: {
+    code: string;
+    decision: { approve: true } | { reject: string };
+    profiles?: string[];
+  },
+): Promise<PairFlowResult> {
+  const existing = joinerPairJoinInFlight.get(input.code);
+  if (existing) {
+    return existing;
+  }
+
+  // Mark in-flight synchronously BEFORE any await so concurrent pair_join sees it.
+  const task = runPairJoinApproval(ctx, input).finally(() => {
+    joinerPairJoinInFlight.delete(input.code);
+  });
+  joinerPairJoinInFlight.set(input.code, task);
+  return task;
+}
+
+async function runPairJoinApproval(
   ctx: AgentContext,
   input: {
     code: string;
@@ -316,7 +387,7 @@ function pairFlowToolResult(flow: PairFlowResult) {
       status: flow.status,
       error: "pair_session_lost",
       message:
-        "Pairing session not found in memory (MCP may have restarted). Run pair_init again with a new code.",
+        "Pairing session not found (code may be consumed, expired, or session lost after restart). Run pair_init again with a new code.",
     };
     assertNoSecrets(result);
     return toolTextResult(result);

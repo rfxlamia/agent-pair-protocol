@@ -131,6 +131,8 @@ export interface PendingQueue {
   get(id: string): PendingItem | undefined;
   list(): PendingItem[];
   remove(id: string): void;
+  /** Oldest queued pair_join pending for code, if any (still in the Map). */
+  findActivePairJoinByCode(code: string): PairJoinPending | undefined;
 }
 
 function requireSecretKey(context: PendingQueueContext): Uint8Array {
@@ -385,6 +387,18 @@ function buildPendingQueue(
           // best-effort approval file cleanup
         }
       }
+    },
+    findActivePairJoinByCode(code) {
+      let oldest: PairJoinPending | undefined;
+      for (const item of items.values()) {
+        if (item.kind !== "pair_join" || item.code !== code) {
+          continue;
+        }
+        if (!oldest || item.createdAt < oldest.createdAt) {
+          oldest = item;
+        }
+      }
+      return oldest;
     },
   };
 }

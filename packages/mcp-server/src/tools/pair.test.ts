@@ -6,7 +6,7 @@ import { init as initPake } from "@agentpair/protocol";
 import { createRelayApp } from "@agentpair/relay";
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { HttpRelayClient } from "../relay/client.js";
 import { MemoryAllowlistStore } from "../store/allowlist.js";
 import { createKeyStore } from "../store/keys.js";
@@ -380,5 +380,167 @@ describe("mcp pair tools", () => {
     expect(typeof parsed.publicKey).toBe("string");
 
     await chmod(keyPath, 0o600);
+  });
+
+  it("pair_join reuses the same pending_id for duplicate unapproved joins", async () => {
+    const alice = await makeAgent("alice-dedup");
+    const bob = await makeAgent("bob-dedup");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      }),
+    );
+    expect(initResult.ok).toBe(true);
+    if (!initResult.ok) return;
+
+    const first = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const second = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+
+    expect(second.pending_id).toBe(first.pending_id);
+    expect(second.proposal).toEqual(first.proposal);
+    expect(bob.pending.list().filter((p) => p.kind === "pair_join")).toHaveLength(1);
+    expect(bob.registry.lookup(initResult.code)).toBeDefined();
+  }, 20000);
+
+  it("pair_join returns pair_join_in_flight while executePairJoinApproval runs", async () => {
+    const alice = await makeAgent("alice-inflight");
+    const bob = await makeAgent("bob-inflight");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      }),
+    );
+    expect(initResult.ok).toBe(true);
+    if (!initResult.ok) return;
+
+    const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(joinQueued.ok).toBe(true);
+    if (!joinQueued.ok) return;
+
+    // Stall joiner PAKE poll so approval stays in-flight.
+    const originalPoll = bob.relay.pollPakeMessage.bind(bob.relay);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let pollEntered = false;
+    vi.spyOn(bob.relay, "pollPakeMessage").mockImplementation(async (sessionId, timeoutMs) => {
+      pollEntered = true;
+      await gate;
+      return originalPoll(sessionId, timeoutMs);
+    });
+
+    const approvePromise = handleHumanApprove(bob, {
+      pending_id: joinQueued.pending_id,
+      decision: "approve",
+      approval_code: readApprovalCodeForAgent(bob, joinQueued.pending_id),
+    });
+
+    // Poll until in-flight is observable — do NOT rely on a fixed 50ms sleep alone.
+    const deadline = Date.now() + 5_000;
+    let dup: ReturnType<typeof structured> | undefined;
+    while (Date.now() < deadline) {
+      if (pollEntered) {
+        dup = structured(await handlePairJoin(bob, { code: initResult.code }));
+        if (dup.ok === false && dup.error === "pair_join_in_flight") break;
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(dup?.ok).toBe(false);
+    expect(dup?.error).toBe("pair_join_in_flight");
+
+    release();
+    await approvePromise;
+    vi.restoreAllMocks();
+  }, 30000);
+
+  it("pair_join after consume returns pair_not_found and does not fetchPairManifest", async () => {
+    const alice = await makeAgent("alice-tombstone");
+    const bob = await makeAgent("bob-tombstone");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      }),
+    );
+    expect(initResult.ok).toBe(true);
+    if (!initResult.ok) return;
+
+    // Ensure joiner has registered (via manifest) then burn locally.
+    const firstJoin = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(firstJoin.ok).toBe(true);
+    bob.registry.consume(initResult.code);
+    expect(bob.registry.isConsumed(initResult.code)).toBe(true);
+    expect(bob.registry.lookup(initResult.code)).toBeUndefined();
+
+    const fetchSpy = vi.spyOn(bob.relay, "fetchPairManifest");
+    const afterBurn = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(afterBurn.ok).toBe(false);
+    expect(afterBurn.error).toBe("pair_not_found");
+    // lookup alone is undefined for both consumed and never-seen — isConsumed is the gate.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  }, 20000);
+
+  it("pair_join after expiresAt returns pair_not_found without creating pending", async () => {
+    const alice = await makeAgent("alice-expired-join");
+    const bob = await makeAgent("bob-expired-join");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      }),
+    );
+    expect(initResult.ok).toBe(true);
+    if (!initResult.ok) return;
+
+    // Register via first join, then age past expiresAt (lookup still may show the row until gate).
+    const firstJoin = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(firstJoin.ok).toBe(true);
+    if (!firstJoin.ok) return;
+    bob.pending.remove(firstJoin.pending_id);
+    bob.registry.update(initResult.code, { expiresAt: Date.now() - 1_000 });
+
+    const fetchSpy = vi.spyOn(bob.relay, "fetchPairManifest");
+    const afterExpiry = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(afterExpiry.ok).toBe(false);
+    expect(afterExpiry.error).toBe("pair_not_found");
+    expect(bob.pending.list().filter((p) => p.kind === "pair_join")).toHaveLength(0);
+    // Local expired row: no need to re-fetch; gate must not resurrect via manifest either.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  }, 20000);
+
+  it("pair_init_complete tool message mentions consumed or session lost for not_found", async () => {
+    const alice = await makeAgent("alice-msg");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+      }),
+    );
+    expect(initResult.ok).toBe(true);
+    if (!initResult.ok) return;
+
+    alice.registry.consume(initResult.code);
+
+    const result = structured(await handlePairInitCompleteTool(alice, { code: initResult.code }));
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("not_found");
+    expect(String(result.message ?? result.error ?? "")).toMatch(
+      /consumed|session lost|session not found/i,
+    );
   });
 });
