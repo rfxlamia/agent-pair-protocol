@@ -103,7 +103,7 @@ describe("inbox session negotiation fixes", () => {
       {
         from: "initiator",
         type: "propose",
-        body: proposalBody,
+        body: { untrusted: true, source: "peer", data: proposalBody },
         turn: 1,
       },
     ]);
@@ -215,7 +215,11 @@ describe("inbox session negotiation fixes", () => {
     const status = structured(await handleSessionStatus(bob.ctx, { thread: opened.thread }));
     expect(status.ok).toBe(true);
     if (!status.ok) return;
-    expect(status.peer_messages?.[0]?.body).toBe(proposalBody);
+    expect(status.peer_messages?.[0]?.body).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: proposalBody,
+    });
   });
 
   it("ignores peer-reported turn_count on first nego.turn (wire-derived count)", async () => {

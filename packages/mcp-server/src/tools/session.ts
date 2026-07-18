@@ -16,7 +16,12 @@ import {
 import { sendEnvelopeWithSpill } from "./inbox-spill.js";
 import { type AgentContext, ensureAllowlistReady, ensurePendingApprovalReady } from "./pair.js";
 import { nextThreadSeq, recordSentSeq } from "./thread-seq.js";
-import { assertNoSecrets, toolTextResult } from "./util.js";
+import {
+  LOCKED_SECTION_ID_CAP_BYTES,
+  assertNoSecrets,
+  toolTextResult,
+  wrapUntrustedPeerContent,
+} from "./util.js";
 
 const sessionMachines = new WeakMap<AgentContext, SessionStateMachine>();
 
@@ -105,13 +110,52 @@ async function getSessionMachine(ctx: AgentContext): Promise<SessionStateMachine
   return machine;
 }
 
+function presentSessionStatusForModel(
+  ctx: AgentContext,
+  thread: string,
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  const cap = ctx.peerContentCapBytes;
+
+  if (Array.isArray(result.peer_messages)) {
+    result.peer_messages = (result.peer_messages as Array<Record<string, unknown>>).map((row) => ({
+      ...row,
+      body: wrapUntrustedPeerContent(row.body, cap),
+    }));
+  }
+
+  const role = ctx.sessionStore.get(thread)?.role;
+  if (role === "recipient" && typeof result.goal === "string") {
+    result.goal = wrapUntrustedPeerContent(result.goal, cap);
+  }
+
+  if (typeof result.reject_reason === "string") {
+    result.reject_reason = wrapUntrustedPeerContent(result.reject_reason, cap);
+  } else {
+    // biome-ignore lint/performance/noDelete: omit absent reject_reason from structuredContent
+    delete result.reject_reason;
+  }
+
+  if (Array.isArray(result.locked_sections)) {
+    result.locked_sections = (result.locked_sections as unknown[]).map((id) =>
+      wrapUntrustedPeerContent(id, LOCKED_SECTION_ID_CAP_BYTES),
+    );
+  }
+
+  return result;
+}
+
 async function withSessionMachine<T extends Record<string, unknown>>(
   ctx: AgentContext,
   fn: (machine: SessionStateMachine) => Promise<T>,
+  transform?: (result: T) => T,
 ) {
   try {
     const machine = await getSessionMachine(ctx);
-    const result = withPendingApprovalSurface(ctx, await fn(machine));
+    let result = withPendingApprovalSurface(ctx, await fn(machine));
+    if (transform) {
+      result = transform(result);
+    }
     assertNoSecrets(result);
     return toolTextResult(result);
   } catch (error) {
@@ -169,7 +213,11 @@ export async function handleSessionSign(
 
 export async function handleSessionStatus(ctx: AgentContext, input: { thread: string }) {
   await expireSessions(ctx);
-  return withSessionMachine(ctx, (machine) => machine.handleStatus(input));
+  return withSessionMachine(
+    ctx,
+    (machine) => machine.handleStatus(input),
+    (result) => presentSessionStatusForModel(ctx, input.thread, result) as typeof result,
+  );
 }
 
 export async function handleSessionApproveOpen(

@@ -440,7 +440,11 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
 
       const closedStatus = structured(await handleSessionStatus(alice, { thread: opened.thread }));
       expect(closedStatus.status).toBe("closed");
-      expect(closedStatus.reject_reason).toBe("bond_revoked");
+      expect(closedStatus.reject_reason).toEqual({
+        untrusted: true,
+        source: "peer",
+        data: "bond_revoked",
+      });
       expect(alice.bonds.find(aliceId, bobId)).toBeUndefined();
     });
 
@@ -473,7 +477,11 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
 
       const status = structured(await handleSessionStatus(alice, { thread: opened.thread }));
       expect(status.status).toBe("closed");
-      expect(status.reject_reason).toBe("bond_revoked");
+      expect(status.reject_reason).toEqual({
+        untrusted: true,
+        source: "peer",
+        data: "bond_revoked",
+      });
     });
 
     it("reports inbox_purge_incomplete only when purge fails but push succeeds", async () => {
@@ -550,7 +558,11 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
 
       const status = structured(await handleSessionStatus(alice, { thread: opened.thread }));
       expect(status.status).toBe("closed");
-      expect(status.reject_reason).toBe("bond_revoked");
+      expect(status.reject_reason).toEqual({
+        untrusted: true,
+        source: "peer",
+        data: "bond_revoked",
+      });
     });
 
     it("reports no_bond_found for never-bonded peer but still pushes allowlist", async () => {
