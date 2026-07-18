@@ -125,8 +125,24 @@ describe("inbox spillover", () => {
     expect(inbox.envelopes).toHaveLength(1);
     const msg = inbox.envelopes[0];
     expect(msg?.type).toBe("core.msg");
-    expect(msg?.payload).toEqual({ body: originalBody });
-    expect(hasSpillMarker(msg?.payload)).toBe(false);
+    const msgPayload = msg?.payload as {
+      untrusted: true;
+      source: "peer";
+      data: unknown;
+      truncated?: true;
+      original_length?: number;
+    };
+    expect(msgPayload.untrusted).toBe(true);
+    expect(msgPayload.source).toBe("peer");
+    expect(msgPayload.truncated).toBe(true);
+    expect(typeof msgPayload.data).toBe("string");
+    expect(msgPayload.original_length).toBeGreaterThan(bob.ctx.peerContentCapBytes);
+    expect(new TextEncoder().encode(msgPayload.data as string).length).toBeLessThanOrEqual(
+      bob.ctx.peerContentCapBytes,
+    );
+    expect(hasSpillMarker(msgPayload)).toBe(false);
+    expect(hasSpillMarker(msgPayload.data)).toBe(false);
+    expect(msgPayload.data as string).toMatch(/^\{"body":"/);
   });
 
   it("handleClose large reason spills", async () => {
@@ -143,8 +159,24 @@ describe("inbox spillover", () => {
       return;
     }
     const closeEnv = inbox.envelopes.find((e) => e.type === "core.close");
-    expect(closeEnv?.payload).toEqual({ reason });
-    expect(hasSpillMarker(closeEnv?.payload)).toBe(false);
+    const closePayload = closeEnv?.payload as {
+      untrusted: true;
+      source: "peer";
+      data: unknown;
+      truncated?: true;
+      original_length?: number;
+    };
+    expect(closePayload.untrusted).toBe(true);
+    expect(closePayload.source).toBe("peer");
+    expect(closePayload.truncated).toBe(true);
+    expect(typeof closePayload.data).toBe("string");
+    expect(closePayload.original_length).toBeGreaterThan(bob.ctx.peerContentCapBytes);
+    expect(new TextEncoder().encode(closePayload.data as string).length).toBeLessThanOrEqual(
+      bob.ctx.peerContentCapBytes,
+    );
+    expect(hasSpillMarker(closePayload)).toBe(false);
+    expect(hasSpillMarker(closePayload.data)).toBe(false);
+    expect(closePayload.data as string).toMatch(/^\{"reason":"/);
   });
 
   it("artifact_fetch_failed → rejected retryable:true + cursor", async () => {
@@ -264,7 +296,21 @@ describe("inbox spillover", () => {
       return;
     }
     expect(inbox.envelopes).toHaveLength(1);
-    expect(inbox.envelopes[0]?.payload).toEqual({ body });
+    const retryPayload = inbox.envelopes[0]?.payload as {
+      untrusted: true;
+      source: "peer";
+      data: unknown;
+      truncated?: true;
+      original_length?: number;
+    };
+    expect(retryPayload.untrusted).toBe(true);
+    expect(retryPayload.source).toBe("peer");
+    expect(retryPayload.truncated).toBe(true);
+    expect(typeof retryPayload.data).toBe("string");
+    expect(retryPayload.original_length).toBeGreaterThan(bob.ctx.peerContentCapBytes);
+    expect(new TextEncoder().encode(retryPayload.data as string).length).toBeLessThanOrEqual(
+      bob.ctx.peerContentCapBytes,
+    );
   });
 
   it("re-pull since=cursor-1 retries transient artifact_fetch_failed", async () => {
@@ -308,7 +354,21 @@ describe("inbox spillover", () => {
       return;
     }
     expect(second.envelopes).toHaveLength(1);
-    expect(second.envelopes[0]?.payload).toEqual({ body: originalBody });
+    const repullPayload = second.envelopes[0]?.payload as {
+      untrusted: true;
+      source: "peer";
+      data: unknown;
+      truncated?: true;
+      original_length?: number;
+    };
+    expect(repullPayload.untrusted).toBe(true);
+    expect(repullPayload.source).toBe("peer");
+    expect(repullPayload.truncated).toBe(true);
+    expect(typeof repullPayload.data).toBe("string");
+    expect(repullPayload.original_length).toBeGreaterThan(bob.ctx.peerContentCapBytes);
+    expect(new TextEncoder().encode(repullPayload.data as string).length).toBeLessThanOrEqual(
+      bob.ctx.peerContentCapBytes,
+    );
     expect(second.rejected ?? []).toHaveLength(0);
   });
 

@@ -84,9 +84,16 @@ describe("inbox session negotiation fixes", () => {
     expect(peerTurn).toBeDefined();
     if (!peerTurn) return;
 
-    const payload = peerTurn.payload as { msg_type?: string; body?: string };
-    expect(payload.msg_type).toBe("propose");
-    expect(payload.body).toBe(proposalBody);
+    const payload = peerTurn.payload as {
+      untrusted?: true;
+      source?: string;
+      data?: { msg_type?: string; body?: string };
+    };
+    expect(payload).toMatchObject({
+      untrusted: true,
+      source: "peer",
+      data: { msg_type: "propose", body: proposalBody },
+    });
 
     const status = structured(await handleSessionStatus(bob.ctx, { thread: opened.thread }));
     expect(status.ok).toBe(true);

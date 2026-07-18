@@ -28,7 +28,7 @@ import {
   resolveSessionOpenPendingId,
 } from "./session.js";
 import { detectClientThreadGaps, nextThreadSeq, recordSentSeq } from "./thread-seq.js";
-import { assertNoSecrets, toolTextResult } from "./util.js";
+import { assertNoSecrets, stripSecrets, toolTextResult, wrapUntrustedPeerContent } from "./util.js";
 
 const processedEnvelopeIds = new WeakMap<AgentContext, Set<string>>();
 
@@ -291,9 +291,9 @@ export async function handleInbox(
       thread: body.thread,
       seq: body.seq,
       ttl: body.ttl,
-      payload: inboxPayload,
+      payload: wrapUntrustedPeerContent(stripSecrets(inboxPayload), ctx.peerContentCapBytes),
       sig: outer.sig,
-      verified: true,
+      signature_valid: true,
       ...(pendingId
         ? {
             pending_id: pendingId,

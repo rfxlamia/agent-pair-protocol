@@ -174,8 +174,12 @@ describe("bug hunt — T4/T6 behavioral gaps", () => {
       return;
     }
     expect(inboxResult.envelopes).toHaveLength(1);
-    expect(inboxResult.envelopes[0]?.verified).toBe(true);
-    expect(inboxResult.envelopes[0]?.payload).toEqual({ body: "hello" });
+    expect(inboxResult.envelopes[0]?.signature_valid).toBe(true);
+    expect(inboxResult.envelopes[0]?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: { body: "hello" },
+    });
   });
 
   it("relay client round-trips v1 outer wire via deserializeOuterEnvelope", async () => {

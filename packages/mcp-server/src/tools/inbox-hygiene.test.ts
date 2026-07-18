@@ -331,7 +331,11 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       return;
     }
     expect(first.envelopes).toHaveLength(1);
-    expect(first.envelopes[0]?.payload).toEqual({ body: "first" });
+    expect(first.envelopes[0]?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: { body: "first" },
+    });
 
     const second = structured(await handleInbox(ctx, {}));
     expect(second.ok).toBe(true);
@@ -339,7 +343,11 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
       return;
     }
     expect(second.envelopes).toHaveLength(1);
-    expect(second.envelopes[0]?.payload).toEqual({ body: "second" });
+    expect(second.envelopes[0]?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: { body: "second" },
+    });
     expect(relay.pulls).toEqual([0, 10]);
   });
 
@@ -515,7 +523,11 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     }
     expect(relay.pullSenders[0]).toEqual([bondedPeerId]);
     expect(result.envelopes).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toEqual({ body: "bonded" });
+    expect(result.envelopes[0]?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: { body: "bonded" },
+    });
     expect(result.filtered_count).toBe(0);
     expect(result.relay_filtered_count).toBeUndefined();
   });
@@ -554,7 +566,11 @@ describe("inbox hygiene — cursor persistence and bonded filter", () => {
     }
     expect(result.bonds_empty).toBe(true);
     expect(result.envelopes).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toEqual({ body: "allowed" });
+    expect(result.envelopes[0]?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: { body: "allowed" },
+    });
   });
 
   it("reports cursor_reset when cursor file is corrupt", async () => {
@@ -649,8 +665,12 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     }
     expect(result.envelopes).toHaveLength(1);
     const item = result.envelopes[0];
-    expect(item?.payload).toEqual({ body: "hello-v1" });
-    expect(item?.verified).toBe(true);
+    expect(item?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: { body: "hello-v1" },
+    });
+    expect(item?.signature_valid).toBe(true);
     expect(item?.sig).toBe(outer.sig);
     expect(item?.from).toBe(peerId);
   });
@@ -757,7 +777,11 @@ describe("inbox v1 outer unwrap and v0 skip", () => {
     }
     expect(result.envelopes).toHaveLength(1);
     expect(result.rejected).toHaveLength(1);
-    expect(result.envelopes[0]?.payload).toEqual({ body: "still-here" });
+    expect(result.envelopes[0]?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: { body: "still-here" },
+    });
     expect(result).not.toHaveProperty("skipped_unsupported");
   });
 });
@@ -994,7 +1018,11 @@ describe("M1.4 envelope types", () => {
     relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
     const result = structured(await handleInbox(bobCtx, {}));
     const ack = result.envelopes.find((e) => e.type === "core.ack");
-    expect(ack?.payload).toEqual({ ack_seq: 7 });
+    expect(ack?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: { ack_seq: 7 },
+    });
   });
 
   it("core.close receive marks closedThreads idempotently", async () => {
@@ -1274,7 +1302,11 @@ describe("M1.4 envelope types", () => {
     relay.responses = [{ rows: [{ rowid: 1, wire }], cursor: 1 }];
     const result = structured(await handleInbox(bobCtx, {}));
     const open = result.envelopes.find((e) => e.type === "nego.open");
-    expect(open?.payload).toEqual(openPayload);
+    expect(open?.payload).toEqual({
+      untrusted: true,
+      source: "peer",
+      data: openPayload,
+    });
   });
 });
 

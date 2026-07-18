@@ -54,8 +54,22 @@ describe("e2e spillover round-trip", () => {
       (envelope) => envelope.type === "core.msg" && envelope.thread === msgThread,
     );
     expect(coreMsg).toBeDefined();
-    expect(coreMsg?.payload).toEqual({ body: largeBody });
-    expect(hasSpillMarker(coreMsg?.payload)).toBe(false);
+    const corePayload = coreMsg?.payload as {
+      untrusted: true;
+      source: "peer";
+      data: unknown;
+      truncated?: true;
+      original_length?: number;
+    };
+    expect(corePayload.untrusted).toBe(true);
+    expect(corePayload.source).toBe("peer");
+    expect(corePayload.truncated).toBe(true);
+    expect(typeof corePayload.data).toBe("string");
+    expect(corePayload.original_length).toBeGreaterThan(8192);
+    expect(new TextEncoder().encode(corePayload.data as string).length).toBeLessThanOrEqual(8192);
+    expect(hasSpillMarker(corePayload)).toBe(false);
+    expect(hasSpillMarker(corePayload.data)).toBe(false);
+    expect(corePayload.data as string).toMatch(/^\{"body":"/);
 
     const opened = structured(
       await handleSessionOpen(alice.ctx, {
@@ -109,9 +123,18 @@ describe("e2e spillover round-trip", () => {
       (envelope) => envelope.type === "nego.turn" && envelope.thread === opened.thread,
     );
     expect(negoTurn).toBeDefined();
-    const turnPayload = negoTurn?.payload as { msg_type?: string; body?: string };
-    expect(turnPayload.msg_type).toBe("propose");
-    expect(turnPayload.body).toBe(largeProposal);
-    expect(hasSpillMarker(negoTurn?.payload)).toBe(false);
+    const turnPayload = negoTurn?.payload as {
+      untrusted: true;
+      source: "peer";
+      data: unknown;
+      truncated?: true;
+      original_length?: number;
+    };
+    expect(turnPayload).toMatchObject({ untrusted: true, source: "peer", truncated: true });
+    expect(typeof turnPayload.data).toBe("string");
+    expect(turnPayload.original_length).toBeGreaterThan(8192);
+    expect(new TextEncoder().encode(turnPayload.data as string).length).toBeLessThanOrEqual(8192);
+    expect(hasSpillMarker(turnPayload)).toBe(false);
+    expect(hasSpillMarker(turnPayload.data)).toBe(false);
   }, 30000);
 });
