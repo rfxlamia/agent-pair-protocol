@@ -42,7 +42,12 @@ import {
   scheduleInitiatorPairingCompletion,
 } from "./pair-completion.js";
 import { processBondRevoke } from "./session.js";
-import { assertNoSecrets, parseBondMode, toolTextResult } from "./util.js";
+import {
+  assertNoSecrets,
+  parseBondMode,
+  resolvePeerContentCapBytes,
+  toolTextResult,
+} from "./util.js";
 
 export interface AgentContext {
   keyStore: KeyStore;
@@ -56,6 +61,7 @@ export interface AgentContext {
   pending: PendingQueue;
   sessionStore: SessionStore;
   closedThreads: ClosedThreadStore;
+  peerContentCapBytes: number;
 }
 
 type AllowlistWithInit = LocalAllowlistStore & {
@@ -97,6 +103,7 @@ export function createAgentContext(options: {
   pending?: PendingQueue;
   sessionStore?: SessionStore;
   closedThreads?: ClosedThreadStore;
+  peerContentCapBytes?: number;
 }): AgentContext {
   const useFileStores = options.dataDir !== undefined;
 
@@ -134,6 +141,11 @@ export function createAgentContext(options: {
       (useFileStores
         ? createFileClosedThreadStore({ dataDir: options.dataDir })
         : new MemoryClosedThreadStore()),
+    peerContentCapBytes:
+      options.peerContentCapBytes ??
+      resolvePeerContentCapBytes(process.env.AGENTPAIR_PEER_CONTENT_CAP_BYTES, (msg) => {
+        console.error(msg);
+      }),
   };
 }
 

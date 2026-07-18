@@ -1,5 +1,81 @@
 import type { BondMode } from "@agentpair/protocol";
 
+export const DEFAULT_PEER_CONTENT_CAP_BYTES = 8192;
+export const MAX_PEER_CONTENT_CAP_BYTES = 65536;
+export const LOCKED_SECTION_ID_CAP_BYTES = 256;
+
+export function resolvePeerContentCapBytes(
+  raw?: string | undefined,
+  warn?: (msg: string) => void,
+): number {
+  if (raw === undefined) {
+    return DEFAULT_PEER_CONTENT_CAP_BYTES;
+  }
+
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    warn?.(`Invalid AGENTPAIR_PEER_CONTENT_CAP_BYTES: ${raw}`);
+    return DEFAULT_PEER_CONTENT_CAP_BYTES;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (parsed === 0) {
+    warn?.(`Invalid AGENTPAIR_PEER_CONTENT_CAP_BYTES: ${raw}`);
+    return DEFAULT_PEER_CONTENT_CAP_BYTES;
+  }
+
+  return Math.min(parsed, MAX_PEER_CONTENT_CAP_BYTES);
+}
+
+export type UntrustedPeerContent = {
+  untrusted: true;
+  source: "peer";
+  data: unknown;
+  truncated?: true;
+  original_length?: number;
+};
+
+function measurePeerContent(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+function truncateUtf8ToBytes(s: string, capBytes: number): string {
+  const bytes = new TextEncoder().encode(s);
+  if (bytes.length <= capBytes) {
+    return s;
+  }
+
+  let end = capBytes;
+  while (end > 0) {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end));
+    } catch {
+      end--;
+    }
+  }
+  return "";
+}
+
+export function wrapUntrustedPeerContent(value: unknown, capBytes: number): UntrustedPeerContent {
+  const measured = measurePeerContent(value);
+  const originalLength = new TextEncoder().encode(measured).length;
+
+  if (originalLength <= capBytes) {
+    return { untrusted: true, source: "peer", data: value };
+  }
+
+  return {
+    untrusted: true,
+    source: "peer",
+    data: truncateUtf8ToBytes(measured, capBytes),
+    truncated: true,
+    original_length: originalLength,
+  };
+}
+
 export function toolTextResult(data: unknown): {
   content: Array<{ type: "text"; text: string }>;
   structuredContent: Record<string, unknown>;
