@@ -24,6 +24,10 @@ import {
   handleSessionSign,
   handleSessionStatus,
 } from "./tools/session.js";
+import {
+  INBOX_TOOL_DESCRIPTION,
+  SESSION_STATUS_TOOL_DESCRIPTION,
+} from "./tools/tool-descriptions.js";
 
 export interface CreateMcpServerOptions {
   context?: AgentContext;
@@ -98,8 +102,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     "inbox",
     {
       title: "Pull inbox",
-      description:
-        "Pull signed envelopes from the relay using challenge-response auth. On artifact_fetch_failed in rejected[], retry with since = cursor - 1.",
+      description: INBOX_TOOL_DESCRIPTION,
       inputSchema: {
         since: z
           .number()
@@ -259,7 +262,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
     "session_status",
     {
       title: "Session status",
-      description: "Get current session state and negotiation progress.",
+      description: SESSION_STATUS_TOOL_DESCRIPTION,
       inputSchema: {
         thread: z.string(),
       },
