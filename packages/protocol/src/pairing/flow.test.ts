@@ -660,3 +660,141 @@ describe("pairing flow", () => {
     }
   }, 20000);
 });
+
+describe("InMemoryPairingRegistry consume/tombstone", () => {
+  let registry: InMemoryPairingRegistry;
+  let relay: MockRelayClient;
+  let initiatorKeys: KeyPair;
+  let joinerKeys: KeyPair;
+  let joinerAllowlist: MemoryAllowlistStore;
+
+  beforeAll(async () => {
+    await initPake();
+  });
+
+  beforeEach(() => {
+    registry = new InMemoryPairingRegistry();
+    relay = new MockRelayClient();
+    initiatorKeys = generateKeyPair();
+    joinerKeys = generateKeyPair();
+    joinerAllowlist = new MemoryAllowlistStore();
+  });
+
+  it("consume hides entry from lookup, sets isConsumed, and is idempotent", () => {
+    const code = "42-otter-maple-crane";
+    registry.register({
+      code,
+      sessionId: crypto.randomUUID(),
+      proposal: {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        initiatorAgentId: "ed25519:alice",
+      },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    });
+
+    expect(registry.lookup(code)).toBeDefined();
+    expect(registry.isConsumed(code)).toBe(false);
+    registry.consume(code);
+    expect(registry.lookup(code)).toBeUndefined();
+    expect(registry.isConsumed(code)).toBe(true);
+    expect(() => registry.consume(code)).not.toThrow();
+    expect(registry.isConsumed(code)).toBe(true);
+    expect(registry.lookup(code)).toBeUndefined();
+  });
+
+  it("isConsumed is false for never-registered codes", () => {
+    expect(registry.isConsumed("99-never-seen-code-zzzz")).toBe(false);
+  });
+
+  it("pairJoin returns not_found for a consumed code while TTL is still live", async () => {
+    const pending = await pairInit({
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes",
+      keyPair: initiatorKeys,
+      relay,
+      registry,
+    });
+
+    registry.consume(pending.code);
+    expect(registry.isConsumed(pending.code)).toBe(true);
+
+    const joinResult = await pairJoin({
+      code: pending.code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+    });
+
+    expect(joinResult.status).toBe("not_found");
+    expect(registry.lookup(pending.code)).toBeUndefined();
+    expect(registry.isConsumed(pending.code)).toBe(true);
+  });
+
+  it("expired lookupPending returns expired; past-TTL entry does not linger as isConsumed", async () => {
+    const code = "11-alpha-bravo-charlie";
+    registry.register({
+      code,
+      sessionId: crypto.randomUUID(),
+      proposal: {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        initiatorAgentId: "ed25519:alice",
+      },
+      createdAt: Date.now() - 120_000,
+      expiresAt: Date.now() - 1_000,
+    });
+
+    const joinResult = await pairJoin({
+      code,
+      keyPair: joinerKeys,
+      relay,
+      registry,
+      localAllowlist: joinerAllowlist,
+      decision: { approve: true },
+    });
+
+    expect(joinResult.status).toBe("expired");
+    expect(registry.lookup(code)).toBeUndefined();
+    expect(registry.isConsumed(code)).toBe(false);
+  });
+
+  it("live-TTL consume keeps isConsumed true; past-TTL tombstone purges on lookup/isConsumed", () => {
+    const liveCode = "22-delta-echo-foxtrot";
+    registry.register({
+      code: liveCode,
+      sessionId: crypto.randomUUID(),
+      proposal: {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        initiatorAgentId: "ed25519:alice",
+      },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    });
+    registry.consume(liveCode);
+    expect(registry.lookup(liveCode)).toBeUndefined();
+    expect(registry.isConsumed(liveCode)).toBe(true);
+
+    const pastCode = "33-golf-hotel-india";
+    registry.register({
+      code: pastCode,
+      sessionId: crypto.randomUUID(),
+      proposal: {
+        scope: ["session.negotiate"],
+        mode: "ephemeral_until_session_closes",
+        initiatorAgentId: "ed25519:alice",
+      },
+      createdAt: Date.now() - 120_000,
+      expiresAt: Date.now() - 1_000,
+    });
+    registry.consume(pastCode);
+    expect(registry.lookup(pastCode)).toBeUndefined();
+    expect(registry.isConsumed(pastCode)).toBe(false);
+    expect(() => registry.consume(pastCode)).not.toThrow();
+    expect(registry.isConsumed(pastCode)).toBe(false);
+  });
+});

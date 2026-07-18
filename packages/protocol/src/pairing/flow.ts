@@ -53,6 +53,10 @@ export interface PairingRegistry {
   register(entry: PendingPair): void;
   lookup(code: string): PendingPair | undefined;
   update(code: string, patch: Partial<PendingPair>): void;
+  /** Tombstone a code (idempotent). Hides it from lookup until expiresAt, then purges. */
+  consume(code: string): void;
+  /** True while a live-TTL tombstone exists; false if never registered or past-TTL purged. */
+  isConsumed(code: string): boolean;
 }
 
 export interface LocalAllowlistStore {
@@ -62,12 +66,19 @@ export interface LocalAllowlistStore {
 
 export class InMemoryPairingRegistry implements PairingRegistry {
   private entries = new Map<string, PendingPair>();
+  /** Tombstones: code → expiresAt copied from the live entry at consume time. */
+  private tombstones = new Map<string, number>();
 
   register(entry: PendingPair): void {
     this.entries.set(entry.code, entry);
   }
 
   lookup(code: string): PendingPair | undefined {
+    this.purgeExpiredTombstone(code);
+    if (this.tombstones.has(code)) {
+      return undefined;
+    }
+    // Do not hide or purge live (non-consumed) expired rows — lookupPending owns that.
     return this.entries.get(code);
   }
 
@@ -77,6 +88,30 @@ export class InMemoryPairingRegistry implements PairingRegistry {
       return;
     }
     this.entries.set(code, { ...existing, ...patch });
+  }
+
+  consume(code: string): void {
+    this.purgeExpiredTombstone(code);
+    const existing = this.entries.get(code);
+    if (existing) {
+      this.entries.delete(code);
+      this.tombstones.set(code, existing.expiresAt);
+      this.purgeExpiredTombstone(code);
+      return;
+    }
+    // Already tombstoned (live TTL) or never registered: idempotent no-op.
+  }
+
+  isConsumed(code: string): boolean {
+    this.purgeExpiredTombstone(code);
+    return this.tombstones.has(code);
+  }
+
+  private purgeExpiredTombstone(code: string): void {
+    const expiresAt = this.tombstones.get(code);
+    if (expiresAt !== undefined && expiresAt < Date.now()) {
+      this.tombstones.delete(code);
+    }
   }
 }
 
@@ -247,11 +282,16 @@ async function pollWireMessage(
 }
 
 function lookupPending(registry: PairingRegistry, code: string): PendingPair | PairFlowResult {
+  if (registry.isConsumed(code)) {
+    return { status: "not_found" };
+  }
   const pending = registry.lookup(code);
   if (!pending) {
     return { status: "not_found" };
   }
   if (pending.expiresAt < Date.now()) {
+    // Mandatory tombstone on expiry; past-TTL purge may clear isConsumed immediately after.
+    registry.consume(code);
     return { status: "expired" };
   }
   return pending;
