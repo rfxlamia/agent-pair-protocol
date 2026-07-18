@@ -51,6 +51,28 @@ async function executeHumanApprove(ctx: AgentContext, input: HumanApproveInput) 
     return toolTextResult(result);
   }
 
+  // pair_join: registry consumed/TTL gate before approval-code attempt accounting.
+  // isPendingLive always returns true for pair_join — check registry explicitly.
+  if (pending.kind === "pair_join") {
+    if (ctx.registry.isConsumed(pending.code)) {
+      ctx.pending.remove(pending.id);
+      scheduleAgentContextFlush(ctx);
+      const result = { ok: false, error: "expired" };
+      assertNoSecrets(result);
+      return toolTextResult(result);
+    }
+    const registryEntry = ctx.registry.lookup(pending.code);
+    if (!registryEntry || registryEntry.expiresAt < Date.now()) {
+      // Tombstone so past-TTL rows do not linger unbounded; purge may clear isConsumed.
+      ctx.registry.consume(pending.code);
+      ctx.pending.remove(pending.id);
+      scheduleAgentContextFlush(ctx);
+      const result = { ok: false, error: "expired" };
+      assertNoSecrets(result);
+      return toolTextResult(result);
+    }
+  }
+
   const normalized = normalizeApprovalCode(input.approval_code);
   if (normalized === null) {
     const result = { ok: false, error: "self_approval_forbidden" };
@@ -75,8 +97,22 @@ async function executeHumanApprove(ctx: AgentContext, input: HumanApproveInput) 
     ctx.pending.setApprovalAttempts(pending.id, newAttempts);
 
     if (newAttempts >= MAX_APPROVAL_ATTEMPTS) {
-      ctx.pending.remove(pending.id);
-      scheduleAgentContextFlush(ctx);
+      if (pending.kind === "pair_join") {
+        // Capture sessionId BEFORE any mutation; never consume before post.
+        const sessionId = ctx.registry.lookup(pending.code)?.sessionId;
+        ctx.pending.remove(pending.id);
+        scheduleAgentContextFlush(ctx);
+        if (sessionId) {
+          await ctx.relay.postPakeMessage(
+            sessionId,
+            JSON.stringify({ phase: "reject", reason: "approval_declined" }),
+          );
+        }
+        ctx.registry.consume(pending.code);
+      } else {
+        ctx.pending.remove(pending.id);
+        scheduleAgentContextFlush(ctx);
+      }
       const result = {
         ok: false,
         error: "invalid_approval_code",
