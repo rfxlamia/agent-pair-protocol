@@ -46,7 +46,7 @@ Breaking change; everything else builds on it. Land first.
 
 - [x] **M3.1** Extract `atest/1` (§9): `atest.challenge` / `atest.report` envelopes; runners become the atest implementation; Negotiation must work with zero runner infra. `label:protocol` `size:L`
 - [ ] **M3.2** Security self-audit vs §11: injection containment (peer payloads presented as data, length caps), replay, decode-DoS, pairing single-use codes, gate flag provenance (A4). Findings → issues, fix P0/P1. `label:security` `size:M`
-  — Deferred here from identity-binding work (2026-07-12): (a) `pairRetry` reuses the pairing code across sessions vs §11.3 "codes MUST be single-use" — resolve the tension; (b) tighten §11.2 "relay can never read or forge content" — relay CAN forge `bond_fail` (acknowledged courtesy-only signal); wording is overbroad.
+  — Deferred here from identity-binding work (2026-07-12): (b) tighten §11.2 "relay can never read or forge content" — relay CAN forge `bond_fail` (acknowledged courtesy-only signal); wording is overbroad. (#58 resolved single-use pairing codes / former note (a).)
 - [ ] **M3.3** Adversarial e2e suite: tampered outer `to`, replayed seq, oversized envelope, unbonded sender, self-approval attempt, redelivered `nego.open` in every state. `label:testing` `size:M`
 - [ ] **M3.4** Fresh-clone dogfood: two humans, two machines, real relay — pair, negotiate, co-sign, ratify a real deliverable. Log every papercut as an issue. `label:dx` `size:M`
 - [ ] **M3.5** SPEC 1.0 freeze: reconcile spec ↔ implementation drift found in M1–M3, resolve remaining wording, remove DRAFT banner. After this, wire changes need a version bump. `label:spec` `size:M`
