@@ -10,7 +10,12 @@ describe("approval-persistence", () => {
   const tempDirs: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+    // maxRetries: concurrent flush/write can leave the dir non-empty mid-rm (ENOTEMPTY flaky).
+    await Promise.all(
+      tempDirs.map((dir) =>
+        rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+      ),
+    );
     tempDirs.length = 0;
   });
 

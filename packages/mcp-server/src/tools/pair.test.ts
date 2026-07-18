@@ -66,7 +66,12 @@ describe("mcp pair tools", () => {
         resolve();
       });
     });
-    await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+    // maxRetries: fire-and-forget scheduleAgentContextFlush can still write during teardown.
+    await Promise.all(
+      tempDirs.map((dir) =>
+        rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+      ),
+    );
   });
 
   async function makeAgent(label: string, relay: HttpRelayClient = new HttpRelayClient(RELAY_URL)) {
@@ -340,17 +345,26 @@ describe("mcp pair tools", () => {
     expect(bob.allowlist.get(bobId)).toEqual([]);
   }, 20000);
 
-  it("human_approve rejects agent self-approval without via_human", async () => {
+  it("human_approve rejects agent self-approval without approval_code", async () => {
     const bob = await makeAgent("bob-self-approve");
     await ensurePendingApprovalReady(bob);
-    const pending = bob.pending.add({
-      code: "1-kancil-senja",
-      proposal: {
-        scope: ["session.negotiate"],
-        mode: "ephemeral_until_session_closes",
-        initiatorAgentId: "ed25519:fake",
-      },
+    // Live registry entry required: pair_join TTL/consume gate runs before A4 approval_code check.
+    // A pending without registry is treated as expired (orphan/post-TTL), not self_approval.
+    const code = "1-kancil-senja";
+    const now = Date.now();
+    const proposal = {
+      scope: ["session.negotiate"],
+      mode: "ephemeral_until_session_closes" as const,
+      initiatorAgentId: "ed25519:fake",
+    };
+    bob.registry.register({
+      code,
+      sessionId: "sess-self-approve-test",
+      proposal,
+      createdAt: now,
+      expiresAt: now + 5 * 60 * 1000,
     });
+    const pending = bob.pending.add({ code, proposal });
 
     const result = structured(
       await handleHumanApprove(bob, {
@@ -361,6 +375,8 @@ describe("mcp pair tools", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toBe("self_approval_forbidden");
+    // Pending must remain so a human can retry with the real approval_code.
+    expect(bob.pending.get(pending.id)).toBeDefined();
     assertNoSecrets(result);
   });
 
