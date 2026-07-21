@@ -82,3 +82,8 @@ deploy/school-compose.yml
 .pi/
 docs/plans/
 docs/superpowers/
+
+# Marketing illustrations — host on GitHub Release (or CDN), not in git history.
+# Local PNG/WebP stay on disk; only the manifest is tracked. See docs/img/README.md.
+docs/img/*
+!docs/img/README.md
