@@ -41,33 +41,42 @@ search-replace that base in `README.md`.
 | `spillover.webp` | 64 KiB cap + artifact spill | Diagrams (collapsed) |
 | `profiles.webp` | core/1 · nego/1 · atest/1 | Diagrams (collapsed) |
 | `quick-start.webp` | `npx agentpair` + 3 steps | Diagrams (collapsed) |
+| `video-preview.mp4` | Screen record of dual-agent HTML demo (~720p) | README **Demo** (always) |
+| `video-preview.mov` | Master screen record (local only) | Re-export source; do not upload if MP4 exists |
 
 PNG masters (optional, same stems) stay local for re-export; prefer **WebP** on
-the release (~1.6 MB total vs ~13 MB PNG).
+the release (~1.6 MB total vs ~13 MB PNG). Demo video: upload **MP4 only**
+(~10 MB); keep `.mov` on disk.
 
 ## Publish checklist (one-time)
 
 From repo root, with `gh` authenticated:
 
 ```bash
-# 1) Compress (if you changed masters)
+# 1) Compress stills (if you changed masters)
 cd docs/img
 for f in problem architecture comparison lifecycle protocol spillover profiles quick-start; do
   cwebp -q 82 "${f}.png" -o "${f}.webp"
 done
+# Re-encode demo video if needed (macOS):
+# avconvert -s video-preview.mov -p Preset1280x720 -o video-preview.mp4 --replace
 cd ../..
 
-# 2) Create release + upload WebPs only
+# 2) Create release + upload WebPs + demo MP4
 gh release create docs-assets-v1 \
   docs/img/*.webp \
+  docs/img/video-preview.mp4 \
   --title "Docs illustrations v1" \
-  --notes "Marketing diagrams for README (not part of the protocol tree)."
+  --notes "Marketing diagrams + dual-agent demo video (not in git tree)."
 ```
 
-Re-upload after edits:
+If the release already exists:
 
 ```bash
-gh release upload docs-assets-v1 docs/img/*.webp --clobber
+gh release upload docs-assets-v1 \
+  docs/img/*.webp \
+  docs/img/video-preview.mp4 \
+  --clobber
 ```
 
 ## Local preview

@@ -80,24 +80,26 @@ and as the dual-agent runtime for the end-to-end walkthrough.
 - **GPT-5.6** never holds keys; it only calls MCP tools. That split is the product
   thesis: *models negotiate, humans gate trust, hosts hold crypto.*
 
-### Demo for judges
+## Demo
 
-1. **Video** — dual-agent walkthrough on the submission (pair → negotiate pitch →
-   co-sign → ratify).
-2. **Raw session logs (source of truth)** — full dual-Codex transcripts from the
-   live dogfood, not a scripted mock:
-   - [Agent A · initiator](./docs/demo/agent-a-chat.txt)
-   - [Agent B · joiner](./docs/demo/agent-b-chat.txt)  
-   Same pairing code (`25-laku-gula-gadis`), same thread, matching co-signed
-   artifact hash, dual human ratify → session closed.
-3. **In-repo replay** — open
-   [`docs/demo/agentpair-e2e-demo.html`](./docs/demo/agentpair-e2e-demo.html) in a
-   browser for a timed dual-panel visualization *derived from those logs* (happy
-   path condensed for clarity; the `.txt` files are the unedited evidence).
-4. **Live (optional)** — two Codex windows + shared relay (see Quick start below).
+**Primary demo (ready to watch):** dual Codex panels replaying a real e2e dogfood —
+pair → bond → session → propose → co-sign → dual ratify. Not a mock protocol: the
+timeline is derived from live transcripts (below).
 
-Wire crypto and MCP tools live in this repository and on npm. Prefer the
-transcripts when you want proof; prefer the HTML when you want a 60s walkthrough.
+https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/video-preview.mp4
+
+<video src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/video-preview.mp4" controls width="100%" playsinline>
+  <a href="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/video-preview.mp4">Download the dual-agent demo video (MP4)</a>
+</video>
+
+| | Link |
+|---|---|
+| **Interactive HTML** (play / pause / speed) | [docs/demo/agentpair-e2e-demo.html](./docs/demo/agentpair-e2e-demo.html) — open in a browser, or [htmlpreview](https://htmlpreview.github.io/?https://github.com/rfxlamia/agent-pair-protocol/blob/main/docs/demo/agentpair-e2e-demo.html) |
+| **Raw logs (source of truth)** | [Agent A · initiator](./docs/demo/agent-a-chat.txt) · [Agent B · joiner](./docs/demo/agent-b-chat.txt) — same code `25-laku-gula-gadis`, matching artifact hash, both sides ratify |
+| **Live (optional)** | Two Codex windows + shared relay — [Quick start](#quick-start-5-minutes) |
+
+Concept / explanation animation lives on the **Devpost / YouTube** submission (separate
+from this dual-agent walkthrough). Wire crypto and MCP tools ship in this repo and on npm.
 
 ## Quick start (≈5 minutes)
 
