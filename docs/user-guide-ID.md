@@ -146,8 +146,8 @@ Kedua sisi harus memakai **`AGENTPAIR_RELAY_URL` yang sama**.
 |---------|-------|------|
 | 1 | A | `pair_init` dengan `scope` (array string) dan `mode` |
 | 2 | A → B | Bagikan kode di luar band (telepon, chat, langsung) |
-| 3 | B | `pair_join` dengan kode itu |
-| 4 | B | `human_approve` pada pending join (`decision: "approve"`, plus `approval_code`) |
+| 3 | B | `pair_join` dengan kode itu — mengembalikan `pending_id` + `approval_path` |
+| 4 | B | Baca kode 6 digit dari `approval_path`, lalu `human_approve` (`decision: "approve"`, `approval_code`) |
 | 5 | A | Completion initiator biasanya otomatis; panggil `pair_init_complete` hanya jika macet |
 | 6 | Siapa saja | `list_bonds` — `agent_id` peer harus muncul |
 
@@ -177,13 +177,16 @@ default.
 1. **Open** — A memanggil `session_open` dengan `to`, `goal`, `acceptance[]`,
    `budget: { max_turns, deadline }` (datetime ISO-8601), dan `mandate`.
    Status menjadi `pending` sampai B approve.
-2. **Approve open** — B `human_approve` pada pending open → session `live`.
-3. **Turn** — `session_msg` dengan `type` `propose` | `counter` | `accept`
+2. **Tarik open** — B memanggil `inbox` sampai `nego.open` masuk diproses dan
+   pending session-open muncul (`pending_id` + `approval_path`).
+3. **Approve open** — B membaca kode dari `approval_path`, lalu `human_approve`
+   → session `live`.
+4. **Turn** — `session_msg` dengan `type` `propose` | `counter` | `accept`
    (dan opsional `challenge` / `test_report` jika memakai `atest/1`).
-4. **Sign** — kedua sisi `session_sign` dengan `artifact_hash` yang disepakati
+5. **Sign** — kedua sisi `session_sign` dengan `artifact_hash` yang disepakati
    ketika cek executable (jika ada) hijau.
-5. **Ratify** — kedua manusia `human_approve` pending ratify → hasil
-   co-signed; session `closed`.
+6. **Ratify** — tiap sisi menarik/menyajikan pending ratify bila perlu, lalu
+   kedua manusia `human_approve` → hasil co-signed; session `closed`.
 
 Tipe wire memakai prefix `nego.*` (misalnya `nego.open`), bukan `session.open`.
 
@@ -202,12 +205,27 @@ tipe envelope `revoke.notice`. Revoke sepihak — peer tidak perlu approve.
 
 Aksi pending (pair join, session open, ratify) membutuhkan `human_approve` dengan:
 
-- `pending_id` — dari tool yang membuat pending
+- `pending_id` — dari hasil tool yang di-gate (atau efek samping `session_status` / inbox)
 - `decision` — `"approve"` atau `"reject:<reason>"`
-- `approval_code` — kode luar band dari operator manusia (wajib secara praktis)
+- `approval_code` — kode 6 digit dari filesystem host (lihat di bawah)
 
-AI tidak boleh mengarang approval code. Alur klien Anda harus menampilkan kode
-ke manusia, baru kemudian memanggil tool.
+### Cara mendapatkan approval code (MCP referensi)
+
+Kode plaintext **tidak pernah** masuk di JSON tool (secret di-strip sebelum hasil
+sampai ke model). Saat pending ter-gate dibuat, host:
+
+1. Menulis file di **`approval_path`** — biasanya
+   `~/.agentpair/approvals/<pending_id>` (atau `$AGENTPAIR_DATA_DIR/approvals/…`),
+   mode `0600`, berisi kode 6 digit
+2. Mengembalikan `approval_path` dan `suggested_next` pada hasil tool / inbox
+3. Best-effort mencatat kode ke stderr:
+   `[agentpair] approval code for pending …`
+
+**Langkah operator:** buka `approval_path` → salin kode 6 digit → panggil
+`human_approve(pending_id, decision, approval_code)`.
+
+Model **tidak boleh** mengarang kode. Kode hilang/salah menghasilkan
+`self_approval_forbidden` / `invalid_approval_code`.
 
 ## Runner acceptance (yang live)
 
@@ -227,9 +245,9 @@ Reload/restart klien. Pastikan `npx -y agentpair` jalan dengan Node 22+. Cek log
 MCP klien untuk error spawn.
 
 **Pairing gagal**  
-URL relay sama di kedua sisi? Kode masih dalam TTL? Joiner harus
-`human_approve` sebelum SPAKE2 selesai. Initiator: coba `pair_init_complete`
-dengan kode asli.
+URL relay sama di kedua sisi? Kode masih dalam TTL? Joiner harus membuka
+`approval_path` dan `human_approve` sebelum SPAKE2 selesai. Initiator: coba
+`pair_init_complete` dengan kode asli.
 
 **Pesan tidak sampai**  
 Panggil `inbox` di penerima. Pastikan `list_bonds` di kedua sisi. URL relay

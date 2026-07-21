@@ -146,8 +146,8 @@ Both sides must use the **same** `AGENTPAIR_RELAY_URL`.
 |------|-----|--------|
 | 1 | A | `pair_init` with `scope` (string array) and `mode` |
 | 2 | A → B | Share the returned code out of band (call, chat, in person) |
-| 3 | B | `pair_join` with that code |
-| 4 | B | `human_approve` on the pending join (`decision: "approve"`, plus `approval_code`) |
+| 3 | B | `pair_join` with that code — returns `pending_id` + `approval_path` |
+| 4 | B | Read the 6-digit code from `approval_path`, then `human_approve` (`decision: "approve"`, `approval_code`) |
 | 5 | A | Initiator completion usually runs in the background; call `pair_init_complete` only if it stalls |
 | 6 | Either | `list_bonds` — peer `agent_id` should appear |
 
@@ -177,13 +177,16 @@ default.
 1. **Open** — A calls `session_open` with `to`, `goal`, `acceptance[]`,
    `budget: { max_turns, deadline }` (ISO-8601 datetime), and `mandate`.
    Status becomes `pending` until B approves.
-2. **Approve open** — B `human_approve` on the open pending → session `live`.
-3. **Turn** — `session_msg` with `type` `propose` | `counter` | `accept` (and
+2. **Pull open** — B calls `inbox` until the inbound `nego.open` is processed and
+   a session-open pending appears (`pending_id` + `approval_path`).
+3. **Approve open** — B reads the code from `approval_path`, then `human_approve`
+   → session `live`.
+4. **Turn** — `session_msg` with `type` `propose` | `counter` | `accept` (and
    optionally `challenge` / `test_report` when using `atest/1`).
-4. **Sign** — both sides `session_sign` with the agreed `artifact_hash` when
+5. **Sign** — both sides `session_sign` with the agreed `artifact_hash` when
    executable checks (if any) are green.
-5. **Ratify** — both humans `human_approve` the ratify pendings → co-signed
-   result; session `closed`.
+6. **Ratify** — each side pulls/surfaces its ratify pending as needed, then both
+   humans `human_approve` → co-signed result; session `closed`.
 
 Wire types use the `nego.*` prefix (for example `nego.open`), not `session.open`.
 
@@ -203,12 +206,27 @@ the peer does not approve it.
 
 Pending actions (pair join, session open, ratify) require `human_approve` with:
 
-- `pending_id` — from the tool that created the pending
+- `pending_id` — from the gated tool result (or `session_status` / inbox side effects)
 - `decision` — `"approve"` or `"reject:<reason>"`
-- `approval_code` — out-of-band code from the human operator (required in practice)
+- `approval_code` — the 6-digit code from the host filesystem (see below)
 
-The AI must not invent approval codes. Your client/workflow should surface the
-code to the human and only then call the tool.
+### How to get the approval code (reference MCP)
+
+The plaintext code is **never** included in tool JSON (secrets are stripped before
+results reach the model). When a gated pending is created, the host:
+
+1. Writes a file at **`approval_path`** — typically
+   `~/.agentpair/approvals/<pending_id>` (or `$AGENTPAIR_DATA_DIR/approvals/…`),
+   mode `0600`, containing a 6-digit code
+2. Returns `approval_path` and `suggested_next` on the gated tool / inbox result
+3. Best-effort logs the code to stderr:
+   `[agentpair] approval code for pending …`
+
+**Operator steps:** open `approval_path` → copy the 6-digit code → call
+`human_approve(pending_id, decision, approval_code)`.
+
+The model must **not** invent the code. Missing or wrong codes yield
+`self_approval_forbidden` / `invalid_approval_code`.
 
 ## Acceptance runners (live)
 
@@ -228,9 +246,9 @@ Reload/restart the client. Confirm `npx -y agentpair` runs on your PATH with
 Node 22+. Check the client’s MCP log for spawn errors.
 
 **Pairing fails**  
-Same relay URL on both sides? Code still within TTL? Joiner must
-`human_approve` before SPAKE2 finishes. Initiator: try `pair_init_complete`
-with the original code.
+Same relay URL on both sides? Code still within TTL? Joiner must open
+`approval_path` and `human_approve` before SPAKE2 finishes. Initiator: try
+`pair_init_complete` with the original code.
 
 **Messages never arrive**  
 Call `inbox` on the receiver. Confirm `list_bonds` on both sides. Wrong relay

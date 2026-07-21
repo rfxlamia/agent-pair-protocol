@@ -91,10 +91,12 @@ Kode pairing kedaluwarsa sekitar **5 menit**.
 | Langkah | Siapa | Tool |
 |---------|-------|------|
 | 1 | A | `pair_init` — bagikan kode ke B (chat, telepon, langsung) |
-| 2 | B | `pair_join` dengan kode itu — membuat pending approval |
-| 3 | B | `human_approve` pada pending join (manusia memberi `approval_code`; model tidak boleh mengarangnya) |
+| 2 | B | `pair_join` dengan kode itu — mengembalikan `pending_id` dan `approval_path` |
+| 3 | B | Buka `approval_path` (kode 6 digit di disk; tidak ada di JSON tool), lalu `human_approve` dengan `approval_code` itu |
 | 4 | A | Tunggu auto-completion (atau panggil `pair_init_complete` bila perlu) |
 | 5 | Siapa saja | `list_bonds` — pastikan peer muncul |
+
+Detail: [panduan pengguna — Gate manusia](./docs/user-guide-ID.md#gate-manusia).
 
 **4. Smoke check**
 
@@ -162,6 +164,7 @@ sequenceDiagram
   actor HB as Manusia B
 
   HA->>A: session_open
+  HB->>B: inbox (terima nego.open)
   HB->>B: human_approve (open)
   Note over A,B: session live
   A->>B: nego.turn (propose / counter / accept)
@@ -174,6 +177,7 @@ sequenceDiagram
 ```
 
 Profil opsional **`atest/1`** menambah challenge yang bisa dicek mesin (`atest_run` / report) sebelum sign. MCP referensi secara default mengiklankan `core/1` + `nego/1`.
+
 ## Kelas conformance
 
 | Kelas | Mengimplementasikan | Hasil |

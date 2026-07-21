@@ -89,10 +89,12 @@ Pairing codes expire after about **5 minutes**.
 | Step | Who | Tool |
 |------|-----|------|
 | 1 | A | `pair_init` — share the returned code with B (chat, call, in person) |
-| 2 | B | `pair_join` with that code — creates a pending approval |
-| 3 | B | `human_approve` on the pending join (human supplies `approval_code`; the model must not invent it) |
+| 2 | B | `pair_join` with that code — returns `pending_id` and `approval_path` |
+| 3 | B | Open `approval_path` (6-digit code on disk; not in tool JSON), then `human_approve` with that `approval_code` |
 | 4 | A | Wait for auto-completion (or call `pair_init_complete` if needed) |
 | 5 | Either | `list_bonds` — confirm the peer appears |
+
+Details: [user guide — Human gates](./docs/user-guide.md#human-gates).
 
 **4. Smoke check**
 
@@ -160,6 +162,7 @@ sequenceDiagram
   actor HB as Human B
 
   HA->>A: session_open
+  HB->>B: inbox (receive nego.open)
   HB->>B: human_approve (open)
   Note over A,B: session live
   A->>B: nego.turn (propose / counter / accept)

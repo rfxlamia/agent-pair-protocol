@@ -148,6 +148,25 @@ The MCP package wraps it in `tools/session.ts` and persists via stores under
 Tool handlers return MCP text content plus `structuredContent` JSON (typically
 with an `ok` field). Strip secrets before anything reaches the model.
 
+### Human gate (reference binding)
+
+Gated actions (`pair_join`, session open, ratify) create a pending, then surface
+an approval channel the model cannot forge:
+
+1. **Create** — `PendingQueue` allocates `pending_id`, generates a 6-digit code,
+   stores a verifier, writes `~/.agentpair/approvals/<pending_id>` (mode `0600`)
+   via `store/approval-code.ts` (`writeApprovalFileSync`)
+2. **Surface** — `tools/approval-surface.ts` attaches `approval_path` +
+   `suggested_next` to the tool/inbox result; plaintext code is **not** in JSON.
+   Best-effort: `console.error` on stderr
+3. **Verify** — `human_approve` requires `approval_code`; missing →
+   `self_approval_forbidden`; bad/malformed → `invalid_approval_code`
+   (`tools/human-approve.ts`)
+4. **Consume** — on success the pending and approval file are consumed/removed
+
+Without reading `approval_path`, operators cannot complete gated steps. See also
+the [user guide Human gates](./user-guide.md#human-gates) section.
+
 ### Adding a tool
 
 1. Implement a handler under `packages/mcp-server/src/tools/`

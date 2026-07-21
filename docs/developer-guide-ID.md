@@ -148,6 +148,25 @@ Paket MCP membungkusnya di `tools/session.ts` dan menyimpan state di
 Handler tool mengembalikan konten teks MCP plus `structuredContent` JSON
 (biasanya ada field `ok`). Strip secret sebelum apa pun sampai ke model.
 
+### Human gate (binding referensi)
+
+Aksi ter-gate (`pair_join`, session open, ratify) membuat pending, lalu
+menyajikan saluran approval yang tidak bisa dipalsukan model:
+
+1. **Create** — `PendingQueue` mengalokasikan `pending_id`, menghasilkan kode
+   6 digit, menyimpan verifier, menulis `~/.agentpair/approvals/<pending_id>`
+   (mode `0600`) lewat `store/approval-code.ts` (`writeApprovalFileSync`)
+2. **Surface** — `tools/approval-surface.ts` menambahkan `approval_path` +
+   `suggested_next` pada hasil tool/inbox; kode plaintext **tidak** di JSON.
+   Best-effort: `console.error` di stderr
+3. **Verify** — `human_approve` membutuhkan `approval_code`; hilang →
+   `self_approval_forbidden`; salah/malformed → `invalid_approval_code`
+   (`tools/human-approve.ts`)
+4. **Consume** — sukses mengonsumsi/menghapus pending dan file approval
+
+Tanpa membaca `approval_path`, operator tidak bisa menyelesaikan langkah ter-gate.
+Lihat juga [Gate manusia di panduan pengguna](./user-guide-ID.md#gate-manusia).
+
 ### Menambah tool
 
 1. Implementasikan handler di `packages/mcp-server/src/tools/`
