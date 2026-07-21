@@ -7,35 +7,52 @@
 
 [Bahasa Indonesia](./README-ID.md)
 
-> Personal agent-to-agent protocol: two AI agents, each acting for one human, exchange end-to-end-encrypted messages through an untrusted relay.
+> Two people’s AI assistants agree on a meeting time, API contract, or clause
+> **without** dumping calendars, drafts, or secrets into WhatsApp or a shared SaaS.
+> Humans only approve the gates. The network never reads the payload.
 
 **Spec status:** [SPEC.md](./SPEC.md) is **1.0-draft** — the wire format may still change until the 1.0 freeze. Reference packages on npm are usable today.
 
 ## Why AgentPair?
 
-Two people each have an AI agent. They need a shared deliverable — a schedule,
-an API contract, a document — without turning the humans into messengers and
-without handing the draft to a third party that can read it.
+### The 10-second problem
 
-Today that usually looks like: agent proposes → human copy-pastes → other human
-pastes into their agent → repeat. Or everyone piles into a shared SaaS that sees
-every revision. That is a **messenger tax** plus a **trust tax**.
+You have an AI assistant. Your counterpart has one too. You need a **shared
+deliverable** — a schedule both can keep, an API field list both implement, a
+paragraph both will sign. Today that usually means:
 
-AgentPair cuts the messenger tax and keeps the trust tax where it belongs:
+1. Your agent drafts → you paste into WhatsApp  
+2. They paste into *their* agent → a different theory comes back  
+3. Repeat until someone gives up — or you dump everything into a shared doc SaaS
+   that can read every revision  
 
-- **Agents talk; humans gate trust.** Pairing uses a short code exchanged between
-  people. Opening a negotiation and ratifying the result require explicit human
-  approval. Either side can revoke the bond unilaterally, at any time.
-- **Keys never leave the host.** The model reasons and calls tools; the local
-  AgentPair process holds keys, signs, and encrypts.
-- **The relay is dumb.** It queues ciphertext and routing metadata. It cannot
-  read payloads. A public test relay is fine for experiments; self-host when you
-  care about metadata privacy.
-- **Authenticity is not trustworthiness.** A verified peer message is still
-  untrusted input to your model.
+You become the **wire**. The SaaS becomes a **third party that saw the draft**.
 
-The reference binding is an MCP server (`agentpair` on npm). The protocol itself
-is binding-agnostic — see [SPEC.md](./SPEC.md).
+### Who feels this first
+
+| Persona | Pain | What “done” looks like |
+|---------|------|------------------------|
+| **Two eng leads** (API ↔ firmware / backend ↔ client) | Days of copy-paste debug and contract drift | One co-signed interface paragraph / field list |
+| **Two founders / execs** | Calendar and deal drafts leak through chat tools | One agreed slot or clause; full calendar never shared |
+| **Two freelancers / clients** | SOW thrash in email | One ratified scope blob, either side can walk away |
+
+### What changes with AgentPair
+
+- **Assistants negotiate; you approve.** Pair with a short code (out-of-band). Open
+  a session and ratify the result only with explicit human approval. Either side
+  can revoke the bond unilaterally — no stuck “please unpartner” deadlock.
+- **Stop being the messenger.** Drafts and proposals move agent-to-agent. You are
+  not a human router for two models.
+- **Don’t put the draft in their SaaS.** Payloads are end-to-end encrypted. The
+  relay is dumb (ciphertext + routing metadata only). Keys never leave each
+  person’s machine.
+- **Verified ≠ trusted.** A signed peer message is still untrusted input to your
+  model — authenticity is not permission to obey. Nothing ships until both humans
+  ratify a matching artifact hash.
+
+The reference binding is an MCP server (`agentpair` on npm) so clients like
+**OpenAI Codex**, Cursor, or Claude can drive the host. The protocol itself is
+binding-agnostic — see [SPEC.md](./SPEC.md).
 
 ## Built with OpenAI Codex & GPT-5.6
 
