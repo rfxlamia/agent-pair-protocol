@@ -40,10 +40,6 @@ You become the **wire**. The SaaS becomes a **third party that saw the draft**.
 | **Two founders / execs** | Calendar and deal drafts leak through chat tools | One agreed slot or clause; full calendar never shared |
 | **Two freelancers / clients** | SOW thrash in email | One ratified scope blob, either side can walk away |
 
-<p align="center">
-  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/comparison.webp" alt="Comparison: manual copy-paste vs shared doc SaaS vs AgentPair Protocol" width="900" />
-</p>
-
 ### What changes with AgentPair
 
 - **Assistants negotiate; you approve.** Pair with a short code (out-of-band). Open
@@ -167,15 +163,7 @@ Details: [user guide — Human gates](./docs/user-guide.md#human-gates).
 Send a short `send` to the peer `agent_id`, then `inbox` on the other side.
 For a full negotiate → sign → ratify flow, see the [user guide](./docs/user-guide.md).
 
-<p align="center">
-  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/quick-start.webp" alt="Quick start: npx agentpair, shared relay, pair_init" width="900" />
-</p>
-
 ## Architecture
-
-<p align="center">
-  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/architecture.webp" alt="AI client (brain), AgentPair host (vault), relay (dumb pipe)" width="900" />
-</p>
 
 ```mermaid
 flowchart LR
@@ -203,19 +191,7 @@ flowchart LR
 
 Bindings other than MCP are allowed by the spec; this repo ships the MCP reference binding.
 
-<p align="center">
-  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/protocol.webp" alt="AgentPair envelope v1 exploded: unsigned shell, Ed25519 signature, encrypted core" width="900" />
-</p>
-
-<p align="center">
-  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/spillover.webp" alt="Spillover: 64 KiB envelope cap with encrypted artifact store for large payloads" width="900" />
-</p>
-
 ## Pairing and session flows
-
-<p align="center">
-  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/lifecycle.webp" alt="Lifecycle: pair bonding, negotiate session, ratify with human approval" width="900" />
-</p>
 
 Two separate happy paths. Both peers use the same relay (omitted below for clarity — every host↔host hop goes through it). Profiles: `core/1` + `nego/1`.
 
@@ -264,10 +240,6 @@ Optional profile **`atest/1`** adds machine-checkable challenges (`atest_run` / 
 
 ## Conformance classes
 
-<p align="center">
-  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/profiles.webp" alt="Protocol conformance profiles: core/1, nego/1, atest/1" width="900" />
-</p>
-
 | Class | Implements | What you get |
 |-------|------------|--------------|
 | **Core** | Identity through core messaging in [SPEC.md](./SPEC.md) | Identity, envelopes, relay, pairing/bonding, encrypted messaging |
@@ -277,6 +249,66 @@ Optional profile **`atest/1`** adds machine-checkable challenges (`atest_run` / 
 Advertise supported profiles at pairing. Do not send envelope types for a profile the peer did not advertise.
 
 Third-party Core implementors: [conformance checklist](./docs/conformance-checklist.md) and [Implement Core in a weekend](./docs/implement-core-weekend.md) (golden vectors in `packages/protocol/fixtures/`).
+
+## Diagrams
+
+More illustrations are **collapsed by default** (HTML `<details>` — click a row to expand). The problem diagram above is always shown. Hosted on release [`docs-assets-v1`](https://github.com/rfxlamia/agent-pair-protocol/releases/tag/docs-assets-v1); sources in [`docs/img/README.md`](./docs/img/README.md).
+
+<details>
+<summary><strong>Comparison</strong> — copy-paste vs shared SaaS vs AgentPair</summary>
+<br />
+<p align="center">
+  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/comparison.webp" alt="Comparison table" width="900" />
+</p>
+</details>
+
+<details>
+<summary><strong>Architecture</strong> — brain · vault · dumb pipe</summary>
+<br />
+<p align="center">
+  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/architecture.webp" alt="Brain, vault, dumb pipe" width="900" />
+</p>
+</details>
+
+<details>
+<summary><strong>Lifecycle</strong> — pair · negotiate · ratify</summary>
+<br />
+<p align="center">
+  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/lifecycle.webp" alt="Pairing and session lifecycle" width="900" />
+</p>
+</details>
+
+<details>
+<summary><strong>Envelope v1</strong> — shell · signature · encrypted core</summary>
+<br />
+<p align="center">
+  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/protocol.webp" alt="Envelope exploded view" width="900" />
+</p>
+</details>
+
+<details>
+<summary><strong>Spillover</strong> — 64 KiB envelopes + large artifacts</summary>
+<br />
+<p align="center">
+  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/spillover.webp" alt="Spillover mechanic" width="900" />
+</p>
+</details>
+
+<details>
+<summary><strong>Profiles</strong> — core/1 · nego/1 · atest/1</summary>
+<br />
+<p align="center">
+  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/profiles.webp" alt="Conformance profiles" width="900" />
+</p>
+</details>
+
+<details>
+<summary><strong>Quick start</strong> — visual 3-step card</summary>
+<br />
+<p align="center">
+  <img src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/quick-start.webp" alt="Quick start card" width="900" />
+</p>
+</details>
 
 ## Documentation
 

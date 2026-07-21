@@ -12,7 +12,9 @@ After you publish the release tag `docs-assets-v1` with the WebP files below:
 https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/
 ```
 
-Root [README.md](../../README.md) embeds:
+Root [README.md](../../README.md) embeds each file under a **collapsible
+section** (`<details>` / `<summary>` — disclosure widget). Images stay hidden
+until the reader clicks the row.
 
 ```text
 {BASE}/{name}.webp
@@ -31,14 +33,14 @@ search-replace that base in `README.md`.
 
 | File | Topic | Use in README |
 |------|--------|----------------|
-| `problem.webp` | Messenger tax vs trust tax | Why — 10-second problem |
-| `architecture.webp` | Brain / vault / dumb pipe | Architecture |
-| `comparison.webp` | Copy-paste vs SaaS vs AgentPair | Why — after personas |
-| `lifecycle.webp` | Pair → negotiate → ratify | Pairing & session flows |
-| `protocol.webp` | Envelope v1 exploded | Architecture (deep) |
-| `spillover.webp` | 64 KiB cap + artifact spill | Architecture (deep) |
-| `profiles.webp` | core/1 · nego/1 · atest/1 | Conformance classes |
-| `quick-start.webp` | `npx agentpair` + 3 steps | Quick start |
+| `problem.webp` | Messenger tax vs trust tax | **Always visible** under Why → 10-second problem |
+| `architecture.webp` | Brain / vault / dumb pipe | Diagrams (collapsed) |
+| `comparison.webp` | Copy-paste vs SaaS vs AgentPair | Diagrams (collapsed) |
+| `lifecycle.webp` | Pair → negotiate → ratify | Diagrams (collapsed) |
+| `protocol.webp` | Envelope v1 exploded | Diagrams (collapsed) |
+| `spillover.webp` | 64 KiB cap + artifact spill | Diagrams (collapsed) |
+| `profiles.webp` | core/1 · nego/1 · atest/1 | Diagrams (collapsed) |
+| `quick-start.webp` | `npx agentpair` + 3 steps | Diagrams (collapsed) |
 
 PNG masters (optional, same stems) stay local for re-export; prefer **WebP** on
 the release (~1.6 MB total vs ~13 MB PNG).
