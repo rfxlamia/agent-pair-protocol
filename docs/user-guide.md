@@ -1,48 +1,32 @@
-# Panduan Pengguna — AgentPair MCP
+# User guide — AgentPair MCP
 
-Panduan ini menjelaskan cara menggunakan MCP server AgentPair: mengintegrasikannya ke AI client Anda, menjalankan pairing dengan partner, dan memahami hasil yang diharapkan saat berhasil atau gagal.
+[Bahasa Indonesia](./user-guide-ID.md) · [Docs index](./README.md) · [Root README](../README.md)
 
-## Apa yang dilakukan AgentPair?
+How to run the AgentPair MCP server, pair with another human’s agent, exchange
+encrypted messages, and negotiate a co-signed deliverable.
 
-AgentPair memungkinkan **agent AI Anda** berkomunikasi dengan **agent AI orang lain** untuk menegosiasikan deliverable konkret — jadwal, kontrak API, dokumen — tanpa Anda menjadi perantara pesan.
+## What AgentPair does
 
-| Komponen | Peran |
-|----------|-------|
-| **AI client** (Cursor, Claude Desktop, dll.) | Berpikir dan memanggil tool MCP |
-| **agentpair MCP server** | Menyimpan kunci, menandatangani, mengenkripsi, mengelola allowlist |
-| **Relay** | Antrian pesan terenkripsi; tidak bisa membaca isi payload |
+| Piece | Role |
+|-------|------|
+| **AI client** (Cursor, Claude Desktop, …) | Reasons and calls MCP tools |
+| **`agentpair` MCP server** | Holds keys, signs, encrypts, enforces bonds |
+| **Relay** | Queues ciphertext; cannot read payloads |
 
-Kunci kriptografi **tidak pernah** meninggalkan MCP server. Model AI hanya melakukan reasoning; server yang menandatangani.
+Keys never leave the MCP host. The model only reasons; the host signs.
 
----
+## Prerequisites
 
-## Prasyarat
+| Item | Notes |
+|------|--------|
+| Node.js | 22+ |
+| MCP client | Cursor, Claude Desktop, Claude Code, or any MCP host |
+| Partner | Another person with the same setup |
+| Relay | Same URL on both sides — public test or self-hosted |
 
-| Item | Versi / catatan |
-|------|-----------------|
-| Node.js | 22 atau lebih baru |
-| pnpm | 10.x (package manager monorepo) |
-| Rust + wasm-pack | Wajib untuk build SPAKE2 WASM (sekali saat setup) |
-| AI client dengan dukungan MCP | Cursor, Claude Desktop, Claude Code, atau klien MCP lain |
-| Relay | Set `AGENTPAIR_RELAY_URL` — lihat [Relay](#relay-referensi-vs-self-hosted) |
-| Partner | Satu orang lain dengan setup serupa untuk pairing |
+## Install
 
-**Opsional untuk session dengan acceptance test `codegen-compile`:** Docker (untuk kompilasi sintaks ESP32).
-
----
-
-## Instalasi
-
-### Dari npm (disarankan)
-
-Setelah dipublish ke npm registry:
-
-```bash
-# Tidak perlu install global — MCP client memanggil lewat npx
-npx -y agentpair
-```
-
-Konfigurasi MCP (Cursor, Claude Desktop, dll.):
+### From npm (recommended)
 
 ```json
 {
@@ -51,519 +35,247 @@ Konfigurasi MCP (Cursor, Claude Desktop, dll.):
       "command": "npx",
       "args": ["-y", "agentpair"],
       "env": {
-        "AGENTPAIR_RELAY_URL": "https://relay.yourdomain.com"
+        "AGENTPAIR_RELAY_URL": "https://relay.yagura.space"
       }
     }
   }
 }
 ```
 
-Pin versi jika perlu stabilitas: `"args": ["-y", "agentpair@0.1.0"]`
+Restart the client after saving. No global install required — the client spawns
+`npx` on demand.
 
-### Dari source (development)
+### From source (development)
 
 ```bash
-git clone https://github.com/<org>/agent-pair.git agent-pair
-cd agent-pair
+git clone https://github.com/rfxlamia/agent-pair-protocol.git
+cd agent-pair-protocol
 pnpm install
 pnpm build
 ```
 
-> Ganti URL clone dengan URL repo aktual Anda.
-
-### Menjalankan MCP server
-
-**Dari npm:** gunakan konfigurasi `npx` di atas — AI client yang memanggil proses ini.
-
-**Dari source:**
-
-```bash
-export AGENTPAIR_RELAY_URL=https://relay.yourdomain.com
-node packages/mcp-server/dist/cli.js
-```
-
-Server berkomunikasi lewat **stdio** (standar MCP). Jangan jalankan di background tanpa transport — AI client yang akan memanggil proses ini.
-
-### Kunci identitas
-
-Pada pertama kali dijalankan, MCP server membuat pasangan kunci Ed25519 dan menyimpannya di:
-
-```
-~/.agentpair/keys.json
-```
-
-File ini permission `0600`. **Jangan bagikan atau commit file ini.** Public key Anda menjadi `agent_id` (format: `ed25519:<base64url>`).
-
----
-
-## Integrasi ke AI Client
-
-### Cursor (npm)
-
-Tambahkan ke `.cursor/mcp.json` di root workspace (atau konfigurasi global Cursor):
-
-```json
-{
-  "mcpServers": {
-    "agentpair": {
-      "command": "npx",
-      "args": ["-y", "agentpair"],
-      "env": {
-        "AGENTPAIR_RELAY_URL": "https://relay.yourdomain.com"
-      }
-    }
-  }
-}
-```
-
-### Cursor (dari source)
+Point the client at the built CLI:
 
 ```json
 {
   "mcpServers": {
     "agentpair": {
       "command": "node",
-      "args": ["/path/to/agent-pair/packages/mcp-server/dist/cli.js"],
+      "args": ["/absolute/path/to/agent-pair-protocol/packages/mcp-server/dist/cli.js"],
       "env": {
-        "AGENTPAIR_RELAY_URL": "https://relay.yourdomain.com"
+        "AGENTPAIR_RELAY_URL": "https://relay.yagura.space"
       }
     }
   }
 }
 ```
 
-Ganti `/path/to/agent-pair` dengan path absolut ke clone repo Anda.
+The server speaks **stdio** MCP. Let the AI client start the process; do not run
+it as a detached background daemon for normal use.
 
-**Setelah menyimpan:** Restart Cursor (atau reload window) agar konfigurasi MCP terbaca.
+### Identity keys
 
-**Verifikasi:** Buka chat Cursor, minta agent memanggil tool `inbox`. Sebelum pairing, inbox akan mengembalikan `ok: true` dengan `envelopes: []` (kosong) — itu normal. Jika MCP terhubung, agent akan melihat tool AgentPair di daftar tool yang tersedia.
+On first run the host creates an Ed25519 keypair at:
+
+```text
+~/.agentpair/keys.json
+```
+
+Permissions `0600`. **Do not share or commit this file.** Your public identity is
+`agent_id` = `ed25519:` + base64url(public key).
+
+Override the data directory with `AGENTPAIR_DATA_DIR` (keys live at
+`$AGENTPAIR_DATA_DIR/keys.json`).
+
+## Client setup
+
+### Cursor
+
+Workspace: `.cursor/mcp.json`, or your global Cursor MCP config. Use the npm or
+from-source snippets above. Reload the window, then ask the agent to call
+`inbox` — an empty inbox (`ok: true`, `envelopes: []`) before pairing is normal.
 
 ### Claude Desktop
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+with the same `mcpServers.agentpair` block. Restart Claude Desktop.
 
-```json
-{
-  "mcpServers": {
-    "agentpair": {
-      "command": "npx",
-      "args": ["-y", "agentpair"],
-      "env": {
-        "AGENTPAIR_RELAY_URL": "https://relay.yourdomain.com"
-      }
-    }
-  }
-}
+### Other MCP clients
+
+Same pattern: command `npx`, args `["-y", "agentpair"]`, env
+`AGENTPAIR_RELAY_URL`.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AGENTPAIR_RELAY_URL` | `http://127.0.0.1:3001` | Relay base URL (both peers must match) |
+| `AGENTPAIR_DATA_DIR` | `~/.agentpair` | Keys, bonds, pending queue, cursors |
+| `AGENTPAIR_PEER_CONTENT_CAP_BYTES` | `8192` (max `65536`) | Cap on peer payload text presented to the model |
+| `AGENTPAIR_PREFLIGHT` | `warn` | Relay `/health` check: `warn`, `strict`, or `off` |
+
+Preflight expects relay health to advertise `spec_version: "1.0-draft"` and
+`relay_conformance: "agentpair-relay/1"`.
+
+## MCP tools
+
+| Tool | Purpose |
+|------|---------|
+| `pair_init` | Start pairing; returns a shareable code |
+| `pair_join` | Redeem a code; queues human approval |
+| `pair_init_complete` | Retry initiator completion if auto-complete stalled |
+| `human_approve` | Approve/reject pending join, session open, or ratify |
+| `list_bonds` | List bonded peers |
+| `inbox` | Pull and verify envelopes |
+| `send` | Send `core.msg` to a bonded peer |
+| `close` | Send `core.close` on a thread (unilateral) |
+| `revoke` | Drop a bond locally and push allowlist to the relay |
+| `session_open` | Open negotiation (`nego.open`) |
+| `session_msg` | `propose` / `counter` / `accept` / `challenge` / `test_report` |
+| `session_sign` | Sign artifact hash when ready |
+| `session_status` | Snapshot of session state |
+| `atest_run` | Run a registered acceptance runner on an artifact |
+
+## Main workflows
+
+### 1. Pair
+
+Both sides must use the **same** `AGENTPAIR_RELAY_URL`.
+
+| Step | Who | Action |
+|------|-----|--------|
+| 1 | A | `pair_init` with `scope` (string array) and `mode` |
+| 2 | A → B | Share the returned code out of band (call, chat, in person) |
+| 3 | B | `pair_join` with that code — returns `pending_id` + `approval_path` |
+| 4 | B | Read the 6-digit code from `approval_path`, then `human_approve` (`decision: "approve"`, `approval_code`) |
+| 5 | A | Initiator completion usually runs in the background; call `pair_init_complete` only if it stalls |
+| 6 | Either | `list_bonds` — peer `agent_id` should appear |
+
+**Bond modes**
+
+| Mode | Meaning |
+|------|---------|
+| `ephemeral_until_session_closes` | Bond removed when a negotiated session finalizes |
+| `bonded_contact` | Bond persists until `revoke` |
+
+Pairing codes expire after about **5 minutes**.
+
+### 2. Send a message
+
+```text
+send(to: "<peer agent_id>", body: "hello")
 ```
 
-Restart Claude Desktop setelah menyimpan.
+Success returns `{ ok: true, id, thread, seq }`. Common failure:
+`recipient_not_allowed` (not bonded). Peer pulls with `inbox`.
 
-### Claude Code / klien MCP lain
+### 3. Negotiate a deliverable
 
-Gunakan pola yang sama: `npx` + `agentpair`, dengan env `AGENTPAIR_RELAY_URL`.
+Requires a bond. Reference MCP advertises profiles `core/1` and `nego/1` by
+default.
 
----
+1. **Open** — A calls `session_open` with `to`, `goal`, `acceptance[]`,
+   `budget: { max_turns, deadline }` (ISO-8601 datetime), and `mandate`.
+   Status becomes `pending` until B approves.
+2. **Pull open** — B calls `inbox` until the inbound `nego.open` is processed and
+   a session-open pending appears (`pending_id` + `approval_path`).
+3. **Approve open** — B reads the code from `approval_path`, then `human_approve`
+   → session `live`.
+4. **Turn** — `session_msg` with `type` `propose` | `counter` | `accept` (and
+   optionally `challenge` / `test_report` when using `atest/1`).
+5. **Sign** — both sides `session_sign` with the agreed `artifact_hash` when
+   executable checks (if any) are green.
+6. **Ratify** — each side pulls/surfaces its ratify pending as needed, then both
+   humans `human_approve` → co-signed result; session `closed`.
 
-## Variabel lingkungan
+Wire types use the `nego.*` prefix (for example `nego.open`), not `session.open`.
 
-| Variabel | Default (jika tidak diset) | Rekomendasi produksi |
-|----------|---------------------------|----------------------|
-| `AGENTPAIR_RELAY_URL` | `http://127.0.0.1:3001` | `https://relay.yourdomain.com` |
+Check progress with `session_status(thread)`.
 
-> **Penting:** Tanpa env var, MCP server mengarah ke relay lokal. Untuk pairing dengan partner di internet, **wajib** set `AGENTPAIR_RELAY_URL=https://relay.yourdomain.com` di konfigurasi MCP client Anda.
+### 4. Revoke
 
----
-
-## Tool MCP yang tersedia
-
-### Transport & pairing
-
-| Tool | Fungsi |
-|------|--------|
-| `pair_init` | Mulai pairing; kembalikan kode untuk dibagikan ke partner (initiator auto-complete di background) |
-| `pair_init_complete` | Retry completion initiator jika pairing macet (biasanya tidak perlu) |
-| `pair_join` | Masukkan kode dari partner; menunggu persetujuan manusia |
-| `inbox` | Tarik pesan terenkripsi dari relay |
-| `send` | Kirim envelope terenkripsi ke peer yang ter-bond |
-| `revoke` | Putus bond dengan peer |
-| `human_approve` | Setujui/tolak aksi yang memerlukan konfirmasi manusia |
-
-### Session (negosiasi deliverable)
-
-| Tool | Fungsi |
-|------|--------|
-| `session_open` | Buka sesi negosiasi dengan goal, acceptance criteria, budget |
-| `session_msg` | Kirim propose/counter/accept/challenge/test_report |
-| `session_sign` | Tandai artifact siap ratifikasi (jika semua test hijau) |
-| `session_status` | Cek status sesi, section terkunci, hasil test |
-
----
-
-## Alur kerja utama
-
-### 1. Pairing dengan partner
-
-```
-Anda (Initiator)                    Partner (Joiner)
-      │                                    │
-      │  pair_init(scope, mode)            │
-      │  → kode + auto-complete background │
-      │                                    │
-      │  ──── kode via chat/telepon ────►  │
-      │                                    │
-      │                                    │  pair_join(code)
-      │                                    │  → pending_id
-      │                                    │
-      │  (initiator menunggu otomatis)     │  baca approval_path → human_approve(..., approval_code)
-      │                                    │
-      │  ◄──────── SPAKE2 + allowlist ────►│
-      │                                    │
-      ▼                                    ▼
-              Kedua agent ter-bond
+```text
+revoke(peer: "<peer agent_id>")
 ```
 
-**Langkah praktis di chat AI:**
+Removes the local bond and pushes allowlist updates. Sessions tied to the bond
+close; there is no `revoke.notice` envelope type. Revocation is unilateral —
+the peer does not approve it.
 
-1. Minta agent: *"Pair dengan partner untuk session.negotiate, mode ephemeral_until_session_closes"*
-2. Agent memanggil `pair_init` → Anda dapat kode (contoh: `42-kancil-senja-awan`)
-3. Bagikan kode ke partner lewat channel lain (WhatsApp, telepon, tatap muka)
-4. Partner minta agent-nya `pair_join` dengan kode tersebut
-5. Partner **harus menyetujui** di chat:
-   - Buka file di `approval_path` (ditampilkan di hasil tool) — **bukan** dari chat AI
-   - Salin kode 6 digit dari file tersebut
-   - Suruh agent memanggil:
-   ```
-   human_approve(pending_id, "approve", approval_code="<kode dari file>")
-   ```
-6. Initiator menyelesaikan SPAKE2 **otomatis** di background setelah `pair_init` — tidak perlu tool tambahan
+## Human gates
 
-> **Penting:** Kode persetujuan (`approval_code`) hanya ada di file `approval_path` (dan mungkin stderr MCP server). AI **tidak bisa** menyetujui sendiri tanpa Anda membaca file tersebut dan memberikan kode ke agent. Jangan bagikan kode jika Anda tidak mengenali permintaan pairing.
+Pending actions (pair join, session open, ratify) require `human_approve` with:
 
-> **MCP restart:** Jika MCP server di-restart setelah `pair_init` tetapi sebelum pairing selesai, sesi initiator hilang dari memori. Jalankan `pair_init` lagi dengan kode baru — `pair_init_complete` tidak bisa memulihkan sesi yang hilang.
+- `pending_id` — from the gated tool result (or `session_status` / inbox side effects)
+- `decision` — `"approve"` or `"reject:<reason>"`
+- `approval_code` — the 6-digit code from the host filesystem (see below)
 
-### 2. Membuka session negosiasi
+### How to get the approval code (reference MCP)
 
-Setelah ter-bond, initiator bisa membuka session:
+The plaintext code is **never** included in tool JSON (secrets are stripped before
+results reach the model). When a gated pending is created, the host:
 
-```
-session_open(
-  to: "<agent_id partner>",
-  goal: "Setuju kontrak API telemetry v1",
-  acceptance: [...],
-  budget: { max_turns: 30 },
-  mandate: { agent_may: [...], human_required: [...] }
-)
-```
+1. Writes a file at **`approval_path`** — typically
+   `~/.agentpair/approvals/<pending_id>` (or `$AGENTPAIR_DATA_DIR/approvals/…`),
+   mode `0600`, containing a 6-digit code
+2. Returns `approval_path` and `suggested_next` on the gated tool / inbox result
+3. Best-effort logs the code to stderr:
+   `[agentpair] approval code for pending …`
 
-Partner akan melihat **pending approval** di chat beserta `approval_path`. Partner harus:
+**Operator steps:** open `approval_path` → copy the 6-digit code → call
+`human_approve(pending_id, decision, approval_code)`.
 
-1. Buka file di `approval_path` dan baca kode 6 digit
-2. Setujui atau tolak:
+The model must **not** invent the code. Missing or wrong codes yield
+`self_approval_forbidden` / `invalid_approval_code`.
 
-```
-human_approve(pending_id, "approve", approval_code="483920")
-```
+## Acceptance runners (live)
 
-atau menolak:
+With profile `atest/1`, `atest_run` can execute registered runners:
 
-```
-human_approve(pending_id, "reject:alasan penolakan", approval_code="483920")
-```
+| Runner | Role |
+|--------|------|
+| `payload-size` | Size / schema payload checks |
+| `spectral` | OpenAPI lint via Spectral |
 
-### 3. Negosiasi, verifikasi, ratifikasi
-
-```
-AGENT NEGOSIASI  →  MESIN VERIFIKASI  →  MANUSIA RATIFIKASI
-(propose/counter)    (acceptance tests)     (human_approve ratify)
-```
-
-1. Agent-agent bertukar `session_msg` (propose, counter, accept, challenge)
-2. Setiap perubahan draft diuji oleh runner (payload-size, spectral, codegen-compile)
-3. Kedua agent mengirim `test_report` yang pass untuk hash yang sama
-4. Kedua agent memanggil `session_sign`
-5. Kedua manusia memanggil `human_approve` untuk ratifikasi
-6. Hasil akhir: **co-signed artifact hash**
-
-### 4. Memeriksa inbox
-
-Panggil `inbox()` secara berkala (atau minta agent melakukannya) untuk menarik pesan baru. Relay menggunakan challenge-response auth — Anda tidak perlu mengatur ini manual; MCP server menanganinya.
-
----
-
-## Hasil yang diharapkan
-
-Semua tool mengembalikan JSON dengan field `ok: true/false`. Berikut pola sukses dan kegagalan per operasi.
-
-### `pair_init` — Sukses
-
-```json
-{
-  "ok": true,
-  "code": "42-kancil-senja-awan",
-  "session_id": "uuid-...",
-  "proposal": {
-    "scope": ["session.negotiate"],
-    "mode": "ephemeral_until_session_closes",
-    "initiatorAgentId": "ed25519:..."
-  },
-  "expires_at": 1720000000000,
-  "agent_id": "ed25519:..."
-}
-```
-
-**Yang harus Anda lakukan:** Bagikan `code` ke partner sebelum `expires_at` (TTL 5 menit).
-
-### `pair_init_complete` — Sukses
-
-```json
-{
-  "ok": true,
-  "status": "bonded",
-  "bond": {
-    "peer": "ed25519:...",
-    "scope": ["session.negotiate"],
-    "mode": "ephemeral_until_session_closes"
-  }
-}
-```
-
-**Yang harus Anda lakukan:** Hanya perlu jika pairing macet setelah `pair_init`. Biasanya tidak diperlukan karena completion berjalan otomatis.
-
-### `pair_init_complete` — Gagal
-
-| Error / status | Penyebab | Tindakan |
-|----------------|----------|----------|
-| `error: "pair_session_lost"` | MCP di-restart setelah `pair_init` | Jalankan `pair_init` lagi; bagikan kode baru |
-| `status: "pake_failed"` | Joiner belum approve, atau relay bermasalah | Ulangi pairing dengan kode baru |
-| `error: "pair_completion_failed"` | Relay/network error saat handshake | Cek relay health; coba lagi |
-| `status: "rejected"` | Joiner menolak pairing | Minta kode baru dari initiator |
-
-### `pair_init` — Gagal
-
-| Error | Penyebab | Tindakan |
-|-------|----------|----------|
-| `invalid_mode` | Mode bond tidak valid | Gunakan `ephemeral_until_session_closes` atau `bonded_contact` |
-
-### `pair_join` — Sukses (menunggu approval)
-
-```json
-{
-  "ok": true,
-  "pending_id": "pending-uuid",
-  "proposal": { "scope": [...], "mode": "...", "initiatorAgentId": "ed25519:..." },
-  "message": "Human approval required before pairing completes"
-}
-```
-
-**Yang harus Anda lakukan:** Tinjau proposal scope/mode. Buka `approval_path`, baca kode 6 digit, lalu panggil `human_approve` dengan `approval_code` tersebut.
-
-### `pair_join` — Gagal
-
-| Error | Penyebab | Tindakan |
-|-------|----------|----------|
-| `pair_not_found` | Kode salah atau expired (TTL 5 menit) | Minta kode baru dari initiator |
-| `pair_not_found` | Relay tidak terjangkau | Cek `curl $AGENTPAIR_RELAY_URL/health` dan pastikan URL sama dengan initiator |
-
-### `human_approve` (pairing) — Sukses
-
-```json
-{
-  "ok": true,
-  "status": "bonded",
-  "bond": {
-    "peer": "ed25519:...",
-    "scope": ["session.negotiate"],
-    "mode": "ephemeral_until_session_closes"
-  }
-}
-```
-
-### `human_approve` (pairing) — Gagal
-
-| Error / status | Penyebab | Tindakan |
-|----------------|----------|----------|
-| `self_approval_forbidden` | `approval_code` tidak diberikan | Baca kode dari `approval_path`, lalu kirim ke agent |
-| `invalid_approval_code` | Kode salah atau format tidak valid | Cek ulang file; max 5 percobaan sebelum pending dihapus |
-| `approval_channel_unavailable` | File persetujuan tidak bisa ditulis | Perbaiki izin/disk pada `~/.agentpair`, ulangi aksi gated |
-| `pending_not_found` | `pending_id` salah atau sudah diproses | Ulangi `pair_join` jika perlu |
-| `status: "rejected"` | Anda menolak pairing | Tidak ada bond; beri tahu initiator alasan |
-| `status: "pake_failed"` | Joiner approve sebelum initiator siap, kode salah, atau MITM | Ulangi pairing dengan kode baru |
-| `status: "allowlist_rollback"` | Push allowlist ke relay gagal | Coba lagi; bond di-rollback otomatis |
-
-### `inbox` — Sukses
-
-```json
-{
-  "ok": true,
-  "since": 0,
-  "cursor": 5,
-  "envelopes": [
-    {
-      "id": "uuid",
-      "from": "ed25519:...",
-      "type": "session.open",
-      "verified": true,
-      ...
-    }
-  ]
-}
-```
-
-### `inbox` — Gagal
-
-| Error | Penyebab | Tindakan |
-|-------|----------|----------|
-| `unexpected_challenge_status` | Relay tidak merespons challenge dengan benar | Cek kesehatan relay (`GET /health`) |
-| `gap_detected` | Ada pesan hilang di thread (seq gap) | 1) Panggil `inbox()` lagi di kedua sisi. 2) Hubungi partner. 3) Jika persisten, revoke + re-pair |
-| `inbox_pull_failed_403` | Signature challenge invalid/expired | Coba `inbox` lagi (nonce single-use) |
-
-### `send` — Sukses
-
-```json
-{
-  "ok": true,
-  "envelope_id": "uuid",
-  "to": "ed25519:..."
-}
-```
-
-### `send` — Gagal
-
-| Error | Penyebab | Tindakan |
-|-------|----------|----------|
-| `peer_not_allowed` | Target belum ter-bond | Lakukan pairing dulu |
-| `relay inbox post failed: 403` | Relay menolak (sender tidak di allowlist penerima) | Cek bond masih aktif |
-
-### `revoke` — Sukses
-
-```json
-{
-  "ok": true,
-  "revoked": "ed25519:...",
-  "allowed": []
-}
-```
-
-Partner akan menerima `revoke.notice` di inbox. Session aktif (jika ada) berubah ke state `revoked`.
-
-### `session_open` — Sukses (initiator)
-
-```json
-{
-  "ok": true,
-  "thread": "session-uuid",
-  "status": "pending_open",
-  "pending_id": "pending-uuid"
-}
-```
-
-Partner harus `human_approve` sebelum session live.
-
-### `session_status` — Contoh session live
-
-```json
-{
-  "ok": true,
-  "thread": "session-uuid",
-  "status": "live",
-  "locked_sections": ["timestamp"],
-  "test_results": { "sha256:abc...": { "payload-size": "pass", "spectral": "pass" } },
-  "budget_remaining": 18
-}
-```
-
-### `session_sign` — Gagal umum
-
-| Error | Penyebab |
-|-------|----------|
-| `tests_not_green` | Acceptance test masih merah di salah satu pihak |
-| `challenge_not_filed` | Belum semua agent mengirim challenge |
-| `human_required` | Aksi memerlukan `human_approve` |
-
----
-
-## Gate manusia (human-in-the-loop)
-
-AgentPair secara struktural mencegah AI menyetujui hal-hal sensitif tanpa Anda:
-
-| Aksi | Gate |
-|------|------|
-| Menerima pairing (`pair_join`) | `human_approve` dengan `approval_code` dari `approval_path` |
-| Membuka session (`session_open` di sisi penerima) | `human_approve` dengan `approval_code` |
-| Ratifikasi final | `human_approve` pada pending `ratify` dengan `approval_code` |
-| Perpanjang budget | `human_approve` dengan `approval_code` (keduanya) |
-
-**Cara kerja di praktik:** Saat ada pending action, agent menampilkan `pending_id`,
-detail proposal, dan `approval_path`. Anda membuka file tersebut (di luar chat AI),
-membaca kode 6 digit, lalu menyuruh agent memanggil `human_approve` dengan kode
-tersebut. Agent **tidak boleh** menyetujui tanpa kode dari Anda.
-
----
-
-## Mode bond
-
-| Mode | Perilaku |
-|------|----------|
-| `ephemeral_until_session_closes` | Bond dihapus otomatis saat session ditutup atau revoke |
-| `bonded_contact` | Bond persisten sampai Anda memanggil `revoke` |
-
----
+Only these two are registered in the reference MCP today.
 
 ## Troubleshooting
 
-### MCP server tidak muncul di AI client
+**MCP tools missing in the client**  
+Reload/restart the client. Confirm `npx -y agentpair` runs on your PATH with
+Node 22+. Check the client’s MCP log for spawn errors.
 
-1. Pastikan Node.js ≥ 22: `node --version`
-2. Untuk npm: pastikan `npx -y agentpair` berjalan di terminal
-3. Untuk source: pastikan path ke `dist/cli.js` benar (absolut, bukan relatif) dan sudah `pnpm build`
-4. Restart AI client setelah mengubah konfigurasi MCP
-5. Cek log error MCP di output panel AI client
+**Pairing fails**  
+Same relay URL on both sides? Code still within TTL? Joiner must open
+`approval_path` and `human_approve` before SPAKE2 finishes. Initiator: try
+`pair_init_complete` with the original code.
 
-### Pairing selalu gagal
+**Messages never arrive**  
+Call `inbox` on the receiver. Confirm `list_bonds` on both sides. Wrong relay
+URL is the usual cause.
 
-1. Verifikasi relay: `curl https://relay.yourdomain.com/health`
-2. Pastikan kode dibagikan dalam 5 menit
-3. Pastikan kedua pihak memakai relay yang sama (`AGENTPAIR_RELAY_URL`)
-4. Kode case-sensitive — ketik persis
+**`relay_unavailable` / preflight warnings**  
+Check `AGENTPAIR_RELAY_URL` and `GET {relay}/health`. For local relay:
+`docker compose up -d` in this repo.
 
-### Pesan tidak sampai
+**From-source WASM / build errors**  
+Protocol build needs Rust + `wasm-pack` once. Run `pnpm build` from the repo
+root and point the client at `packages/mcp-server/dist/cli.js`.
 
-1. Panggil `inbox()` di kedua sisi
-2. Cek bond masih ada (belum di-revoke)
-3. Seq gap? Lihat error `gap_detected` — relay mungkin drop pesan
+## Relay: public test vs self-host
 
-### WASM / build error
+| Option | URL | Notes |
+|--------|-----|--------|
+| Public test | `https://relay.yagura.space` | Convenient for experiments; operator sees metadata |
+| Local | `http://127.0.0.1:3001` | `docker compose up -d` |
+| Your VPS | your HTTPS URL | See [developer guide](./developer-guide.md) |
 
-Jika MCP gagal start dengan error modul WASM:
+Both peers **must** share one relay. Relays see routing metadata (who, when,
+sizes) even though payloads are encrypted.
 
-```bash
-pnpm build
-```
+## Limits and status
 
-Prasyarat build WASM: Rust toolchain + `wasm-pack` (hanya untuk build dari source).
-
-### Acceptance test `codegen-compile` gagal
-
-Runner ini memerlukan Docker dengan image `agentpair/runner-esp32`. Tanpa Docker, test ini akan fail — gunakan hanya jika Anda memang membutuhkan verifikasi kompilasi ESP32.
-
----
-
-## Relay referensi vs self-hosted
-
-| | Relay publik | Self-hosted |
-|--|--------------|-------------|
-| URL | `https://relay.yourdomain.com` | `http://127.0.0.1:3001` atau domain Anda |
-| Setup | Tidak perlu | Docker Compose — lihat [Panduan Developer](./developer-guide.md) |
-| Privasi metadata | Operator relay melihat routing metadata | Anda kontrol infrastruktur |
-
-Payload dan artifact tetap terenkripsi end-to-end di kedua kasus.
-
----
-
-## Batasan v0
-
-- Satu relay per deployment (tidak ada failover multi-relay di klien v0)
-- Metadata routing (`from`, `to`, `thread`) terlihat oleh operator relay
-- Tier 0 (GitHub Issues sebagai transport) belum diimplementasi
-
-Untuk detail protokol lengkap, lihat [`agentpair-v0-requirement.md`](../pocket/agentpair-v0-requirement.md).
+- Protocol is **1.0-draft** — wire may change until freeze; see [SPEC.md](../SPEC.md).
+- v1 assumes both agents use the **same** relay.
+- Peer content shown to the model is length-capped (`AGENTPAIR_PEER_CONTENT_CAP_BYTES`).
+- Verified peer messages are still **untrusted input** to your model.
