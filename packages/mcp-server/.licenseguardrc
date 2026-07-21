@@ -4,7 +4,7 @@
   "year": "2026",
   "url": "https://github.com/rfxlamia/agent-pair-protocol",
   "scanResult": {
-    "timestamp": "2026-07-21T03:41:01.780Z",
+    "timestamp": "2026-07-21T03:40:06.280Z",
     "totalDependencies": 4,
     "compatible": 4,
     "incompatible": 0,
@@ -12,17 +12,17 @@
     "issues": [],
     "packages": [
       {
+        "name": "@agentpair/protocol",
+        "version": "0.5.1",
+        "license": "WTFPL"
+      },
+      {
+        "name": "@modelcontextprotocol/sdk",
+        "version": "1.29.0",
+        "license": "MIT"
+      },
+      {
         "name": "@noble/ciphers",
-        "version": "2.2.0",
-        "license": "MIT"
-      },
-      {
-        "name": "@noble/curves",
-        "version": "2.2.0",
-        "license": "MIT"
-      },
-      {
-        "name": "@noble/hashes",
         "version": "2.2.0",
         "license": "MIT"
       },

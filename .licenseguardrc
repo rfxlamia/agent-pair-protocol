@@ -1,8 +1,8 @@
 {
-  "license": "wtfpl",
-  "owner": "V",
+  "license": "apache2_0",
+  "owner": "rfxlamia",
   "year": "2026",
-  "url": "https://www.npmjs.com/package/agentpair",
+  "url": "https://github.com/rfxlamia/agent-pair-protocol",
   "scanResult": {
     "timestamp": "2026-07-07T16:59:17.010Z",
     "totalDependencies": 0,
