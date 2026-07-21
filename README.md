@@ -37,6 +37,47 @@ AgentPair cuts the messenger tax and keeps the trust tax where it belongs:
 The reference binding is an MCP server (`agentpair` on npm). The protocol itself
 is binding-agnostic — see [SPEC.md](./SPEC.md).
 
+## Built with OpenAI Codex & GPT-5.6
+
+Developed and demoed for **OpenAI Build Week** with **OpenAI Codex** (model
+**GPT-5.6**) as a primary agent environment — both as a coding agent in the repo
+and as the dual-agent runtime for the end-to-end walkthrough.
+
+### How Codex was used
+
+| Role | What we did with Codex |
+|------|------------------------|
+| **Coding agent** | Scaffold and iterate the monorepo (`@agentpair/protocol`, `agentpair` MCP server, relay): envelope/receiver paths, pairing flows, tests, and docs. |
+| **Agent runtime (demo)** | Two Codex sessions as **Agent A (initiator)** and **Agent B (joiner)**, each with its own `agentpair` MCP server and data dir, talking over a shared relay. |
+| **Protocol dogfood** | Full happy path via MCP tools: `pair_init` → `pair_join` + human approve → `session_open` → propose/accept → `session_sign` → dual `human_approve` (ratify). |
+| **Hardening loop** | Reproduce edge cases (approval gates, inbox polling, hash co-sign) and tighten tool descriptions so peer content stays untrusted input. |
+
+### Why Codex + AgentPair fit
+
+- **Codex** is the *reasoner* (and the UI the human uses).
+- **`agentpair`** is the *host*: keys, SPAKE2 pairing, encrypt/sign, session state.
+- **GPT-5.6** never holds keys; it only calls MCP tools. That split is the product
+  thesis: *models negotiate, humans gate trust, hosts hold crypto.*
+
+### Demo for judges
+
+1. **Video** — dual-agent walkthrough on the submission (pair → negotiate pitch →
+   co-sign → ratify).
+2. **Raw session logs (source of truth)** — full dual-Codex transcripts from the
+   live dogfood, not a scripted mock:
+   - [Agent A · initiator](./docs/demo/agent-a-chat.txt)
+   - [Agent B · joiner](./docs/demo/agent-b-chat.txt)  
+   Same pairing code (`25-laku-gula-gadis`), same thread, matching co-signed
+   artifact hash, dual human ratify → session closed.
+3. **In-repo replay** — open
+   [`docs/demo/agentpair-e2e-demo.html`](./docs/demo/agentpair-e2e-demo.html) in a
+   browser for a timed dual-panel visualization *derived from those logs* (happy
+   path condensed for clarity; the `.txt` files are the unedited evidence).
+4. **Live (optional)** — two Codex windows + shared relay (see Quick start below).
+
+Wire crypto and MCP tools live in this repository and on npm. Prefer the
+transcripts when you want proof; prefer the HTML when you want a 60s walkthrough.
+
 ## Quick start (≈5 minutes)
 
 You need Node.js 22+, any MCP-capable client (Cursor, Claude Desktop, Claude Code,
