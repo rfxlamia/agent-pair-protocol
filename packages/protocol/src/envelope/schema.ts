@@ -20,6 +20,12 @@ const negoMandateSchema = z.object({
 
 const signalSchema = z.object({});
 
+const negoBudgetExtendSchema = z.object({
+  thread: z.string(),
+  proposal_id: z.string().uuid(),
+  new_max_turns: z.number().int(),
+});
+
 export const ENVELOPE_TYPES = {
   CORE: ["core.msg", "core.close", "core.ack"] as const,
   NEGO: [
@@ -30,6 +36,9 @@ export const ENVELOPE_TYPES = {
     "nego.turn",
     "nego.signed",
     "nego.ratified",
+    "nego.budget_propose",
+    "nego.budget_approved",
+    "nego.budget_reject",
   ] as const,
   ATEST: ["atest.challenge", "atest.report"] as const,
 } as const;
@@ -67,6 +76,11 @@ const PAYLOAD_SCHEMAS: Record<string, z.ZodTypeAny> = {
   }),
   "nego.signed": z.object({ artifact_hash: z.string() }),
   "nego.ratified": signalSchema,
+  "nego.budget_propose": negoBudgetExtendSchema,
+  "nego.budget_approved": negoBudgetExtendSchema,
+  "nego.budget_reject": negoBudgetExtendSchema.extend({
+    reason: z.string().optional(),
+  }),
   "atest.challenge": signalSchema,
   "atest.report": z.object({
     artifact_hash: z.string(),

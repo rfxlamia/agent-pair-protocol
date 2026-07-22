@@ -7,9 +7,9 @@ import {
 } from "./schema.js";
 
 describe("isKnownEnvelopeType", () => {
-  it("accepts all 12 whitelist types", () => {
+  it("accepts all 15 whitelist types", () => {
     const all = [...ENVELOPE_TYPES.CORE, ...ENVELOPE_TYPES.NEGO, ...ENVELOPE_TYPES.ATEST];
-    expect(all).toHaveLength(12);
+    expect(all).toHaveLength(15);
     for (const type of all) {
       expect(isKnownEnvelopeType(type)).toBe(true);
     }
@@ -138,7 +138,12 @@ describe("parseEnvelopePayload", () => {
     });
   });
 
-  it("accepts all 12 whitelist types with minimal valid payloads", () => {
+  it("accepts all 15 whitelist types with minimal valid payloads", () => {
+    const budgetBase = {
+      thread: "thread-1",
+      proposal_id: "550e8400-e29b-41d4-a716-446655440000",
+      new_max_turns: 30,
+    };
     const minimal: Record<string, unknown> = {
       "core.msg": { body: "hi" },
       "core.close": {},
@@ -155,6 +160,9 @@ describe("parseEnvelopePayload", () => {
       "nego.turn": {},
       "nego.signed": { artifact_hash: "sha256:abc" },
       "nego.ratified": {},
+      "nego.budget_propose": budgetBase,
+      "nego.budget_approved": budgetBase,
+      "nego.budget_reject": budgetBase,
       "atest.challenge": {},
       "atest.report": {
         artifact_hash: "sha256:abc",
@@ -184,5 +192,70 @@ describe("parseEnvelopePayload", () => {
         data: {},
       });
     }
+  });
+});
+
+describe("N4 budget extend envelope payloads", () => {
+  const validBase = {
+    thread: "thread-1",
+    proposal_id: "550e8400-e29b-41d4-a716-446655440000",
+    new_max_turns: 30,
+  };
+
+  it("validates nego.budget_propose", () => {
+    expect(parseEnvelopePayload("nego.budget_propose", validBase)).toEqual({
+      ok: true,
+      data: validBase,
+    });
+  });
+
+  it("validates nego.budget_approved", () => {
+    expect(parseEnvelopePayload("nego.budget_approved", validBase)).toEqual({
+      ok: true,
+      data: validBase,
+    });
+  });
+
+  it("validates nego.budget_reject with optional reason", () => {
+    expect(
+      parseEnvelopePayload("nego.budget_reject", { ...validBase, reason: "superseded" }),
+    ).toEqual({
+      ok: true,
+      data: { ...validBase, reason: "superseded" },
+    });
+    expect(parseEnvelopePayload("nego.budget_reject", validBase)).toEqual({
+      ok: true,
+      data: validBase,
+    });
+  });
+
+  it("rejects budget payloads with invalid proposal_id", () => {
+    for (const type of [
+      "nego.budget_propose",
+      "nego.budget_approved",
+      "nego.budget_reject",
+    ] as const) {
+      expect(parseEnvelopePayload(type, { ...validBase, proposal_id: "not-a-uuid" })).toEqual({
+        ok: false,
+        error: "invalid_payload",
+      });
+    }
+  });
+
+  it("rejects budget payloads with non-integer new_max_turns", () => {
+    expect(
+      parseEnvelopePayload("nego.budget_propose", { ...validBase, new_max_turns: 30.5 }),
+    ).toEqual({
+      ok: false,
+      error: "invalid_payload",
+    });
+  });
+
+  it("rejects budget payloads missing thread", () => {
+    const { thread: _, ...rest } = validBase;
+    expect(parseEnvelopePayload("nego.budget_propose", rest)).toEqual({
+      ok: false,
+      error: "invalid_payload",
+    });
   });
 });

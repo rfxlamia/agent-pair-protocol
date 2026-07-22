@@ -146,6 +146,8 @@ export {
   type PeerNegotiationMessage,
   type SessionBudget,
   type SessionMandate,
+  type SessionExtension,
+  type SessionExtensionDecided,
   type SessionRecord,
   type SessionStatus,
   type TestReport,

@@ -41,6 +41,20 @@ export interface PeerNegotiationMessage {
   turn: number;
 }
 
+export interface SessionExtension {
+  proposal_id: string;
+  new_max_turns: number;
+  proposed_by: "initiator" | "recipient";
+  status: "emitting" | "awaiting_peer" | "approved_emitting" | "rejected_emitting";
+  /** base64url-encoded build-once envelope body bytes; present only while status is *_emitting */
+  envelope_bytes?: string;
+}
+
+export interface SessionExtensionDecided {
+  proposal_id: string;
+  decision: "approved" | "rejected";
+}
+
 export interface SessionRecord {
   thread: string;
   initiator: string;
@@ -64,4 +78,8 @@ export interface SessionRecord {
   artifactHash?: string;
   coSignedHash?: string;
   signatures?: Record<string, string>;
+  /** In-flight budget extension only; cleared when cycle completes or session leaves live */
+  extension?: SessionExtension;
+  /** Decided proposal ids; session-level, survives extension clears */
+  extensionDecided?: SessionExtensionDecided[];
 }

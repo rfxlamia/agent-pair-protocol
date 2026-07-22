@@ -22,6 +22,8 @@ export interface RatifyPendingInput {
 export interface BudgetExtendPendingInput {
   thread: string;
   peer: string;
+  new_max_turns?: number;
+  proposal_id?: string;
 }
 
 export interface SessionOpenPendingItem extends SessionOpenPendingInput {

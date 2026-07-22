@@ -102,6 +102,8 @@ export interface BudgetExtendPending {
   kind: "budget_extend";
   thread: string;
   peer: string;
+  new_max_turns?: number;
+  proposal_id?: string;
   createdAt: number;
   approvalCodeVerifier: string;
   approvalAttempts: number;
@@ -365,6 +367,8 @@ function buildPendingQueue(
           createdAt,
           thread: input.thread,
           peer: input.peer,
+          ...(input.new_max_turns !== undefined ? { new_max_turns: input.new_max_turns } : {}),
+          ...(input.proposal_id !== undefined ? { proposal_id: input.proposal_id } : {}),
           approvalCodeVerifier: approval.approvalCodeVerifier,
           approvalAttempts: approval.approvalAttempts,
         }),

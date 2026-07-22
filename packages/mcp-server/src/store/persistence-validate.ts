@@ -2,6 +2,7 @@ import {
   type Bond,
   type SessionRecord,
   type SessionStatus,
+  decodeBase64UrlStrict,
   isValidProfilesArray,
   isValidTestReports,
 } from "@agentpair/protocol";
@@ -16,6 +17,62 @@ const SESSION_STATUSES = new Set<SessionStatus>([
   "closed",
 ]);
 const PENDING_KINDS = new Set(["pair_join", "session_open", "ratify", "budget_extend"]);
+const EXTENSION_STATUSES = new Set([
+  "emitting",
+  "awaiting_peer",
+  "approved_emitting",
+  "rejected_emitting",
+]);
+
+function isValidBase64UrlString(value: string): boolean {
+  try {
+    decodeBase64UrlStrict(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isSessionExtension(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const ext = value as Record<string, unknown>;
+  if ("extensionDecided" in ext) {
+    return false;
+  }
+  if (
+    typeof ext.proposal_id !== "string" ||
+    typeof ext.new_max_turns !== "number" ||
+    !Number.isInteger(ext.new_max_turns) ||
+    (ext.proposed_by !== "initiator" && ext.proposed_by !== "recipient") ||
+    !EXTENSION_STATUSES.has(ext.status as string)
+  ) {
+    return false;
+  }
+  if ("envelope_bytes" in ext) {
+    if (typeof ext.envelope_bytes !== "string" || !isValidBase64UrlString(ext.envelope_bytes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isSessionExtensionDecidedArray(value: unknown): boolean {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+  return value.every((entry) => {
+    if (typeof entry !== "object" || entry === null) {
+      return false;
+    }
+    const decided = entry as Record<string, unknown>;
+    return (
+      typeof decided.proposal_id === "string" &&
+      (decided.decision === "approved" || decided.decision === "rejected")
+    );
+  });
+}
 
 function hasApprovalFields(item: Record<string, unknown>): boolean {
   return (
@@ -92,7 +149,13 @@ export function isSessionRecord(value: unknown): value is SessionRecord {
     typeof session.signHashes === "object" &&
     session.signHashes !== null &&
     typeof session.ratifyApproved === "object" &&
-    session.ratifyApproved !== null
+    session.ratifyApproved !== null &&
+    (!("extension" in session) ||
+      session.extension === undefined ||
+      isSessionExtension(session.extension)) &&
+    (!("extensionDecided" in session) ||
+      session.extensionDecided === undefined ||
+      isSessionExtensionDecidedArray(session.extensionDecided))
   );
 }
 
@@ -157,8 +220,21 @@ export function isPendingItemRecord(value: unknown): boolean {
         typeof item.peer === "string" &&
         typeof item.artifactHash === "string"
       );
-    case "budget_extend":
-      return typeof item.thread === "string" && typeof item.peer === "string";
+    case "budget_extend": {
+      if (typeof item.thread !== "string" || typeof item.peer !== "string") {
+        return false;
+      }
+      if (
+        "new_max_turns" in item &&
+        (typeof item.new_max_turns !== "number" || !Number.isInteger(item.new_max_turns))
+      ) {
+        return false;
+      }
+      if ("proposal_id" in item && typeof item.proposal_id !== "string") {
+        return false;
+      }
+      return true;
+    }
     default:
       return false;
   }

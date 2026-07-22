@@ -387,7 +387,8 @@ both humans ratify.
 ### 8.2 Envelope types
 
 `nego.open`, `nego.open_approved`, `nego.open_reject`, `nego.open_expired`,
-`nego.turn`, `nego.signed`, `nego.ratified`.
+`nego.turn`, `nego.signed`, `nego.ratified`,
+`nego.budget_propose`, `nego.budget_approved`, `nego.budget_reject`.
 
 `nego.open` payload:
 
@@ -399,6 +400,21 @@ both humans ratify.
   "mandate": { "agent_may": [...], "human_required": [...], "escalate_on": [...] }
 }
 ```
+
+Budget extension payloads (N4). All three carry `thread` (MUST match
+`body.thread`), `proposal_id` (UUID string), and absolute `new_max_turns`
+(integer strictly greater than current `budget.max_turns` at propose time):
+
+```json
+{
+  "thread": "<thread-id>",
+  "proposal_id": "<uuid>",
+  "new_max_turns": 30
+}
+```
+
+`nego.budget_reject` adds optional `reason` (e.g. `superseded`). Budget
+extension keeps session status `live` (`live → live`); no new §8.3 row.
 
 ### 8.3 Transitions
 
@@ -423,7 +439,12 @@ Normative rules:
   silently supersede an earlier one.
 - **N3 — Participants only.** Envelopes from any agent other than the two
   session participants → `not_a_participant`, no side effects.
-- **N4 — Budget extension** requires human approval on **both** sides.
+- **N4 — Budget extension** requires human approval on **both** sides before
+  `budget.max_turns` rises. A side proposes an absolute `new_max_turns` via
+  `nego.budget_propose` only after local human approval; the peer completes
+  the gate with `nego.budget_approved` or `nego.budget_reject`. At most one
+  outstanding extension per session; `extension_outstanding` while in flight.
+  Session status remains `live` throughout (no §8.3 transition row).
 - **N6 — Wire-derived turn count.** `turn_count` is the number of `nego.turn`
   envelopes observed on the thread (both directions), derived independently
   by each side from the wire. Implementations MUST NOT trust a peer-reported
@@ -487,7 +508,8 @@ Bond/pairing: `pair_not_found`, `pair_session_lost`, `pake_failed`,
 
 Negotiation: `session_not_found`, `session_not_live`, `session_not_signed`,
 `session_open_expired`, `not_a_participant`, `wrong_role`,
-`initiator_mismatch`, `budget_exhausted`, `human_required`,
+`initiator_mismatch`, `budget_exhausted`, `extension_outstanding`,
+`proposal_required`, `human_required`,
 `self_approval_forbidden`, `pending_not_found`, `challenges_incomplete`.
 
 Core messaging: `thread_closed` — operation attempted on a thread that has been closed (§7).
@@ -589,6 +611,14 @@ ids are registered in this document via pull request.
 `<version>` matches `[0-9]+`, the full id is at most 64 UTF-8 bytes, a wire
 list carries at most 32 ids, and duplicates within one list are forbidden.
 Example: `core/1`, `nego/1`, `atest/1`.
+
+**Registered envelope types (`nego/1` budget extension):**
+
+| Type | Profile |
+|---|---|
+| `nego.budget_propose` | `nego/1` |
+| `nego.budget_approved` | `nego/1` |
+| `nego.budget_reject` | `nego/1` |
 
 ---
 
