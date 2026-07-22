@@ -514,7 +514,7 @@ export function createBudgetExtendHandlers(ctx: BudgetExtendContext) {
           "rejected",
         ),
       });
-      queuePeerProposalPending(cleared, {
+      const pending = queuePeerProposalPending(cleared, {
         proposal_id: parsed.data.proposal_id,
         new_max_turns: parsed.data.new_max_turns,
         proposed_by: peerRole,
@@ -524,11 +524,12 @@ export function createBudgetExtendHandlers(ctx: BudgetExtendContext) {
         thread: input.thread,
         superseded: true as const,
         inbox_event: "budget_extend_superseded" as const,
+        pending_id: pending.id,
       };
     }
 
     if (existingPending?.proposed_by === myRole) {
-      queuePeerProposalPending(session, {
+      const pending = queuePeerProposalPending(session, {
         proposal_id: parsed.data.proposal_id,
         new_max_turns: parsed.data.new_max_turns,
         proposed_by: peerRole,
@@ -538,15 +539,21 @@ export function createBudgetExtendHandlers(ctx: BudgetExtendContext) {
         thread: input.thread,
         superseded: true as const,
         inbox_event: "budget_extend_superseded" as const,
+        pending_id: pending.id,
       };
     }
 
-    queuePeerProposalPending(session, {
+    const pending = queuePeerProposalPending(session, {
       proposal_id: parsed.data.proposal_id,
       new_max_turns: parsed.data.new_max_turns,
       proposed_by: peerRole,
     });
-    return { ok: true as const, thread: input.thread, pending: true as const };
+    return {
+      ok: true as const,
+      thread: input.thread,
+      pending: true as const,
+      pending_id: pending.id,
+    };
   }
 
   async function handleIncomingBudgetApproved(input: {

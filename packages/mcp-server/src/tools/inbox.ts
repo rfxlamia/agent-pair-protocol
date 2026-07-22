@@ -24,6 +24,7 @@ import {
   peekSessionOpenStatus,
   processSessionInboxEnvelope,
   processThreadClose,
+  resolveBudgetExtendPendingId,
   resolveRatifyPendingId,
   resolveSessionOpenPendingId,
   retryBudgetExtendEmitForSessions,
@@ -266,6 +267,10 @@ export async function handleInbox(
 
     if (body.type === "nego.signed" && !pendingId) {
       pendingId = await resolveRatifyPendingId(ctx, body.thread);
+    }
+
+    if (body.type === "nego.budget_propose" && !pendingId) {
+      pendingId = resolveBudgetExtendPendingId(ctx, body.thread);
     }
 
     if (body.type === "nego.open") {

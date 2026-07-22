@@ -18,6 +18,7 @@ import {
   handleSessionSign,
   handleSessionStatus,
 } from "./session.js";
+import { assertNoSecrets } from "./util.js";
 
 function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
@@ -777,5 +778,48 @@ describe("inbox production path", () => {
       .list()
       .find((item) => item.kind === "budget_extend" && item.thread === thread);
     expect(bobPending?.new_max_turns).toBe(35);
+    expect(proposeEnvelope?.pending_id).toBe(bobPending?.id);
+    expect(proposeEnvelope?.approval_path).toBeTypeOf("string");
+    expect(proposeEnvelope?.suggested_next).toBeTypeOf("string");
+    assertNoSecrets(proposeEnvelope);
+  }, 30_000);
+
+  it("exposes pending_id from nego.budget_propose on first peer delivery", async () => {
+    const { initiator, joiner, thread } = await openLiveBudgetPair(env, "peer-propose");
+
+    const aliceExtend = structured(
+      await handleSessionExtendBudget(initiator.ctx, {
+        thread,
+        new_max_turns: 30,
+      }),
+    );
+    expect(aliceExtend.ok).toBe(true);
+    if (!aliceExtend.ok || typeof aliceExtend.pending_id !== "string") {
+      throw new Error("alice extend failed");
+    }
+    const aliceCode = readApprovalCodeForAgent(initiator.ctx, aliceExtend.pending_id);
+    const aliceApproved = structured(
+      await handleHumanApprove(initiator.ctx, {
+        pending_id: aliceExtend.pending_id,
+        decision: "approve",
+        approval_code: aliceCode,
+      }),
+    );
+    expect(aliceApproved.ok).toBe(true);
+
+    const bobInbox = structured(await handleInbox(joiner.ctx, { since: 0 }));
+    expect(bobInbox.ok).toBe(true);
+    if (!bobInbox.ok) {
+      return;
+    }
+    const proposeEnvelope = bobInbox.envelopes.find((e) => e.type === "nego.budget_propose");
+    const bobPending = joiner.ctx.pending
+      .list()
+      .find((item) => item.kind === "budget_extend" && item.thread === thread);
+    expect(proposeEnvelope?.pending_id).toBe(bobPending?.id);
+    expect(proposeEnvelope?.approval_path).toBeTypeOf("string");
+    expect(proposeEnvelope?.suggested_next).toBeTypeOf("string");
+    expect(proposeEnvelope?.inbox_event).toBeUndefined();
+    assertNoSecrets(proposeEnvelope);
   }, 30_000);
 });

@@ -54,6 +54,16 @@ export async function resolveRatifyPendingId(
   return machine.resolveRatifyPendingId(thread);
 }
 
+export function resolveBudgetExtendPendingId(
+  ctx: AgentContext,
+  thread: string,
+): string | undefined {
+  const budgetPending = ctx.pending
+    .list()
+    .find((item) => item.kind === "budget_extend" && item.thread === thread);
+  return budgetPending?.id;
+}
+
 export function peekSessionOpenStatus(
   ctx: AgentContext,
   thread: string,
