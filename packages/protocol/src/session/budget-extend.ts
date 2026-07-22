@@ -664,6 +664,9 @@ export type BudgetExtendHandlers = ReturnType<typeof createBudgetExtendHandlers>
 
 export function isNumberedBudgetExtendPending(
   pending: BudgetExtendPendingItem | undefined,
-): boolean {
+): pending is BudgetExtendPendingItem & {
+  proposal_id: string;
+  new_max_turns: number;
+} {
   return Boolean(pending?.proposal_id && pending.new_max_turns !== undefined);
 }
