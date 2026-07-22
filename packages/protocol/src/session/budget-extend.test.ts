@@ -75,16 +75,21 @@ describe("N4 budget extend human gate", () => {
 
   it("extend attach creates numbered pending without wire", async () => {
     const thread = await liveThread(20);
+    const numberless = alicePending.addBudgetExtend({ thread, peer: fixtures.bobId });
+    expect(budgetPending(thread)?.id).toBe(numberless.id);
+
     const result = await extendAttach(thread, 30);
     expect(result).toMatchObject({
       ok: true,
       thread,
       new_max_turns: 30,
     });
+    expect(alicePending.get(numberless.id)).toBeUndefined();
     const pending = budgetPending(thread);
     expect(pending?.new_max_turns).toBe(30);
     expect(pending?.proposal_id).toBeDefined();
     expect(pending?.proposed_by).toBe("initiator");
+    expect(aliceMachine.store.get(thread)?.budget.max_turns).toBe(20);
     expect(aliceMachine.store.get(thread)?.extension).toBeUndefined();
   });
 
@@ -176,21 +181,39 @@ describe("N4 budget extend human gate", () => {
     expect((await aliceMachine.handleStatus({ thread })).status).toBe("live");
   });
 
-  it("rejects budget_propose when payload.thread mismatches body.thread", async () => {
+  it("rejects budget envelopes when payload.thread mismatches body.thread", async () => {
     const thread = await liveThread(20);
     const proposalId = crypto.randomUUID();
-    const result = await bobMachine.handleIncomingEnvelope({
-      from: fixtures.aliceId,
-      type: "nego.budget_propose",
-      thread,
-      payload: JSON.stringify({
-        thread: "other-thread",
-        proposal_id: proposalId,
-        new_max_turns: 30,
-      }),
-    });
-    expect(result).toEqual({ ok: false, error: "invalid_payload" });
-    expect(budgetPending(thread, bobPending)).toBeUndefined();
+    const envelopeTypes = [
+      "nego.budget_propose",
+      "nego.budget_approved",
+      "nego.budget_reject",
+    ] as const;
+
+    for (const type of envelopeTypes) {
+      const payload =
+        type === "nego.budget_reject"
+          ? {
+              thread: "other-thread",
+              proposal_id: proposalId,
+              new_max_turns: 30,
+              reason: "rejected",
+            }
+          : {
+              thread: "other-thread",
+              proposal_id: proposalId,
+              new_max_turns: 30,
+            };
+      const result = await bobMachine.handleIncomingEnvelope({
+        from: fixtures.aliceId,
+        type,
+        thread,
+        payload: JSON.stringify(payload),
+      });
+      expect(result).toEqual({ ok: false, error: "invalid_payload" });
+      expect(budgetPending(thread, bobPending)).toBeUndefined();
+      expect(bobMachine.store.get(thread)?.budget.max_turns).toBe(20);
+    }
   });
 
   it("drops received propose with new_max_turns <= current", async () => {
@@ -300,6 +323,43 @@ describe("N4 budget extend human gate", () => {
     expect(budgetPending(thread, bobPending)?.proposal_id).toBe(aliceProposal);
   });
 
+  it("drops redelivered propose after extensionDecided rejection", async () => {
+    const thread = await liveThread(20);
+    const proposalId = crypto.randomUUID();
+    await bobMachine.handleIncomingEnvelope({
+      from: fixtures.aliceId,
+      type: "nego.budget_propose",
+      thread,
+      payload: JSON.stringify({
+        thread,
+        proposal_id: proposalId,
+        new_max_turns: 30,
+      }),
+    });
+    const pending = budgetPending(thread, bobPending);
+    if (!pending) throw new Error("missing pending");
+    const rejected = await rejectExtend(bobMachine, pending.id);
+    expect(rejected.ok).toBe(true);
+    expect(bobMachine.store.get(thread)?.extensionDecided).toEqual([
+      { proposal_id: proposalId, decision: "rejected" },
+    ]);
+    expect(budgetPending(thread, bobPending)).toBeUndefined();
+
+    const redeliver = await bobMachine.handleIncomingEnvelope({
+      from: fixtures.aliceId,
+      type: "nego.budget_propose",
+      thread,
+      payload: JSON.stringify({
+        thread,
+        proposal_id: proposalId,
+        new_max_turns: 30,
+      }),
+    });
+    expect(redeliver).toMatchObject({ ok: true, dropped: true });
+    expect(budgetPending(thread, bobPending)).toBeUndefined();
+    expect(bobMachine.store.get(thread)?.budget.max_turns).toBe(20);
+  });
+
   it("proposal redelivery with same id is a no-op", async () => {
     const thread = await liveThread(20);
     const proposalId = crypto.randomUUID();
@@ -350,6 +410,9 @@ describe("N4 budget extend human gate", () => {
     expect(aliceSession?.extensionDecided).toEqual([
       { proposal_id: pending.proposal_id, decision: "approved" },
     ]);
+
+    const extendAfterSigned = await extendAttach(thread, 40);
+    expect(extendAfterSigned).toEqual({ ok: false, error: "session_not_live" });
   });
 
   it("leave-live via deadline_expired sweeps extension", async () => {
@@ -375,11 +438,16 @@ describe("N4 budget extend human gate", () => {
     expect(after?.extension).toBeUndefined();
     expect(budgetPending(thread)).toBeUndefined();
     expect(after?.extensionDecided).toHaveLength(1);
+
+    const extendAfterDeadline = await extendAttach(thread, 40);
+    expect(extendAfterDeadline).toEqual({ ok: false, error: "session_not_live" });
   });
 
   it("emit failure leaves *_emitting and retryBudgetExtendEmit resends identical bytes", async () => {
+    const aliceSends: RelayCapture[] = [];
     let failPropose = true;
     relink({
+      capture: { aliceSends },
       injectSendFailure: ({ type }) => type === "nego.budget_propose" && failPropose,
     });
 
@@ -406,6 +474,23 @@ describe("N4 budget extend human gate", () => {
     expect(aliceMachine.store.get(thread)?.extension?.status).toBe("awaiting_peer");
     expect(aliceMachine.store.get(thread)?.extension?.envelope_bytes).toBeUndefined();
     expect(decodeBase64UrlStrict(bytes).length).toBeGreaterThan(0);
+
+    const retrySend = aliceSends.find((send) => send.type === "nego.budget_propose");
+    expect(retrySend).toBeDefined();
+    if (!retrySend) return;
+    const durablePayload = new TextDecoder().decode(decodeBase64UrlStrict(bytes));
+    expect(retrySend.payload).toBe(durablePayload);
+    expect(retrySend.thread).toBe(thread);
+    const parsed = JSON.parse(retrySend.payload) as {
+      thread: string;
+      proposal_id: string;
+      new_max_turns: number;
+    };
+    expect(parsed).toEqual({
+      thread,
+      proposal_id: pending.proposal_id,
+      new_max_turns: 30,
+    });
   });
 
   it("enforces N4 when mandate omits budget_extend", async () => {
@@ -425,6 +510,11 @@ describe("N4 budget extend human gate", () => {
     expect(attached.ok).toBe(true);
     const pending = budgetPending(thread);
     if (!pending) throw new Error("missing pending");
+
+    const withoutHuman = await approveExtend(aliceMachine, pending.id, false);
+    expect(withoutHuman).toEqual({ ok: false, error: "human_required" });
+    expect(budgetPending(thread)?.id).toBe(pending.id);
+
     const approved = await approveExtend(aliceMachine, pending.id);
     expect(approved.ok).toBe(true);
     expect(aliceMachine.store.get(thread)?.extension?.status).toBe("awaiting_peer");
@@ -446,6 +536,44 @@ describe("N4 budget extend human gate", () => {
     expect(
       alicePending.list().filter((item) => item.kind === "budget_extend" && item.thread === thread),
     ).toHaveLength(0);
+  });
+
+  it("stale budget_reject after raise does not decrease max_turns", async () => {
+    const thread = await liveThread(20);
+    const attached = await extendAttach(thread, 30);
+    expect(attached.ok).toBe(true);
+    if (!attached.ok) return;
+
+    const pending = budgetPending(thread);
+    expect(pending).toBeDefined();
+    if (!pending) return;
+
+    const localApprove = await approveExtend(aliceMachine, pending.id);
+    expect(localApprove.ok).toBe(true);
+
+    const bobPendingItem = budgetPending(thread, bobPending);
+    expect(bobPendingItem).toBeDefined();
+    if (!bobPendingItem) return;
+
+    const peerApprove = await approveExtend(bobMachine, bobPendingItem.id);
+    expect(peerApprove.ok).toBe(true);
+    expect(aliceMachine.store.get(thread)?.budget.max_turns).toBe(30);
+    expect(bobMachine.store.get(thread)?.budget.max_turns).toBe(30);
+
+    const staleReject = await aliceMachine.handleIncomingEnvelope({
+      from: fixtures.bobId,
+      type: "nego.budget_reject",
+      thread,
+      payload: JSON.stringify({
+        thread,
+        proposal_id: crypto.randomUUID(),
+        new_max_turns: 20,
+        reason: "stale",
+      }),
+    });
+    expect(staleReject).toMatchObject({ ok: true, dropped: true });
+    expect(aliceMachine.store.get(thread)?.budget.max_turns).toBe(30);
+    expect(bobMachine.store.get(thread)?.budget.max_turns).toBe(30);
   });
 
   it("extend_budget while outstanding returns extension_outstanding", async () => {
