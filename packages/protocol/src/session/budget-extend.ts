@@ -207,7 +207,7 @@ export function createBudgetExtendHandlers(ctx: BudgetExtendContext) {
     }
     const budgetPending = pending;
 
-    if (!budgetPending.new_max_turns || !budgetPending.proposal_id) {
+    if (!isNumberedBudgetExtendPending(budgetPending)) {
       return { ok: false as const, error: "proposal_required" as const };
     }
     const proposalId = budgetPending.proposal_id;
@@ -314,7 +314,7 @@ export function createBudgetExtendHandlers(ctx: BudgetExtendContext) {
 
     ctx.deps.pending.remove(pending.id);
 
-    if (!pending.proposal_id || !pending.new_max_turns) {
+    if (!isNumberedBudgetExtendPending(pending)) {
       return { ok: true as const, thread: session.thread, status: "live" as const };
     }
 
@@ -353,7 +353,10 @@ export function createBudgetExtendHandlers(ctx: BudgetExtendContext) {
     if (!found.ok) {
       return found;
     }
-    const session = found.session;
+    const session = ctx.ensureLiveNotExpired(found.session);
+    if (session.status !== "live") {
+      return { ok: false as const, error: "session_not_live" as const };
+    }
     const extension = session.extension;
     if (!extension?.envelope_bytes) {
       return { ok: false as const, error: "invalid_payload" as const };

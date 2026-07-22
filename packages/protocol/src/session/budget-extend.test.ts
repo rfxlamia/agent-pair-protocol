@@ -266,52 +266,27 @@ describe("N4 budget extend human gate", () => {
 
   it("wire-vs-wire race: initiator wins and emits budget_reject superseded", async () => {
     const aliceSends: RelayCapture[] = [];
-    relink({ capture: { aliceSends } });
+    const { flush, setPauseDelivery } = relink({ capture: { aliceSends } });
 
     const thread = await liveThread(20);
-    const aliceProposal = crypto.randomUUID();
-    const bobProposal = crypto.randomUUID();
+    setPauseDelivery(true);
 
-    aliceMachine.store.upsert({
-      ...requireSession(thread),
-      extension: {
-        proposal_id: aliceProposal,
-        new_max_turns: 30,
-        proposed_by: "initiator",
-        status: "awaiting_peer",
-      },
-    });
-    bobMachine.store.upsert({
-      ...requireSession(thread, bobMachine),
-      extension: {
-        proposal_id: bobProposal,
-        new_max_turns: 40,
-        proposed_by: "recipient",
-        status: "awaiting_peer",
-      },
-    });
+    const aliceAttached = await extendAttach(thread, 30);
+    if (!aliceAttached.ok) throw new Error("alice attach failed");
+    const aliceLocalPending = budgetPending(thread);
+    if (!aliceLocalPending) throw new Error("missing alice pending");
+    await approveExtend(aliceMachine, aliceLocalPending.id);
 
-    await bobMachine.handleIncomingEnvelope({
-      from: fixtures.aliceId,
-      type: "nego.budget_propose",
-      thread,
-      payload: JSON.stringify({
-        thread,
-        proposal_id: aliceProposal,
-        new_max_turns: 30,
-      }),
-    });
-    await aliceMachine.handleIncomingEnvelope({
-      from: fixtures.bobId,
-      type: "nego.budget_propose",
-      thread,
-      payload: JSON.stringify({
-        thread,
-        proposal_id: bobProposal,
-        new_max_turns: 40,
-      }),
-    });
+    const bobAttached = await bobMachine.handleExtendBudget({ thread, new_max_turns: 40 });
+    if (!bobAttached.ok) throw new Error("bob attach failed");
+    const bobLocalPending = budgetPending(thread, bobPending);
+    if (!bobLocalPending) throw new Error("missing bob pending");
+    await approveExtend(bobMachine, bobLocalPending.id);
 
+    await flush();
+
+    const aliceProposal = aliceLocalPending.proposal_id;
+    const bobProposal = bobLocalPending.proposal_id;
     const rejectSend = aliceSends.find((s) => s.type === "nego.budget_reject");
     expect(rejectSend).toBeDefined();
     if (rejectSend) {
@@ -441,6 +416,41 @@ describe("N4 budget extend human gate", () => {
 
     const extendAfterDeadline = await extendAttach(thread, 40);
     expect(extendAfterDeadline).toEqual({ ok: false, error: "session_not_live" });
+  });
+
+  it("retryBudgetExtendEmit after deadline returns session_not_live without relay send", async () => {
+    const aliceSends: RelayCapture[] = [];
+    let failPropose = true;
+    relink({
+      capture: { aliceSends },
+      injectSendFailure: ({ type }) => type === "nego.budget_propose" && failPropose,
+    });
+
+    const thread = await liveThread(20);
+    const attached = await extendAttach(thread, 30);
+    if (!attached.ok) throw new Error("attach failed");
+    const pending = budgetPending(thread);
+    if (!pending) throw new Error("missing pending");
+
+    const approved = await approveExtend(aliceMachine, pending.id);
+    expect(approved).toMatchObject({ ok: true, emit_pending: true });
+    expect(aliceMachine.store.get(thread)?.extension?.status).toBe("emitting");
+
+    const session = requireSession(thread);
+    aliceMachine.store.upsert({
+      ...session,
+      budget: { ...session.budget, deadline: new Date(Date.now() + 60_000).toISOString() },
+    });
+
+    failPropose = false;
+    vi.advanceTimersByTime(120_000);
+
+    const sendCountBefore = aliceSends.length;
+    const retried = await aliceMachine.retryBudgetExtendEmit(thread);
+    expect(retried).toEqual({ ok: false, error: "session_not_live" });
+    expect(aliceSends.length).toBe(sendCountBefore);
+    expect(aliceMachine.store.get(thread)?.status).toBe("closed");
+    expect(aliceMachine.store.get(thread)?.extension).toBeUndefined();
   });
 
   it("emit failure leaves *_emitting and retryBudgetExtendEmit resends identical bytes", async () => {
