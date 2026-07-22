@@ -220,6 +220,13 @@ export async function handleSessionStatus(ctx: AgentContext, input: { thread: st
   );
 }
 
+export async function handleSessionExtendBudget(
+  ctx: AgentContext,
+  input: { thread: string; new_max_turns: number },
+) {
+  return withSessionMachine(ctx, (machine) => machine.handleExtendBudget(input));
+}
+
 export async function handleSessionApproveOpen(
   ctx: AgentContext,
   input: { pending_id: string; via_human?: boolean },

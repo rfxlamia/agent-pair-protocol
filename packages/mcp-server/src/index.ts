@@ -19,6 +19,7 @@ import {
   handleRevoke,
 } from "./tools/pair.js";
 import {
+  handleSessionExtendBudget,
   handleSessionMsg,
   handleSessionOpen,
   handleSessionSign,
@@ -268,6 +269,20 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       },
     },
     async (input) => handleSessionStatus(context, input),
+  );
+
+  server.registerTool(
+    "session_extend_budget",
+    {
+      title: "Extend session budget",
+      description:
+        "Propose raising max_turns on a live session. Creates a numbered budget_extend pending for human approval; does not send wire until approved.",
+      inputSchema: {
+        thread: z.string(),
+        new_max_turns: z.number().int(),
+      },
+    },
+    async (input) => handleSessionExtendBudget(context, input),
   );
 
   return { server, context };
