@@ -162,6 +162,8 @@ export {
   parseNegoOpenRejectPayload,
   parseNegoTurnPayload,
   parseNegoSignedPayload,
+  parseNegoBudgetExtendPayload,
+  parseNegoBudgetRejectPayload,
   parseAtestReportPayload,
 } from "./envelope/schema.js";
 export {
@@ -175,3 +177,10 @@ export {
   createSessionStateMachine,
   type SessionStateMachine,
 } from "./session/state-machine.js";
+export {
+  createBudgetExtendHandlers,
+  guardTurnBudgetWithExtension,
+  sweepBudgetExtendOnLeaveLive,
+  type BudgetExtendContext,
+  type BudgetExtendHandlers,
+} from "./session/budget-extend.js";

@@ -1,105 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeBase64UrlStrict } from "../crypto/base64url.js";
-import { type KeyPair, generateKeyPair, publicKeyToAgentId } from "../crypto/keys.js";
-import type { Bond, LocalAllowlistStore } from "../pairing/flow.js";
-import { REFERENCE_PROFILES } from "../profile/reference.js";
-import type {
-  BudgetExtendPendingInput,
-  RatifyPendingInput,
-  SessionBondStore,
-  SessionOpenPendingInput,
-  SessionPendingItem,
-  SessionPendingQueue,
-} from "./deps.js";
-import { type SessionStateMachine, createSessionStateMachine } from "./state-machine.js";
-import { SESSION_OPEN_TTL_MS } from "./types.js";
-
-function agentIdFromKeys(keys: KeyPair): string {
-  return publicKeyToAgentId(keys.publicKey);
-}
-
-class MemoryAllowlistStore implements LocalAllowlistStore {
-  private store = new Map<string, string[]>();
-
-  get(agentId: string): string[] {
-    return [...(this.store.get(agentId) ?? [])];
-  }
-
-  set(agentId: string, allowed: string[]): void {
-    this.store.set(agentId, [...allowed]);
-  }
-}
-
-class MockPendingQueue implements SessionPendingQueue {
-  private items = new Map<string, SessionPendingItem>();
-
-  list(): SessionPendingItem[] {
-    return [...this.items.values()];
-  }
-
-  get(id: string): SessionPendingItem | undefined {
-    return this.items.get(id);
-  }
-
-  remove(id: string): void {
-    this.items.delete(id);
-  }
-
-  addSessionOpen(input: SessionOpenPendingInput): SessionPendingItem {
-    const item: SessionPendingItem = {
-      id: crypto.randomUUID(),
-      kind: "session_open",
-      createdAt: Date.now(),
-      ...input,
-    };
-    this.items.set(item.id, item);
-    return item;
-  }
-
-  addRatify(input: RatifyPendingInput): SessionPendingItem {
-    const item: SessionPendingItem = {
-      id: crypto.randomUUID(),
-      kind: "ratify",
-      createdAt: Date.now(),
-      ...input,
-    };
-    this.items.set(item.id, item);
-    return item;
-  }
-
-  addBudgetExtend(input: BudgetExtendPendingInput): SessionPendingItem {
-    const item: SessionPendingItem = {
-      id: crypto.randomUUID(),
-      kind: "budget_extend",
-      createdAt: Date.now(),
-      ...input,
-    };
-    this.items.set(item.id, item);
-    return item;
-  }
-}
-
-class MockBondStore implements SessionBondStore {
-  private store = new Map<string, Bond[]>();
-
-  add(agentId: string, bond: Bond): void {
-    const existing = this.get(agentId).filter((entry) => entry.peer !== bond.peer);
-    this.store.set(agentId, [...existing, bond]);
-  }
-
-  private get(agentId: string): Bond[] {
-    return [...(this.store.get(agentId) ?? [])];
-  }
-
-  find(agentId: string, peer: string): Bond | undefined {
-    return this.get(agentId).find((entry) => entry.peer === peer);
-  }
-
-  remove(agentId: string, peer: string): void {
-    const next = this.get(agentId).filter((entry) => entry.peer !== peer);
-    this.store.set(agentId, next);
-  }
-}
+import { type KeyPair, generateKeyPair } from "../crypto/keys.js";
+import type { Bond } from "../pairing/flow.js";
+import type { SessionStateMachine } from "./state-machine.js";
+import {
+  ATEST_CAPABLE,
+  FUTURE_DEADLINE,
+  type MemoryAllowlistStore,
+  type MockBondStore,
+  type MockPendingQueue,
+  NEGO_ONLY,
+  PAST_DEADLINE,
+  type RelayCapture,
+  SESSION_OPEN_TTL_MS,
+  agentIdFromKeys,
+  createLinkedMachines,
+  createSessionTestFixtures,
+  defaultOpenPayload,
+  openAndApprove,
+  openLiveWithMaxTurns,
+} from "./test-helpers.js";
 
 describe("session state machine", () => {
   let aliceKeys: KeyPair;
@@ -117,177 +37,60 @@ describe("session state machine", () => {
   let aliceBonds: MockBondStore;
   let bobBonds: MockBondStore;
 
-  type RelayCapture = { type: string; to: string; thread: string; payload: string };
-
-  function createLinkedMachines(capture?: {
-    aliceSends?: RelayCapture[];
-    bobSends?: RelayCapture[];
-  }) {
-    const peers = new Map<string, SessionStateMachine>();
-
-    const deliver = async (
-      fromId: string,
-      input: { to: string; type: string; payload: string; thread: string },
-    ) => {
-      const peer = peers.get(input.to);
-      if (!peer) {
-        throw new Error(`unknown peer: ${input.to}`);
-      }
-      await peer.handleIncomingEnvelope({
-        from: fromId,
-        type: input.type,
-        thread: input.thread,
-        payload: input.payload,
-      });
-    };
-
-    const alice = createSessionStateMachine({
-      agentId: aliceId,
-      keyPair: aliceKeys,
-      pending: alicePending,
-      allowlist: aliceAllowlist,
-      bonds: aliceBonds,
-      relay: {
-        async send(input) {
-          capture?.aliceSends?.push({
-            type: input.type,
-            to: input.to,
-            thread: input.thread,
-            payload: input.payload,
-          });
-          await deliver(aliceId, input);
-          return { ok: true };
-        },
+  function linkMachines(capture?: { aliceSends?: RelayCapture[]; bobSends?: RelayCapture[] }) {
+    const linked = createLinkedMachines(
+      {
+        aliceKeys,
+        bobKeys,
+        carolKeys,
+        aliceId,
+        bobId,
+        carolId,
+        alicePending,
+        bobPending,
+        aliceAllowlist,
+        bobAllowlist,
+        aliceBonds,
+        bobBonds,
       },
-    });
-    peers.set(aliceId, alice);
-    const bob = createSessionStateMachine({
-      agentId: bobId,
-      keyPair: bobKeys,
-      pending: bobPending,
-      allowlist: bobAllowlist,
-      bonds: bobBonds,
-      relay: {
-        async send(input) {
-          capture?.bobSends?.push({
-            type: input.type,
-            to: input.to,
-            thread: input.thread,
-            payload: input.payload,
-          });
-          await deliver(bobId, input);
-          return { ok: true };
-        },
-      },
-    });
-    peers.set(bobId, bob);
-    const carol = createSessionStateMachine({
-      agentId: carolId,
-      keyPair: carolKeys,
-      pending: new MockPendingQueue(),
-      allowlist: new MemoryAllowlistStore(),
-      bonds: new MockBondStore(),
-      relay: {
-        async send(input) {
-          await deliver(carolId, input);
-          return { ok: true };
-        },
-      },
-    });
-    peers.set(carolId, carol);
-
-    return { alice, bob, carol };
+      { capture },
+    );
+    aliceMachine = linked.alice;
+    bobMachine = linked.bob;
+    return linked;
   }
 
   beforeEach(() => {
     vi.useFakeTimers();
-    aliceKeys = generateKeyPair();
-    bobKeys = generateKeyPair();
-    carolKeys = generateKeyPair();
-    aliceId = agentIdFromKeys(aliceKeys);
-    bobId = agentIdFromKeys(bobKeys);
-    carolId = agentIdFromKeys(carolKeys);
-    alicePending = new MockPendingQueue();
-    bobPending = new MockPendingQueue();
-    aliceAllowlist = new MemoryAllowlistStore();
-    bobAllowlist = new MemoryAllowlistStore();
-    aliceBonds = new MockBondStore();
-    bobBonds = new MockBondStore();
-
-    aliceAllowlist.set(aliceId, [bobId]);
-    bobAllowlist.set(bobId, [aliceId]);
-    aliceBonds.add(aliceId, {
-      peer: bobId,
-      scope: ["session.negotiate"],
-      mode: "ephemeral_until_session_closes",
-    });
-    bobBonds.add(bobId, {
-      peer: aliceId,
-      scope: ["session.negotiate"],
-      mode: "ephemeral_until_session_closes",
-    });
-
-    const linked = createLinkedMachines();
-    aliceMachine = linked.alice;
-    bobMachine = linked.bob;
+    const fixtures = createSessionTestFixtures();
+    aliceKeys = fixtures.aliceKeys;
+    bobKeys = fixtures.bobKeys;
+    carolKeys = fixtures.carolKeys;
+    aliceId = fixtures.aliceId;
+    bobId = fixtures.bobId;
+    carolId = fixtures.carolId;
+    alicePending = fixtures.alicePending;
+    bobPending = fixtures.bobPending;
+    aliceAllowlist = fixtures.aliceAllowlist;
+    bobAllowlist = fixtures.bobAllowlist;
+    aliceBonds = fixtures.aliceBonds;
+    bobBonds = fixtures.bobBonds;
+    linkMachines();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  const FUTURE_DEADLINE = new Date(Date.now() + 86_400_000).toISOString();
-  const PAST_DEADLINE = new Date(Date.now() - 60_000).toISOString();
+  const openPayload = defaultOpenPayload;
 
-  const openPayload = {
-    goal: "Agree telemetry API contract v1",
-    acceptance: [
-      {
-        id: "A1",
-        test: "executable" as const,
-        desc: "payload <= 4096 bytes",
-        runner: "payload-size",
-      },
-    ],
-    budget: { max_turns: 30, deadline: FUTURE_DEADLINE },
-    mandate: {
-      agent_may: ["propose", "counter", "accept_section", "challenge"],
-      human_required: ["sign_final", "budget_extend", "constraint_change"],
-    },
-  };
-
-  async function openAndApprove(): Promise<string> {
-    const opened = await aliceMachine.handleOpen({
-      to: bobId,
-      ...openPayload,
-    });
-    expect(opened.ok).toBe(true);
-    if (!opened.ok) {
-      throw new Error("session open failed");
-    }
-
-    const bobPendingItems = bobPending.list().filter((item) => item.kind === "session_open");
-    expect(bobPendingItems.length).toBe(1);
-    const bobPendingItem = bobPendingItems[0];
-    if (!bobPendingItem) {
-      throw new Error("expected session_open pending item");
-    }
-    const pendingId = bobPendingItem.id;
-
-    const approved = await bobMachine.handleApproveOpen({
-      pending_id: pendingId,
-      via_human: true,
-    });
-    expect(approved.ok).toBe(true);
-    return opened.thread as string;
+  async function approveOpenSession(): Promise<string> {
+    return openAndApprove(aliceMachine, bobMachine, bobPending, bobId, openPayload);
   }
-
-  const NEGO_ONLY = [...REFERENCE_PROFILES];
-  const ATEST_CAPABLE = [...REFERENCE_PROFILES, "atest/1"];
 
   function wireBondProfiles(
     profiles: string[],
-    capture?: Parameters<typeof createLinkedMachines>[0],
+    capture?: { aliceSends?: RelayCapture[]; bobSends?: RelayCapture[] },
   ) {
     aliceBonds.add(aliceId, {
       peer: bobId,
@@ -301,16 +104,17 @@ describe("session state machine", () => {
       mode: "ephemeral_until_session_closes",
       profiles,
     });
-    const linked = createLinkedMachines(capture);
-    aliceMachine = linked.alice;
-    bobMachine = linked.bob;
+    linkMachines(capture);
   }
 
-  function wireNegoOnlyBonds(capture?: Parameters<typeof createLinkedMachines>[0]) {
+  function wireNegoOnlyBonds(capture?: { aliceSends?: RelayCapture[]; bobSends?: RelayCapture[] }) {
     wireBondProfiles(NEGO_ONLY, capture);
   }
 
-  function wireAtestCapableBonds(capture?: Parameters<typeof createLinkedMachines>[0]) {
+  function wireAtestCapableBonds(capture?: {
+    aliceSends?: RelayCapture[];
+    bobSends?: RelayCapture[];
+  }) {
     wireBondProfiles(ATEST_CAPABLE, capture);
   }
 
@@ -374,7 +178,7 @@ describe("session state machine", () => {
     });
 
     it("closes live session with bond_revoked", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
 
       aliceMachine.handleBondRevoke(bobId);
 
@@ -386,7 +190,7 @@ describe("session state machine", () => {
     });
 
     it("closes signed session retaining signHashes and artifactHash", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:bond-revoke-signed-retain";
       await signFlowToSigned(thread, artifactHash);
       const before = aliceMachine.store.get(thread);
@@ -409,7 +213,7 @@ describe("session state machine", () => {
     });
 
     it("leaves terminal sessions unchanged", async () => {
-      const finalizedThread = await openAndApprove();
+      const finalizedThread = await approveOpenSession();
       const finalizedHash = "sha256:terminal-finalized";
       await signFlowToSigned(finalizedThread, finalizedHash);
       const aliceRatify = alicePending.list().find((item) => item.kind === "ratify");
@@ -456,7 +260,11 @@ describe("session state machine", () => {
         mode: "ephemeral_until_session_closes",
       });
 
-      const bobThreads = [await openAndApprove(), await openAndApprove(), await openAndApprove()];
+      const bobThreads = [
+        await approveOpenSession(),
+        await approveOpenSession(),
+        await approveOpenSession(),
+      ];
       const carolOpen = await aliceMachine.handleOpen({ to: carolId, ...openPayload });
       expect(carolOpen.ok).toBe(true);
       if (!carolOpen.ok) return;
@@ -497,7 +305,7 @@ describe("session state machine", () => {
     });
 
     it("sweeps budget_extend pending on live session revoke", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const budgetPending = alicePending.addBudgetExtend({ thread, peer: bobId });
 
       aliceMachine.handleBondRevoke(bobId);
@@ -509,7 +317,7 @@ describe("session state machine", () => {
     });
 
     it("sweeps orphan ratify pending on normal-closed session", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:orphan-ratify-sweep";
       await signFlowToSigned(thread, artifactHash);
       await aliceMachine.handleThreadClose(thread);
@@ -529,7 +337,7 @@ describe("session state machine", () => {
 
   describe("ensureRatifyPending bond revoke guards", () => {
     it("does not re-queue ratify after bond_revoked close via session_status", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:ratify-guard-bond-revoked";
       await signFlowToSigned(thread, artifactHash);
       expect(alicePending.list().some((item) => item.kind === "ratify")).toBe(true);
@@ -553,7 +361,7 @@ describe("session state machine", () => {
     });
 
     it("does not re-queue ratify when bond absent on normal-closed session", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:ratify-guard-no-bond";
       await signFlowToSigned(thread, artifactHash);
       await aliceMachine.handleThreadClose(thread, "done");
@@ -569,7 +377,7 @@ describe("session state machine", () => {
     });
 
     it("re-queues ratify on thread_closed after revoke and re-bond", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:ratify-guard-revoke-rebond-normal";
       await signFlowToSigned(thread, artifactHash);
       await aliceMachine.handleThreadClose(thread);
@@ -593,7 +401,7 @@ describe("session state machine", () => {
     });
 
     it("re-queues ratify on normal-closed after re-bond but never on bond_revoked", async () => {
-      const normalThread = await openAndApprove();
+      const normalThread = await approveOpenSession();
       const artifactHash = "sha256:ratify-guard-rebond";
       await signFlowToSigned(normalThread, artifactHash);
       await aliceMachine.handleThreadClose(normalThread, "done");
@@ -610,7 +418,7 @@ describe("session state machine", () => {
       status = await aliceMachine.handleStatus({ thread: normalThread });
       expect(status.pending_id).toBeTypeOf("string");
 
-      const revokedThread = await openAndApprove();
+      const revokedThread = await approveOpenSession();
       await signFlowToSigned(revokedThread, artifactHash);
       aliceMachine.handleBondRevoke(bobId);
       aliceBonds.add(aliceId, {
@@ -630,7 +438,7 @@ describe("session state machine", () => {
 
   describe("handleThreadClose", () => {
     it("transitions live session to closed (§8.3 any → core.close → closed)", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const result = await aliceMachine.handleThreadClose(thread, "user done");
       expect(result).toEqual({ ok: true, thread, status: "closed" });
       const status = await aliceMachine.handleStatus({ thread });
@@ -640,7 +448,7 @@ describe("session state machine", () => {
     });
 
     it("transitions signed session to closed", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:close-from-signed";
       await signFlowToSigned(thread, artifactHash);
 
@@ -654,7 +462,7 @@ describe("session state machine", () => {
     });
 
     it("is idempotent when session already closed", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       await aliceMachine.handleThreadClose(thread, "first");
       const again = await aliceMachine.handleThreadClose(thread, "second");
       expect(again).toEqual({ ok: true, thread, status: "closed" });
@@ -663,7 +471,7 @@ describe("session state machine", () => {
     });
 
     it("default close reason is thread_closed when reason omitted", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       await aliceMachine.handleThreadClose(thread);
       const status = await aliceMachine.handleStatus({ thread });
       expect(status.reject_reason).toBe("thread_closed");
@@ -685,7 +493,7 @@ describe("session state machine", () => {
     });
 
     it("removes ratify pending when closing a signed session", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:close-clears-ratify";
       await signFlowToSigned(thread, artifactHash);
       expect(alicePending.list().some((item) => item.kind === "ratify")).toBe(true);
@@ -821,7 +629,7 @@ describe("session state machine", () => {
   });
 
   it("session.open redelivery does not reset a live recipient session", async () => {
-    const thread = await openAndApprove();
+    const thread = await approveOpenSession();
 
     const bobBefore = await bobMachine.handleStatus({ thread });
     expect(bobBefore.ok).toBe(true);
@@ -859,7 +667,7 @@ describe("session state machine", () => {
   });
 
   it("session_msg supports propose/counter/accept negotiation", async () => {
-    const thread = await openAndApprove();
+    const thread = await approveOpenSession();
 
     const propose = await bobMachine.handleMsg({
       thread,
@@ -892,7 +700,7 @@ describe("session state machine", () => {
 
   it("ratification requires human_approve on both sides before co-sign", async () => {
     wireAtestCapableBonds();
-    const thread = await openAndApprove();
+    const thread = await approveOpenSession();
     const artifactHash = "sha256:final-hash-xyz";
 
     await aliceMachine.handleMsg({
@@ -983,7 +791,7 @@ describe("session state machine", () => {
   });
 
   it("removes ratify pending when ratifying by thread without pending_id", async () => {
-    const thread = await openAndApprove();
+    const thread = await approveOpenSession();
     const artifactHash = "sha256:thread-only-ratify";
     ensureAtestCapableBonds();
 
@@ -1022,7 +830,7 @@ describe("session state machine", () => {
 
   it("session_sign rejects when payload-size test_report is red", async () => {
     wireAtestCapableBonds();
-    const thread = await openAndApprove();
+    const thread = await approveOpenSession();
     const artifactHash = "sha256:codegen-red-hash";
 
     await aliceMachine.handleMsg({
@@ -1117,7 +925,7 @@ describe("session state machine", () => {
 
   it("finalize removes ephemeral bond from allowlist", async () => {
     wireAtestCapableBonds();
-    const thread = await openAndApprove();
+    const thread = await approveOpenSession();
     const artifactHash = "sha256:cleanup-hash";
 
     await aliceMachine.handleMsg({
@@ -1173,7 +981,7 @@ describe("session state machine", () => {
   });
 
   async function openSignAndAliceRatify(): Promise<{ thread: string; artifactHash: string }> {
-    const thread = await openAndApprove();
+    const thread = await approveOpenSession();
     const artifactHash = "sha256:non-participant-guard";
     ensureAtestCapableBonds();
 
@@ -1240,7 +1048,7 @@ describe("session state machine", () => {
     });
 
     it("rejects peer_signed from a non-participant without mutating signHashes", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:carol-signed-attack";
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
@@ -1265,7 +1073,7 @@ describe("session state machine", () => {
     });
 
     it("rejects atest.challenge from a non-participant without filing challenges", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: carolId,
@@ -1348,7 +1156,7 @@ describe("session state machine", () => {
     });
 
     it("rejects peer_turn from a non-participant without bumping turnCount", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const before = await aliceMachine.handleStatus({ thread });
       expect(before.ok).toBe(true);
       if (!before.ok) {
@@ -1381,7 +1189,7 @@ describe("session state machine", () => {
     });
 
     it("rejects malformed peer_test_report payloads", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:malformed-test-report";
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
@@ -1409,7 +1217,7 @@ describe("session state machine", () => {
     });
 
     it("accepts atest.challenge from a participant via handleIncomingEnvelope", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
 
       const accepted = await aliceMachine.handleIncomingEnvelope({
         from: bobId,
@@ -1428,7 +1236,7 @@ describe("session state machine", () => {
     });
 
     it("rejects malformed atest.challenge payloads", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: bobId,
@@ -1444,7 +1252,7 @@ describe("session state machine", () => {
     });
 
     it("rejects malformed peer_turn payloads", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const before = await aliceMachine.handleStatus({ thread });
       expect(before.ok).toBe(true);
       if (!before.ok) {
@@ -1500,7 +1308,7 @@ describe("session state machine", () => {
     });
 
     it("rejects non-object JSON envelope payloads", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
 
       const rejected = await aliceMachine.handleIncomingEnvelope({
         from: bobId,
@@ -1518,7 +1326,7 @@ describe("session state machine", () => {
 
   describe("§10 invalid_payload collapse (M1.5)", () => {
     it("maps unknown handleMsg type to invalid_payload", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
 
       const rejected = await aliceMachine.handleMsg({
         thread,
@@ -1533,7 +1341,7 @@ describe("session state machine", () => {
     });
 
     it("maps invalid accept body to invalid_payload", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
 
       const rejected = await aliceMachine.handleMsg({
         thread,
@@ -1557,7 +1365,7 @@ describe("session state machine", () => {
     });
 
     it("maps handleRatify with empty artifact_hash on signed session to invalid_payload", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:empty-hash-ratify";
       await signFlowToSigned(thread, artifactHash);
 
@@ -1668,7 +1476,7 @@ describe("session state machine", () => {
 
   describe("terminal wire precision guard", () => {
     async function finalizeToClosed(): Promise<string> {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const artifactHash = "sha256:terminal-guard-finalized";
       await signFlowToSigned(thread, artifactHash);
       const aliceRatify = alicePending.list().find((item) => item.kind === "ratify");
@@ -1705,13 +1513,13 @@ describe("session state machine", () => {
     }
 
     async function bondRevokeClosed(): Promise<string> {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       aliceMachine.handleBondRevoke(bobId);
       return thread;
     }
 
     async function threadCloseClosed(): Promise<string> {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       await aliceMachine.handleThreadClose(thread);
       return thread;
     }
@@ -2005,7 +1813,7 @@ describe("session state machine", () => {
 
     it("handleOpen rejects past deadline before creating session or sending", async () => {
       const aliceSends: RelayCapture[] = [];
-      const { alice } = createLinkedMachines({ aliceSends });
+      const { alice } = linkMachines({ aliceSends });
       aliceMachine = alice;
       const beforeCount = aliceMachine.store.list().length;
       const result = await aliceMachine.handleOpen({
@@ -2031,7 +1839,7 @@ describe("session state machine", () => {
 
     it("handleOpen wire payload has budget.deadline and no expires_at", async () => {
       const aliceSends: RelayCapture[] = [];
-      const { alice, bob } = createLinkedMachines({ aliceSends });
+      const { alice, bob } = linkMachines({ aliceSends });
       aliceMachine = alice;
       bobMachine = bob;
       const opened = await aliceMachine.handleOpen({ to: bobId, ...openPayload });
@@ -2062,7 +1870,7 @@ describe("session state machine", () => {
 
     it("handleIncomingOpen with past deadline → open_expired, no pending, courtesy sent", async () => {
       const bobSends: RelayCapture[] = [];
-      const { bob } = createLinkedMachines({ bobSends });
+      const { bob } = linkMachines({ bobSends });
       const thread = crypto.randomUUID();
       const result = await bob.handleIncomingOpen({
         thread,
@@ -2081,7 +1889,7 @@ describe("session state machine", () => {
 
     it("redelivered nego.open on open_expired is no-op", async () => {
       const bobSends: RelayCapture[] = [];
-      const { bob } = createLinkedMachines({ bobSends });
+      const { bob } = linkMachines({ bobSends });
       const thread = crypto.randomUUID();
       const input = {
         thread,
@@ -2133,7 +1941,7 @@ describe("session state machine", () => {
 
     it("reject after effectiveOpenExpiry → session_open_expired, no nego.open_reject", async () => {
       const bobSends: RelayCapture[] = [];
-      const { alice, bob } = createLinkedMachines({ bobSends });
+      const { alice, bob } = linkMachines({ bobSends });
       aliceMachine = alice;
       bobMachine = bob;
       const shortDeadline = new Date(Date.now() + 30 * 60_000).toISOString();
@@ -2154,7 +1962,7 @@ describe("session state machine", () => {
     });
 
     it("handleExpireSessions closes live session with deadline_expired", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const session = requireSession(thread);
       const nearDeadline = new Date(Date.now() + 60_000).toISOString();
       aliceMachine.store.upsert({
@@ -2206,7 +2014,7 @@ describe("session state machine", () => {
     });
 
     it("handleSign on expired live → session_not_live after auto-close", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const session = requireSession(thread);
       const nearDeadline = new Date(Date.now() + 60_000).toISOString();
       aliceMachine.store.upsert({
@@ -2220,7 +2028,7 @@ describe("session state machine", () => {
     });
 
     it("handleIncomingEnvelope nego.turn on expired live → thread_closed", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const session = requireSession(thread);
       const nearDeadline = new Date(Date.now() + 60_000).toISOString();
       const bobSession = bobMachine.store.get(thread);
@@ -2242,7 +2050,7 @@ describe("session state machine", () => {
     });
 
     it("handleStatus on expired live → closed + deadline_expired", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const session = requireSession(thread);
       const nearDeadline = new Date(Date.now() + 60_000).toISOString();
       aliceMachine.store.upsert({
@@ -2259,7 +2067,7 @@ describe("session state machine", () => {
     });
 
     it("signed past deadline survives sweep", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       await signFlowToSigned(thread, "sha256:deadline-survive-test");
       const session = requireSession(thread);
       const pastDeadline = new Date(Date.now() - 60_000).toISOString();
@@ -2275,7 +2083,7 @@ describe("session state machine", () => {
     });
 
     it("core.close after deadline_expired is no-op on rejectReason", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const session = requireSession(thread);
       const nearDeadline = new Date(Date.now() + 60_000).toISOString();
       aliceMachine.store.upsert({
@@ -2291,7 +2099,7 @@ describe("session state machine", () => {
 
     it("initiator pending expire sends no envelope", async () => {
       const aliceSends: RelayCapture[] = [];
-      const { alice, bob } = createLinkedMachines({ aliceSends });
+      const { alice, bob } = linkMachines({ aliceSends });
       aliceMachine = alice;
       bobMachine = bob;
       const shortDeadline = new Date(Date.now() + 30 * 60_000).toISOString();
@@ -2354,7 +2162,7 @@ describe("session state machine", () => {
     }
 
     async function liveSessionAtTurnCountTwo(): Promise<string> {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const session = requireN6Session(thread);
       aliceMachine.store.upsert({ ...session, turnCount: 2 });
       return thread;
@@ -2385,7 +2193,7 @@ describe("session state machine", () => {
     });
 
     it("rejects nego.turn in signed with session_not_live and no increment", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       await signFlowToSigned(thread, "sha256:n6-signed-guard");
       const before = requireN6Session(thread);
       expect(before.status).toBe("signed");
@@ -2401,7 +2209,7 @@ describe("session state machine", () => {
     });
 
     it("rejects nego.turn in terminal status with thread_closed", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       await aliceMachine.handleThreadClose(thread);
 
       const result = await aliceMachine.handleIncomingEnvelope({
@@ -2441,26 +2249,15 @@ describe("session state machine", () => {
     );
 
     describe("receive-side budget enforcement (R3)", () => {
-      async function openLiveWithMaxTurns(maxTurns: number): Promise<string> {
-        const opened = await aliceMachine.handleOpen({
-          to: bobId,
-          ...openPayload,
-          budget: { max_turns: maxTurns, deadline: FUTURE_DEADLINE },
-        });
-        expect(opened.ok).toBe(true);
-        if (!opened.ok) {
-          throw new Error("open failed");
-        }
-        const bobPendingItems = bobPending.list().filter((item) => item.kind === "session_open");
-        const bobPendingItem = bobPendingItems[0];
-        if (!bobPendingItem) {
-          throw new Error("expected session_open pending");
-        }
-        await bobMachine.handleApproveOpen({
-          pending_id: bobPendingItem.id,
-          via_human: true,
-        });
-        return opened.thread;
+      async function openLiveSession(maxTurns: number): Promise<string> {
+        return openLiveWithMaxTurns(
+          aliceMachine,
+          bobMachine,
+          bobPending,
+          bobId,
+          maxTurns,
+          openPayload,
+        );
       }
 
       async function exhaustTurnBudgetViaMsgs(thread: string, maxTurns: number): Promise<void> {
@@ -2484,7 +2281,7 @@ describe("session state machine", () => {
 
       it("rejects over-budget nego.turn with budget_exhausted and registers one budget_extend", async () => {
         const maxTurns = 3;
-        const thread = await openLiveWithMaxTurns(maxTurns);
+        const thread = await openLiveSession(maxTurns);
         await exhaustTurnBudgetViaMsgs(thread, maxTurns);
 
         const before = requireN6Session(thread);
@@ -2506,7 +2303,7 @@ describe("session state machine", () => {
 
       it("repeated over-budget nego.turn does not duplicate budget_extend pending", async () => {
         const maxTurns = 3;
-        const thread = await openLiveWithMaxTurns(maxTurns);
+        const thread = await openLiveSession(maxTurns);
         await exhaustTurnBudgetViaMsgs(thread, maxTurns);
 
         const first = await aliceMachine.handleIncomingEnvelope({
@@ -2530,7 +2327,7 @@ describe("session state machine", () => {
 
       it("send-path then receive-path over-budget shares one budget_extend pending", async () => {
         const maxTurns = 3;
-        const thread = await openLiveWithMaxTurns(maxTurns);
+        const thread = await openLiveSession(maxTurns);
         await exhaustTurnBudgetViaMsgs(thread, maxTurns);
 
         const sendExhausted = await aliceMachine.handleMsg({
@@ -2553,7 +2350,7 @@ describe("session state machine", () => {
 
       it("receive-path then send-path over-budget shares one budget_extend pending", async () => {
         const maxTurns = 3;
-        const thread = await openLiveWithMaxTurns(maxTurns);
+        const thread = await openLiveSession(maxTurns);
         await exhaustTurnBudgetViaMsgs(thread, maxTurns);
 
         const receiveExhausted = await aliceMachine.handleIncomingEnvelope({
@@ -2593,16 +2390,14 @@ describe("session state machine", () => {
     }
 
     function relinkMachines(capture?: { aliceSends?: RelayCapture[]; bobSends?: RelayCapture[] }) {
-      const linked = createLinkedMachines(capture);
-      aliceMachine = linked.alice;
-      bobMachine = linked.bob;
+      linkMachines(capture);
     }
 
     it("rejects session_msg challenge on nego-only bond without mutating challenges or relay send", async () => {
       const aliceSends: RelayCapture[] = [];
       wireNegoOnlyBonds({ aliceSends });
 
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const before = aliceMachine.store.get(thread);
       expect(before).toBeDefined();
 
@@ -2630,7 +2425,7 @@ describe("session state machine", () => {
       const aliceSends: RelayCapture[] = [];
       wireNegoOnlyBonds({ aliceSends });
 
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const hash = "sha256:m31-outbound-report";
       const before = aliceMachine.store.get(thread);
       expect(before).toBeDefined();
@@ -2664,7 +2459,7 @@ describe("session state machine", () => {
       const aliceSends: RelayCapture[] = [];
       relinkMachines({ aliceSends });
 
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const result = await aliceMachine.handleMsg({
         thread,
         type: "challenge",
@@ -2682,7 +2477,7 @@ describe("session state machine", () => {
       const aliceSends: RelayCapture[] = [];
       wireAtestCapableBonds({ aliceSends });
 
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const result = await aliceMachine.handleMsg({
         thread,
         type: "challenge",
@@ -2740,7 +2535,7 @@ describe("session state machine", () => {
     });
 
     it("nego-only bond signs without atest ceremony", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const hash = "sha256:m31-nego-only";
       const aliceSign = await aliceMachine.handleSign({ thread, artifact_hash: hash });
       expect(aliceSign.ok).toBe(true);
@@ -2755,7 +2550,7 @@ describe("session state machine", () => {
     });
 
     it("nego-only bond has tests_legal true on live session", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const status = await aliceMachine.handleStatus({ thread });
       expect(status.ok).toBe(true);
       if (!status.ok) {
@@ -2781,7 +2576,7 @@ describe("session state machine", () => {
 
     it("executable + atest/1 returns challenges_incomplete then tests_not_green", async () => {
       wireAtestCapableBonds();
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const hash = "sha256:m31-exec-gate-order";
 
       const beforeChallenges = await aliceMachine.handleSign({ thread, artifact_hash: hash });
@@ -2812,7 +2607,7 @@ describe("session state machine", () => {
 
     it("executable + atest/1 full ceremony succeeds when all runners green both sides", async () => {
       wireAtestCapableBonds();
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const hash = "sha256:m31-full-ceremony";
 
       await aliceMachine.handleMsg({ thread, type: "challenge", body: "{}" });
@@ -2939,7 +2734,7 @@ describe("session state machine", () => {
     });
 
     it("handleStatus includes warnings when executable acceptance but nego-only bond", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const status = await aliceMachine.handleStatus({ thread });
       expect(status.ok).toBe(true);
       if (!status.ok) {
@@ -2956,7 +2751,7 @@ describe("session state machine", () => {
     });
 
     it("handleSign includes warnings on success for nego-only executable session", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const hash = "sha256:m31-warn-sign";
       const sign = await aliceMachine.handleSign({ thread, artifact_hash: hash });
       expect(sign.ok).toBe(true);
@@ -2968,7 +2763,7 @@ describe("session state machine", () => {
     });
 
     it("ratify pending carries warnings after both parties sign", async () => {
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const hash = "sha256:m31-warn-ratify";
 
       const aliceSign = await aliceMachine.handleSign({ thread, artifact_hash: hash });
@@ -3000,7 +2795,7 @@ describe("session state machine", () => {
     it("does not emit warnings when bond advertises atest/1", async () => {
       wireAtestCapableBonds();
 
-      const thread = await openAndApprove();
+      const thread = await approveOpenSession();
       const status = await aliceMachine.handleStatus({ thread });
       expect(status.ok).toBe(true);
       if (!status.ok) {

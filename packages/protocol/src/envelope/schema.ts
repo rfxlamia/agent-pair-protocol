@@ -142,6 +142,21 @@ export function parseNegoSignedPayload(parsed: Record<string, unknown>) {
     | { ok: false; error: "invalid_payload" };
 }
 
+export function parseNegoBudgetExtendPayload(parsed: Record<string, unknown>) {
+  return parseEnvelopePayload("nego.budget_propose", parsed) as
+    | { ok: true; data: z.infer<typeof negoBudgetExtendSchema> }
+    | { ok: false; error: "invalid_payload" };
+}
+
+export function parseNegoBudgetRejectPayload(parsed: Record<string, unknown>) {
+  return parseEnvelopePayload("nego.budget_reject", parsed) as
+    | {
+        ok: true;
+        data: z.infer<(typeof PAYLOAD_SCHEMAS)["nego.budget_reject"]>;
+      }
+    | { ok: false; error: "invalid_payload" };
+}
+
 export function parseAtestReportPayload(parsed: Record<string, unknown>) {
   return parseEnvelopePayload("atest.report", parsed) as
     | { ok: true; data: z.infer<(typeof PAYLOAD_SCHEMAS)["atest.report"]> }

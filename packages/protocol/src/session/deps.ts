@@ -24,6 +24,7 @@ export interface BudgetExtendPendingInput {
   peer: string;
   new_max_turns?: number;
   proposal_id?: string;
+  proposed_by?: "initiator" | "recipient";
 }
 
 export interface SessionOpenPendingItem extends SessionOpenPendingInput {

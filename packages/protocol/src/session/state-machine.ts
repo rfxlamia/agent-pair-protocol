@@ -18,6 +18,12 @@ import {
   testsLegal,
 } from "./atest-gate.js";
 import { isEphemeralBond } from "./bond.js";
+import {
+  type BudgetExtendContext,
+  createBudgetExtendHandlers,
+  guardTurnBudgetWithExtension,
+  sweepBudgetExtendOnLeaveLive,
+} from "./budget-extend.js";
 import type { SessionStateMachineDeps } from "./deps.js";
 import { type SessionStore, createSessionStore } from "./store.js";
 import { setRunnerReport } from "./test-reports.js";
@@ -136,33 +142,6 @@ export function createSessionStateMachine(
       .find((item) => item.kind === "session_open" && item.thread === thread);
   }
 
-  function removeBudgetExtendPendingForThread(thread: string) {
-    for (const pending of deps.pending.list()) {
-      if (pending.kind === "budget_extend" && pending.thread === thread) {
-        deps.pending.remove(pending.id);
-      }
-    }
-  }
-
-  function guardTurnBudget(
-    session: SessionRecord,
-  ): { ok: true } | { ok: false; error: "budget_exhausted" } {
-    if (session.turnCount >= session.budget.max_turns) {
-      const peer = peerFor(session, deps.agentId);
-      const existing = deps.pending
-        .list()
-        .find((item) => item.kind === "budget_extend" && item.thread === session.thread);
-      if (!existing) {
-        deps.pending.addBudgetExtend({
-          thread: session.thread,
-          peer,
-        });
-      }
-      return { ok: false, error: "budget_exhausted" };
-    }
-    return { ok: true };
-  }
-
   function expireOpenPendingSync(session: SessionRecord): SessionRecord {
     const expired = upsert({ ...session, status: "open_expired" });
     removeSessionOpenPendingForThread(session.thread);
@@ -186,12 +165,13 @@ export function createSessionStateMachine(
     if (now() <= Date.parse(session.budget.deadline)) {
       return session;
     }
-    removeBudgetExtendPendingForThread(session.thread);
-    return upsert({
-      ...session,
-      status: "closed",
-      rejectReason: "deadline_expired",
-    });
+    return upsert(
+      leaveLiveSweep({
+        ...session,
+        status: "closed",
+        rejectReason: "deadline_expired",
+      }),
+    );
   }
 
   function ensureRecipientOpenPending(session: SessionRecord) {
@@ -283,6 +263,31 @@ export function createSessionStateMachine(
       payload: JSON.stringify(payload),
       thread: session.thread,
     });
+  }
+
+  const budgetExtendCtx: BudgetExtendContext = {
+    deps,
+    store,
+    now,
+    upsert,
+    getOrError,
+    ensureLiveNotExpired,
+    notifyPeer,
+    peerFor,
+    roleFor,
+    assertParticipant,
+  };
+
+  const budgetExtend = createBudgetExtendHandlers(budgetExtendCtx);
+
+  function leaveLiveSweep(session: SessionRecord): SessionRecord {
+    return sweepBudgetExtendOnLeaveLive(session, budgetExtendCtx);
+  }
+
+  function guardTurnBudget(
+    session: SessionRecord,
+  ): { ok: true } | { ok: false; error: "budget_exhausted" } {
+    return guardTurnBudgetWithExtension(session, budgetExtendCtx);
   }
 
   async function recordTestReport(input: { thread: string; report: TestReport }) {
@@ -783,12 +788,19 @@ export function createSessionStateMachine(
           } else {
             signHashes.recipient = artifactHash;
           }
-          const updated = upsert({
+          const nextStatus = bothSigned({ ...found.session, signHashes })
+            ? "signed"
+            : found.session.status;
+          let nextSession: SessionRecord = {
             ...found.session,
             signHashes,
             artifactHash,
-            status: bothSigned({ ...found.session, signHashes }) ? "signed" : found.session.status,
-          });
+            status: nextStatus,
+          };
+          if (found.session.status === "live" && nextStatus === "signed") {
+            nextSession = leaveLiveSweep(nextSession);
+          }
+          const updated = upsert(nextSession);
           const pendingRatify =
             updated.status === "signed" ? ensureRatifyPending(updated) : undefined;
           return {
@@ -886,6 +898,27 @@ export function createSessionStateMachine(
             };
           }
           return { ok: true, thread: input.thread, status: updated.status };
+        }
+        case "nego.budget_propose": {
+          return budgetExtend.handleIncomingBudgetPropose({
+            thread: input.thread,
+            from: input.from,
+            payload: parsed,
+          });
+        }
+        case "nego.budget_approved": {
+          return budgetExtend.handleIncomingBudgetApproved({
+            thread: input.thread,
+            from: input.from,
+            payload: parsed,
+          });
+        }
+        case "nego.budget_reject": {
+          return budgetExtend.handleIncomingBudgetReject({
+            thread: input.thread,
+            from: input.from,
+            payload: parsed,
+          });
         }
         default:
           return { ok: false, error: "unsupported_envelope_type" };
@@ -995,12 +1028,17 @@ export function createSessionStateMachine(
 
       const role = roleFor(session, deps.agentId);
       const signHashes = { ...session.signHashes, [role]: input.artifact_hash };
-      const updated = upsert({
+      const nextStatus = bothSigned({ ...session, signHashes }) ? "signed" : session.status;
+      let nextSession: SessionRecord = {
         ...session,
         signHashes,
         artifactHash: input.artifact_hash,
-        status: bothSigned({ ...session, signHashes }) ? "signed" : session.status,
-      });
+        status: nextStatus,
+      };
+      if (session.status === "live" && nextStatus === "signed") {
+        nextSession = leaveLiveSweep(nextSession);
+      }
+      const updated = upsert(nextSession);
 
       await notifyPeer(updated, "nego.signed", {
         thread: updated.thread,
@@ -1163,11 +1201,19 @@ export function createSessionStateMachine(
         if (session.status === "signed") {
           removeRatifyPendingForThread(session.thread);
         }
-        upsert({
-          ...session,
-          status: "closed",
-          rejectReason: "bond_revoked",
-        });
+        const closedSession =
+          session.status === "live"
+            ? leaveLiveSweep({
+                ...session,
+                status: "closed",
+                rejectReason: "bond_revoked",
+              })
+            : {
+                ...session,
+                status: "closed" as const,
+                rejectReason: "bond_revoked",
+              };
+        upsert(closedSession);
       }
 
       for (const pending of deps.pending.list()) {
@@ -1212,13 +1258,26 @@ export function createSessionStateMachine(
       if (session.status === "signed") {
         removeRatifyPendingForThread(thread);
       }
-      const updated = upsert({
-        ...session,
-        status: "closed",
-        rejectReason: closeReason,
-      });
+      const nextSession =
+        session.status === "live"
+          ? leaveLiveSweep({
+              ...session,
+              status: "closed",
+              rejectReason: closeReason,
+            })
+          : {
+              ...session,
+              status: "closed" as const,
+              rejectReason: closeReason,
+            };
+      const updated = upsert(nextSession);
       return { ok: true as const, thread, status: updated.status };
     },
+
+    handleExtendBudget: budgetExtend.handleExtendBudget,
+    handleApproveBudgetExtend: budgetExtend.handleApproveBudgetExtend,
+    handleRejectBudgetExtend: budgetExtend.handleRejectBudgetExtend,
+    retryBudgetExtendEmit: budgetExtend.retryBudgetExtendEmit,
   };
 }
 
