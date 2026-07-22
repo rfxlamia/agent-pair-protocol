@@ -9,6 +9,7 @@ import { readApprovalCodeForAgent } from "./approval-test-helpers.js";
 import { openLiveBudgetPair } from "./budget-extend-test-helpers.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { handleInbox } from "./inbox.js";
+import type { AgentContext } from "./pair.js";
 import {
   handleSessionExtendBudget,
   handleSessionMsg,
@@ -20,10 +21,7 @@ function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
 }
 
-function maxTurns(
-  ctx: { sessionStore: { get: (thread: string) => { budget: { max_turns: number } } | undefined } },
-  thread: string,
-): number {
+function maxTurns(ctx: AgentContext, thread: string): number {
   return ctx.sessionStore.get(thread)?.budget.max_turns ?? -1;
 }
 
