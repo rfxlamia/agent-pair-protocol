@@ -28,10 +28,6 @@ export function classifyApprovalOutcome(
   kind: PendingKind,
   result: DispatchResult,
 ): ApprovalOutcomeClass {
-  if (kind === "budget_extend") {
-    return "unsupported_no_consume";
-  }
-
   if (result.error === "relay_unavailable") {
     return "transient";
   }
@@ -46,7 +42,7 @@ export function classifyApprovalOutcome(
     return "terminal";
   }
 
-  if (kind === "session_open" || kind === "ratify") {
+  if (kind === "session_open" || kind === "ratify" || kind === "budget_extend") {
     if (result.ok === true) {
       return "terminal";
     }

@@ -1,9 +1,11 @@
 import { stat } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type DualRelayEnv, startDualRelay, syncInboxes } from "../e2e/dual-server.js";
+import { readApprovalCodeForAgent } from "./approval-test-helpers.js";
 import { openLiveBudgetPair } from "./budget-extend-test-helpers.js";
+import { handleHumanApprove } from "./human-approve.js";
 import { handleInbox } from "./inbox.js";
-import { handleSessionExtendBudget } from "./session.js";
+import { handleSessionExtendBudget, handleSessionStatus } from "./session.js";
 
 function structured<T>(result: { structuredContent: T }): T {
   return result.structuredContent;
@@ -88,5 +90,45 @@ describe("session_extend_budget", () => {
       .list()
       .find((item) => item.kind === "budget_extend" && item.thread === thread);
     expect(pending).toBeUndefined();
+  });
+
+  it("extend_budget while extension outstanding returns extension_outstanding", async () => {
+    const { initiator, thread } = await openLiveBudgetPair(env, "outstanding", {
+      maxTurns: 20,
+    });
+
+    const first = structured(
+      await handleSessionExtendBudget(initiator.ctx, {
+        thread,
+        new_max_turns: 30,
+      }),
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok || typeof first.pending_id !== "string") {
+      throw new Error("first extend failed");
+    }
+
+    const code = readApprovalCodeForAgent(initiator.ctx, first.pending_id);
+    const approved = structured(
+      await handleHumanApprove(initiator.ctx, {
+        pending_id: first.pending_id,
+        decision: "approve",
+        approval_code: code,
+      }),
+    );
+    expect(approved.ok).toBe(true);
+
+    const second = structured(
+      await handleSessionExtendBudget(initiator.ctx, {
+        thread,
+        new_max_turns: 40,
+      }),
+    );
+    expect(second).toEqual({
+      ok: false,
+      error: "extension_outstanding",
+      outstanding: { awaiting: "peer" },
+    });
+    expect(initiator.ctx.sessionStore.get(thread)?.extension?.new_max_turns).toBe(30);
   });
 });

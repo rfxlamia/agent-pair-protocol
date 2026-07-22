@@ -142,6 +142,26 @@ function presentSessionStatusForModel(
     );
   }
 
+  const session = ctx.sessionStore.get(thread);
+  if (session?.extension) {
+    const { envelope_bytes: _, ...extension } = session.extension;
+    result.extension = extension;
+  }
+
+  const budgetPending = ctx.pending
+    .list()
+    .find((item) => item.kind === "budget_extend" && item.thread === thread);
+  if (budgetPending && budgetPending.kind === "budget_extend") {
+    result.pending_id = budgetPending.id;
+    result.pending_kind = "budget_extend";
+    if (budgetPending.new_max_turns !== undefined) {
+      result.new_max_turns = budgetPending.new_max_turns;
+    }
+    if (budgetPending.proposal_id !== undefined) {
+      result.proposal_id = budgetPending.proposal_id;
+    }
+  }
+
   return result;
 }
 
@@ -225,6 +245,30 @@ export async function handleSessionExtendBudget(
   input: { thread: string; new_max_turns: number },
 ) {
   return withSessionMachine(ctx, (machine) => machine.handleExtendBudget(input));
+}
+
+export async function handleSessionApproveBudgetExtend(
+  ctx: AgentContext,
+  input: { pending_id: string; via_human?: boolean },
+) {
+  return withSessionMachine(ctx, (machine) => machine.handleApproveBudgetExtend(input));
+}
+
+export async function handleSessionRejectBudgetExtend(
+  ctx: AgentContext,
+  input: { pending_id: string; reason?: string; via_human?: boolean },
+) {
+  return withSessionMachine(ctx, (machine) => machine.handleRejectBudgetExtend(input));
+}
+
+export async function retryBudgetExtendEmitForSessions(ctx: AgentContext): Promise<void> {
+  const machine = await getSessionMachine(ctx);
+  for (const session of ctx.sessionStore.list()) {
+    const status = session.extension?.status;
+    if (status === "emitting" || status === "approved_emitting" || status === "rejected_emitting") {
+      await machine.retryBudgetExtendEmit(session.thread);
+    }
+  }
 }
 
 export async function handleSessionApproveOpen(

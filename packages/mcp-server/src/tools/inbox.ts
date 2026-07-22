@@ -26,6 +26,7 @@ import {
   processThreadClose,
   resolveRatifyPendingId,
   resolveSessionOpenPendingId,
+  retryBudgetExtendEmitForSessions,
 } from "./session.js";
 import { detectClientThreadGaps, nextThreadSeq, recordSentSeq } from "./thread-seq.js";
 import { assertNoSecrets, stripSecrets, toolTextResult, wrapUntrustedPeerContent } from "./util.js";
@@ -112,6 +113,7 @@ export async function handleInbox(
   input: { since?: number; include_history?: boolean },
 ) {
   await expireSessions(ctx);
+  await retryBudgetExtendEmitForSessions(ctx);
   await ensureAllowlistReady(ctx);
 
   const keyPair = await ctx.keyStore.loadOrCreate();
@@ -223,6 +225,7 @@ export async function handleInbox(
 
     let pendingId: string | undefined;
     let sessionStatus: string | undefined;
+    let inboxEvent: string | undefined;
 
     if (isSessionDispatchType(body.type) && !seen.has(body.id)) {
       const processed = await processSessionInboxEnvelope(ctx, {
@@ -251,6 +254,9 @@ export async function handleInbox(
       }
       if (effect.ok === true && typeof effect.pending_id === "string") {
         pendingId = effect.pending_id;
+      }
+      if (effect.ok === true && typeof effect.inbox_event === "string") {
+        inboxEvent = effect.inbox_event;
       }
     }
 
@@ -306,6 +312,7 @@ export async function handleInbox(
           }
         : {}),
       ...(sessionStatus ? { session_status: sessionStatus } : {}),
+      ...(inboxEvent ? { inbox_event: inboxEvent } : {}),
     });
   }
 

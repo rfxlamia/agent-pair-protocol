@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parseEnvelopeBody } from "@agentpair/protocol";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   type DualRelayEnv,
   createDualAgent,
@@ -7,9 +8,11 @@ import {
   syncInboxes,
 } from "../e2e/dual-server.js";
 import { readApprovalCodeForAgent } from "./approval-test-helpers.js";
+import { openLiveBudgetPair } from "./budget-extend-test-helpers.js";
 import { handleHumanApprove } from "./human-approve.js";
 import { handleClose, handleInbox, handleSend } from "./inbox.js";
 import {
+  handleSessionExtendBudget,
   handleSessionMsg,
   handleSessionOpen,
   handleSessionSign,
@@ -683,4 +686,96 @@ describe("inbox production path", () => {
     );
     expect(bobStatusAfter.status).toBe("closed");
   }, 15_000);
+
+  it("inbox poll retries budget_extend *_emitting via retryBudgetExtendEmit", async () => {
+    const { initiator, joiner, thread } = await openLiveBudgetPair(env, "emit-retry");
+
+    const extended = structured(
+      await handleSessionExtendBudget(initiator.ctx, {
+        thread,
+        new_max_turns: 30,
+      }),
+    );
+    expect(extended.ok).toBe(true);
+    if (!extended.ok || typeof extended.pending_id !== "string") {
+      throw new Error("extend failed");
+    }
+
+    let failPropose = true;
+    const originalSend = initiator.ctx.relay.sendEnvelope.bind(initiator.ctx.relay);
+    vi.spyOn(initiator.ctx.relay, "sendEnvelope").mockImplementation(async (to, outer) => {
+      if (failPropose) {
+        const body = parseEnvelopeBody(outer);
+        if (body.type === "nego.budget_propose") {
+          failPropose = false;
+          throw new Error("ECONNREFUSED");
+        }
+      }
+      return originalSend(to, outer);
+    });
+
+    const code = readApprovalCodeForAgent(initiator.ctx, extended.pending_id);
+    const approved = structured(
+      await handleHumanApprove(initiator.ctx, {
+        pending_id: extended.pending_id,
+        decision: "approve",
+        approval_code: code,
+      }),
+    );
+    expect(approved.ok).toBe(true);
+    expect(approved.emit_pending).toBe(true);
+    expect(initiator.ctx.sessionStore.get(thread)?.extension?.status).toBe("emitting");
+
+    const inbox = structured(await handleInbox(initiator.ctx, {}));
+    expect(inbox.ok).toBe(true);
+    expect(initiator.ctx.sessionStore.get(thread)?.extension?.status).toBe("awaiting_peer");
+
+    await syncInboxes([initiator.ctx, joiner.ctx]);
+    const joinerInbox = structured(await handleInbox(joiner.ctx, {}));
+    expect(joinerInbox.ok).toBe(true);
+    if (!joinerInbox.ok) return;
+    expect(joinerInbox.envelopes.some((e) => e.type === "nego.budget_propose")).toBe(true);
+  }, 30_000);
+
+  it("surfaces budget_extend_superseded on inbox when peer propose replaces local draft", async () => {
+    const { initiator, joiner, thread } = await openLiveBudgetPair(env, "superseded");
+
+    const bobDraft = structured(
+      await handleSessionExtendBudget(joiner.ctx, {
+        thread,
+        new_max_turns: 32,
+      }),
+    );
+    expect(bobDraft.ok).toBe(true);
+
+    const aliceExtend = structured(
+      await handleSessionExtendBudget(initiator.ctx, {
+        thread,
+        new_max_turns: 35,
+      }),
+    );
+    expect(aliceExtend.ok).toBe(true);
+    if (!aliceExtend.ok || typeof aliceExtend.pending_id !== "string") {
+      throw new Error("alice extend failed");
+    }
+    const aliceCode = readApprovalCodeForAgent(initiator.ctx, aliceExtend.pending_id);
+    const aliceApproved = structured(
+      await handleHumanApprove(initiator.ctx, {
+        pending_id: aliceExtend.pending_id,
+        decision: "approve",
+        approval_code: aliceCode,
+      }),
+    );
+    expect(aliceApproved.ok).toBe(true);
+
+    const bobInbox = structured(await handleInbox(joiner.ctx, { since: 0 }));
+    expect(bobInbox.ok).toBe(true);
+    if (!bobInbox.ok) return;
+    const proposeEnvelope = bobInbox.envelopes.find((e) => e.type === "nego.budget_propose");
+    expect(proposeEnvelope?.inbox_event).toBe("budget_extend_superseded");
+    const bobPending = joiner.ctx.pending
+      .list()
+      .find((item) => item.kind === "budget_extend" && item.thread === thread);
+    expect(bobPending?.new_max_turns).toBe(35);
+  }, 30_000);
 });

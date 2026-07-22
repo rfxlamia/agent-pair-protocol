@@ -1,16 +1,18 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { init as initPake } from "@agentpair/protocol";
+import { init as initPake, publicKeyToAgentId } from "@agentpair/protocol";
 import { createRelayApp } from "@agentpair/relay";
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { type DualRelayEnv, startDualRelay, syncInboxes } from "../e2e/dual-server.js";
 import { HttpRelayClient } from "../relay/client.js";
 import { createKeyStore } from "../store/keys.js";
 import type { PendingQueue } from "../store/pending.js";
 import { classifyApprovalOutcome } from "./approval-outcome.js";
-import { readApprovalCode } from "./approval-test-helpers.js";
+import { readApprovalCode, readApprovalCodeForAgent } from "./approval-test-helpers.js";
+import { openLiveBudgetPair } from "./budget-extend-test-helpers.js";
 import { humanApproveInputSchema } from "./human-approve-schema.js";
 import { handleHumanApprove } from "./human-approve.js";
 import {
@@ -19,6 +21,7 @@ import {
   handlePairInitComplete,
   handlePairJoin,
 } from "./pair.js";
+import { handleSessionExtendBudget, handleSessionMsg, handleSessionStatus } from "./session.js";
 import { assertNoSecrets } from "./util.js";
 
 const TEST_PORT = 13117;
@@ -43,8 +46,9 @@ describe("approval-outcome classification (unit)", () => {
     expect(classifyApprovalOutcome("session_open", { error: "session_not_found" })).toBe(
       "terminal",
     );
-    expect(classifyApprovalOutcome("budget_extend", { verified: true })).toBe(
-      "unsupported_no_consume",
+    expect(classifyApprovalOutcome("budget_extend", { ok: true })).toBe("terminal");
+    expect(classifyApprovalOutcome("budget_extend", { error: "relay_unavailable" })).toBe(
+      "transient",
     );
   });
 });
@@ -284,8 +288,8 @@ describe("human_approve approval_code gate", () => {
     ).toBe(0);
   });
 
-  it("budget_extend verifies successfully but returns unsupported_pending_kind without consuming", async () => {
-    const bob = await makeFileAgent("budget-extend");
+  it("budget_extend numberless approve returns proposal_required before code verify", async () => {
+    const bob = await makeFileAgent("budget-numberless-approve");
     const keyPair = await bob.ctx.keyStore.loadOrCreate();
     (bob.ctx.pending as PendingQueueWithInit).init?.(keyPair.secretKey);
     const pending = bob.ctx.pending.addBudgetExtend({
@@ -303,10 +307,100 @@ describe("human_approve approval_code gate", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe("unsupported_pending_kind");
+    expect(result.error).toBe("proposal_required");
     expect(bob.ctx.pending.get(pending.id)).toBeDefined();
+    expect(
+      (bob.ctx.pending.get(pending.id) as { approvalAttempts?: number })?.approvalAttempts,
+    ).toBe(0);
     expect(readApprovalCode(bob.dataDir, pending.id)).toBe(code);
   });
+
+  it("budget_extend numberless reject consumes pending without wire after verify", async () => {
+    const bob = await makeFileAgent("budget-numberless-reject");
+    const keyPair = await bob.ctx.keyStore.loadOrCreate();
+    (bob.ctx.pending as PendingQueueWithInit).init?.(keyPair.secretKey);
+    const bobId = publicKeyToAgentId(keyPair.publicKey);
+    bob.ctx.sessionStore.upsert({
+      thread: "thread-budget",
+      initiator: "ed25519:alice",
+      recipient: bobId,
+      role: "recipient",
+      status: "live",
+      goal: "g",
+      acceptance: [],
+      budget: { max_turns: 3, deadline: "2030-01-01T00:00:00.000Z" },
+      mandate: { agent_may: [], human_required: [] },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
+    });
+    const pending = bob.ctx.pending.addBudgetExtend({
+      thread: "thread-budget",
+      peer: "ed25519:alice",
+    });
+    const code = readApprovalCode(bob.dataDir, pending.id);
+
+    const result = structured(
+      await handleHumanApprove(bob.ctx, {
+        pending_id: pending.id,
+        decision: "reject:not-now",
+        approval_code: code,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("live");
+    expect(bob.ctx.pending.get(pending.id)).toBeUndefined();
+  });
+
+  it("numbered budget_extend approve on live dual-agent proposes and sets extension", async () => {
+    const env = await startDualRelay(13118);
+    try {
+      const { initiator, thread } = await openLiveBudgetPair(env, "gate-numbered");
+
+      const extended = structured(
+        await handleSessionExtendBudget(initiator.ctx, {
+          thread,
+          new_max_turns: 30,
+        }),
+      );
+      expect(extended.ok).toBe(true);
+      if (!extended.ok || typeof extended.pending_id !== "string") {
+        throw new Error("extend failed");
+      }
+
+      const code = readApprovalCodeForAgent(initiator.ctx, extended.pending_id);
+      const approved = structured(
+        await handleHumanApprove(initiator.ctx, {
+          pending_id: extended.pending_id,
+          decision: "approve",
+          approval_code: code,
+        }),
+      );
+
+      expect(approved.ok).toBe(true);
+      expect(initiator.ctx.pending.get(extended.pending_id)).toBeUndefined();
+      expect(initiator.ctx.sessionStore.get(thread)?.budget.max_turns).toBe(20);
+      expect(initiator.ctx.sessionStore.get(thread)?.extension).toMatchObject({
+        new_max_turns: 30,
+        status: "awaiting_peer",
+      });
+      expect(approved).not.toHaveProperty("approval_code");
+      expect(approved).not.toHaveProperty("approvalCodeVerifier");
+
+      const status = structured(await handleSessionStatus(initiator.ctx, { thread }));
+      expect(status.extension).toMatchObject({ new_max_turns: 30, status: "awaiting_peer" });
+      expect(status.pending_id).toBeUndefined();
+    } finally {
+      await env.cleanup();
+    }
+  }, 30_000);
 
   it("keeps pending+code valid on a transient relay failure after verify (mocked network throw)", async () => {
     const alice = await makeFileAgent("alice-transient");

@@ -16,8 +16,10 @@ import {
   handlePairInitComplete,
 } from "./pair.js";
 import {
+  handleSessionApproveBudgetExtend,
   handleSessionApproveOpen,
   handleSessionRatify,
+  handleSessionRejectBudgetExtend,
   handleSessionRejectOpen,
 } from "./session.js";
 import { assertNoSecrets, toolTextResult } from "./util.js";
@@ -71,6 +73,18 @@ async function executeHumanApprove(ctx: AgentContext, input: HumanApproveInput) 
       assertNoSecrets(result);
       return toolTextResult(result);
     }
+  }
+
+  const parsedEarly = parseHumanDecision(input.decision);
+  if (
+    pending.kind === "budget_extend" &&
+    !("error" in parsedEarly) &&
+    "approve" in parsedEarly &&
+    (!pending.new_max_turns || !pending.proposal_id)
+  ) {
+    const result = { ok: false, error: "proposal_required" };
+    assertNoSecrets(result);
+    return toolTextResult(result);
   }
 
   const normalized = normalizeApprovalCode(input.approval_code);
@@ -132,7 +146,7 @@ async function executeHumanApprove(ctx: AgentContext, input: HumanApproveInput) 
     return toolTextResult(result);
   }
 
-  const parsed = parseHumanDecision(input.decision);
+  const parsed = parsedEarly;
   if ("error" in parsed) {
     const result = { ok: false, error: parsed.error };
     assertNoSecrets(result);
@@ -176,7 +190,21 @@ async function dispatchHumanDecision(
   profiles?: string[],
 ): Promise<Record<string, unknown>> {
   if (pending.kind === "budget_extend") {
-    return { ok: false, error: "unsupported_pending_kind" };
+    if ("reject" in decision) {
+      return structured(
+        await handleSessionRejectBudgetExtend(ctx, {
+          pending_id: pending.id,
+          reason: decision.reject,
+          via_human: true,
+        }),
+      );
+    }
+    return structured(
+      await handleSessionApproveBudgetExtend(ctx, {
+        pending_id: pending.id,
+        via_human: true,
+      }),
+    );
   }
 
   if (pending.kind === "pair_join") {
