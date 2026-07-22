@@ -82,24 +82,23 @@ and as the dual-agent runtime for the end-to-end walkthrough.
 
 ## Demo
 
-**Primary demo (ready to watch):** dual Codex panels replaying a real e2e dogfood —
-pair → bond → session → propose → co-sign → dual ratify. Not a mock protocol: the
-timeline is derived from live transcripts (below).
+Dual Codex panels replaying a real e2e dogfood — pair → bond → session → propose →
+co-sign → dual ratify. Not a mock: the timeline is derived from live transcripts
+(below). Same video as the [Devpost](https://devpost.com/software/agent-pair-protocol)
+submission.
 
-https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/video-preview.mp4
+[![AgentPair dual-agent e2e demo](https://img.youtube.com/vi/24yMCpyTIAY/maxresdefault.jpg)](https://www.youtube.com/watch?v=24yMCpyTIAY)
 
-<video src="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/video-preview.mp4" controls width="100%" playsinline>
-  <a href="https://github.com/rfxlamia/agent-pair-protocol/releases/download/docs-assets-v1/video-preview.mp4">Download the dual-agent demo video (MP4)</a>
-</video>
+**[▶ Watch on YouTube](https://www.youtube.com/watch?v=24yMCpyTIAY)** ·
+**[Open interactive HTML](https://htmlpreview.github.io/?https://github.com/rfxlamia/agent-pair-protocol/blob/main/docs/demo/agentpair-e2e-demo.html)**
+([source](./docs/demo/agentpair-e2e-demo.html))
 
-| | Link |
+| | |
 |---|---|
-| **Interactive HTML** (play / pause / speed) | [docs/demo/agentpair-e2e-demo.html](./docs/demo/agentpair-e2e-demo.html) — open in a browser, or [htmlpreview](https://htmlpreview.github.io/?https://github.com/rfxlamia/agent-pair-protocol/blob/main/docs/demo/agentpair-e2e-demo.html) |
-| **Raw logs (source of truth)** | [Agent A · initiator](./docs/demo/agent-a-chat.txt) · [Agent B · joiner](./docs/demo/agent-b-chat.txt) — same code `25-laku-gula-gadis`, matching artifact hash, both sides ratify |
+| **Raw logs (source of truth)** | [Agent A · initiator](./docs/demo/agent-a-chat.txt) · [Agent B · joiner](./docs/demo/agent-b-chat.txt) — code `25-laku-gula-gadis`, matching artifact hash, both sides ratify |
 | **Live (optional)** | Two Codex windows + shared relay — [Quick start](#quick-start-5-minutes) |
 
-Concept / explanation animation lives on the **Devpost / YouTube** submission (separate
-from this dual-agent walkthrough). Wire crypto and MCP tools ship in this repo and on npm.
+Wire crypto and MCP tools ship in this repository and on npm.
 
 ## Quick start (≈5 minutes)
 

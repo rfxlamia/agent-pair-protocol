@@ -41,8 +41,7 @@ search-replace that base in `README.md`.
 | `spillover.webp` | 64 KiB cap + artifact spill | Diagrams (collapsed) |
 | `profiles.webp` | core/1 · nego/1 · atest/1 | Diagrams (collapsed) |
 | `quick-start.webp` | `npx agentpair` + 3 steps | Diagrams (collapsed) |
-| `video-preview.mp4` | Screen record of dual-agent HTML demo (~720p) | README **Demo** (always) |
-| `video-preview.mov` | Master screen record (local only) | Re-export source; do not upload if MP4 exists |
+| `video-preview.mp4` / `.mov` | Local screen-record masters | Optional archive; **public demo is YouTube** [`24yMCpyTIAY`](https://www.youtube.com/watch?v=24yMCpyTIAY) |
 
 PNG masters (optional, same stems) stay local for re-export; prefer **WebP** on
 the release (~1.6 MB total vs ~13 MB PNG). Demo video: upload **MP4 only**
