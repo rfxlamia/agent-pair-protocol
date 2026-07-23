@@ -27,7 +27,7 @@ export function parseRetryAfterMs(header: string | null | undefined): number | u
     return undefined;
   }
   const seconds = Number.parseInt(header, 10);
-  if (!Number.isFinite(seconds) || Number.isNaN(seconds)) {
+  if (!Number.isFinite(seconds)) {
     return undefined;
   }
   return seconds * 1000;

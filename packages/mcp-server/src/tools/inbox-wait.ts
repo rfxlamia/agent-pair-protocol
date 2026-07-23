@@ -31,6 +31,13 @@ function computeBaseIntervalMs(): number {
   return 1000 + Math.floor(Math.random() * 1000);
 }
 
+function nextBackoffIntervalMs(current: number | undefined): number {
+  if (current !== undefined) {
+    return Math.min(current * 2, MAX_BACKOFF_MS);
+  }
+  return Math.min(computeBaseIntervalMs() * 2, MAX_BACKOFF_MS);
+}
+
 export function hasDeliverableMail(result: Record<string, unknown>): boolean {
   if (result.ok !== true) {
     return false;
@@ -79,9 +86,7 @@ export async function handleInboxWait(
     } catch {
       lastError = "relay_unavailable";
       lastRetryAfterMs = undefined;
-      backoffIntervalMs = backoffIntervalMs
-        ? Math.min(backoffIntervalMs * 2, MAX_BACKOFF_MS)
-        : Math.min(computeBaseIntervalMs() * 2, MAX_BACKOFF_MS);
+      backoffIntervalMs = nextBackoffIntervalMs(backoffIntervalMs);
       isFirstIteration = false;
 
       const remaining = deadlineMs - deps.now();
@@ -120,9 +125,7 @@ export async function handleInboxWait(
       const retryAfter = structured.retry_after_ms;
       lastRetryAfterMs =
         typeof retryAfter === "number" && Number.isFinite(retryAfter) ? retryAfter : undefined;
-      backoffIntervalMs = backoffIntervalMs
-        ? Math.min(backoffIntervalMs * 2, MAX_BACKOFF_MS)
-        : Math.min(computeBaseIntervalMs() * 2, MAX_BACKOFF_MS);
+      backoffIntervalMs = nextBackoffIntervalMs(backoffIntervalMs);
     }
 
     const remaining = deadlineMs - deps.now();

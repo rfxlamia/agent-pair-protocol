@@ -99,7 +99,7 @@ Rule of thumb: **two issues that touch the same file must not be in flight at th
 | M3.1 atest extraction | `runners/*`, `protocol/session/*`, `protocol/envelope/schema.ts` (rename NOT repeated — see decisions/2026-07-10-m31) | M1.4, M2.4 |
 | M3.2 security audit | read + targeted fixes | M2 complete |
 | M3.3 adversarial e2e | `e2e/*` | M1, M2 complete |
-| M3.4a inbox_wait | `mcp-server/tools/inbox.ts`, `index.ts`, docs/skills | M3.3 |
+| M3.4a inbox_wait | `mcp-server/tools/inbox-wait.ts`, `index.ts`, docs/skills | M3.3 |
 | M3.4 dogfood | no code | M3.4a |
 | M3.5 spec freeze | `SPEC.md` | M3.1–M3.4 findings |
 | M4.1–M4.3, M4.6 | docs/infra only | — (parallel-safe) |

@@ -178,8 +178,9 @@ default.
 1. **Open** — A calls `session_open` with `to`, `goal`, `acceptance[]`,
    `budget: { max_turns, deadline }` (ISO-8601 datetime), and `mandate`.
    Status becomes `pending` until B approves.
-2. **Pull open** — B calls `inbox` until the inbound `nego.open` is processed and
-   a session-open pending appears (`pending_id` + `approval_path`).
+2. **Pull open** — B uses `inbox_wait` (see §4) so the inbound `nego.open` is processed and
+   a session-open pending appears (`pending_id` + `approval_path`). Plain `inbox` still processes
+   open when mail is already available.
 3. **Approve open** — B reads the code from `approval_path`, then `human_approve`
    → session `live`.
 4. **Turn** — `session_msg` with `type` `propose` | `counter` | `accept` (and

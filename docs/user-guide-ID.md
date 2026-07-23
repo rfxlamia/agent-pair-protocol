@@ -178,8 +178,9 @@ default.
 1. **Open** — A memanggil `session_open` dengan `to`, `goal`, `acceptance[]`,
    `budget: { max_turns, deadline }` (datetime ISO-8601), dan `mandate`.
    Status menjadi `pending` sampai B approve.
-2. **Tarik open** — B memanggil `inbox` sampai `nego.open` masuk diproses dan
-   pending session-open muncul (`pending_id` + `approval_path`).
+2. **Tarik open** — B memakai `inbox_wait` (lihat §4) agar `nego.open` masuk diproses dan
+   pending session-open muncul (`pending_id` + `approval_path`). `inbox` biasa tetap memproses
+   open bila mail sudah tersedia.
 3. **Approve open** — B membaca kode dari `approval_path`, lalu `human_approve`
    → session `live`.
 4. **Turn** — `session_msg` dengan `type` `propose` | `counter` | `accept`
