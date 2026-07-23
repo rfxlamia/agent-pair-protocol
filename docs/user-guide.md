@@ -239,6 +239,13 @@ With profile `atest/1`, `atest_run` can execute registered runners:
 
 Only these two are registered in the reference MCP today.
 
+**Runner dependencies:** `npx -y agentpair` ships the `payload-size` runner
+(`json-schema-faker` is a production dependency). The `spectral` runner is
+opt-in: install `@stoplight/spectral-cli` in the same Node project as
+`agentpair` (a bare `npx` cache install cannot see packages you add elsewhere).
+Full runner packaging (`@agentpair/runners`, codegen-compile, npx resolution)
+is planned for v1.1 — see issue tracker.
+
 ## Troubleshooting
 
 **MCP tools missing in the client**  

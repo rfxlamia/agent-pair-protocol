@@ -32,7 +32,8 @@ export function runPayloadSize(
   if (!faker) {
     return {
       ok: false,
-      error: "payload-size runner unavailable: install json-schema-faker (dev dependency)",
+      error:
+        "payload-size runner unavailable: reinstall or upgrade agentpair (json-schema-faker should ship with the package)",
     };
   }
 
