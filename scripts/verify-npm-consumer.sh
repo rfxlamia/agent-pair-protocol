@@ -23,6 +23,14 @@ console.log(\`\${base}-\${pkg.version}.tgz\`);
 "
 }
 
+tar_contains() {
+  local archive="$1"
+  local member="$2"
+  local listing
+  listing="$(tar -tzf "${archive}")"
+  grep -Fq "${member}" <<<"${listing}"
+}
+
 require_dist() {
   local missing=0
   for path in \
@@ -100,14 +108,14 @@ console.log('OK: pnpm pack manifest rewrites workspace protocol dep and ships js
 "
 
 echo "==> Asserting packed tarball honors files allowlist (bin + runner assets)"
-tar -tzf "${AGENT_PACKED}" | grep -q 'package/dist/cli.js' || {
+if ! tar_contains "${AGENT_PACKED}" 'package/dist/cli.js'; then
   echo "FAIL: packed tarball missing package/dist/cli.js" >&2
   exit 1
-}
-tar -tzf "${AGENT_PACKED}" | grep -q 'package/dist/runners/spectral-ruleset.yaml' || {
+fi
+if ! tar_contains "${AGENT_PACKED}" 'package/dist/runners/spectral-ruleset.yaml'; then
   echo "FAIL: packed tarball missing spectral-ruleset.yaml from dist/runners" >&2
   exit 1
-}
+fi
 
 echo "==> Installing packed tarballs in isolated consumer dir"
 CONSUMER_DIR="${TMP_DIR}/consumer"
