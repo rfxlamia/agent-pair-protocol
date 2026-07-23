@@ -27,6 +27,7 @@
     "@agentpair/protocol": "workspace:^0.5.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@noble/ciphers": "^2.2.0",
+    "json-schema-faker": "^0.5.9",
     "zod": "^3.25.67"
   },
   "devDependencies": {
@@ -34,7 +35,6 @@
     "@hono/node-server": "^1.14.4",
     "@stoplight/spectral-cli": "^6.15.0",
     "@types/node": "^22.15.0",
-    "json-schema-faker": "^0.5.9",
     "quicktype": "^23.3.21",
     "typescript": "^5.8.3"
   }

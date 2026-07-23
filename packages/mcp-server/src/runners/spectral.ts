@@ -37,7 +37,8 @@ export async function runSpectral(
     } catch {
       return {
         ok: false,
-        error: "spectral runner unavailable: install @stoplight/spectral-cli (dev dependency)",
+        error:
+          "spectral runner unavailable: npm install @stoplight/spectral-cli in this project (not included with agentpair; bare npx agentpair cannot run spectral until v1.1 runner packaging)",
       };
     }
   }

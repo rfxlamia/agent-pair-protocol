@@ -35,6 +35,9 @@ importers:
       '@noble/ciphers':
         specifier: ^2.2.0
         version: 2.2.0
+      json-schema-faker:
+        specifier: ^0.5.9
+        version: 0.5.9
       zod:
         specifier: ^3.25.67
         version: 3.25.76
@@ -51,9 +54,6 @@ importers:
       '@types/node':
         specifier: ^22.15.0
         version: 22.20.0
-      json-schema-faker:
-        specifier: ^0.5.9
-        version: 0.5.9
       quicktype:
         specifier: ^23.3.21
         version: 23.3.21

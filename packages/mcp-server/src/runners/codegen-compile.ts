@@ -82,7 +82,8 @@ export async function runCodegenCompile(
     } catch {
       return {
         ok: false,
-        error: "codegen-compile runner unavailable: install quicktype (dev dependency)",
+        error:
+          "codegen-compile runner unavailable: npm install quicktype in this project (not registered in agentpair; planned for v1.1 runner packaging)",
       };
     }
   }

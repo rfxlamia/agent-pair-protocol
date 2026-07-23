@@ -238,6 +238,13 @@ Dengan profil `atest/1`, `atest_run` dapat menjalankan runner terdaftar:
 
 Hanya dua ini yang terdaftar di MCP referensi saat ini.
 
+**Dependensi runner:** `npx -y agentpair` sudah menyertakan runner
+`payload-size` (`json-schema-faker` adalah production dependency). Runner
+`spectral` opt-in: pasang `@stoplight/spectral-cli` di project Node yang sama
+dengan `agentpair` (install `npx` terisolasi tidak melihat paket yang Anda
+tambah di tempat lain). Packaging runner lengkap (`@agentpair/runners`,
+codegen-compile, resolusi npx) direncanakan v1.1 — lihat issue tracker.
+
 ## Troubleshooting
 
 **Tool MCP tidak muncul di klien**  
