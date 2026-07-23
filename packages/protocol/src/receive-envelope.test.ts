@@ -304,7 +304,7 @@ describe("receiveEnvelope steps 1–6 (§4.3)", () => {
     expect(deps.seqStore.commitAccepted).not.toHaveBeenCalled();
   });
 
-  it("valid wire passing steps 0–6 continues to step 7+ (not rejected early)", async () => {
+  it("valid wire passing steps 1–6 continues to step 7+ (not rejected early)", async () => {
     const { wire, bob, bobId } = makeValidWire();
     const deps = makeDeps(bob);
 
