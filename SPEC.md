@@ -200,6 +200,9 @@ Normative relay behavior:
   **5 minutes** (relay-enforced TTL, fixed from session creation — no TTL
   refresh on activity). The channel stores **at most one message**
   (single-slot overwrite); see §6.2 for the ping-pong invariant.
+  Unsigned courtesy signals on this channel (e.g. `bond_fail`; §6.2 step 4)
+  carry no relay-side authentication — a compromised relay MAY inject or drop
+  them (§11.2 `bond_fail is courtesy-only`).
 - **Inbox POST idempotency.** When an envelope with the same `id` is posted
   again, the relay MUST return success (`204`) only if the wire bytes are
   byte-identical to the stored envelope; otherwise it MUST reject with
@@ -577,9 +580,13 @@ this.** Therefore:
   back. This is an accepted two-generals outcome, not a verification bug;
   implementations SHOULD surface the asymmetry to the human operator.
 - **Relay compromise:** worst case = drop/delay/reorder messages and learn
-  metadata (who talks to whom, when, sizes). It can never read or forge
-  content. Metadata privacy (sealed sender) is a future extension
-  (Appendix B), not a v1 property — do not claim it.
+  metadata (who talks to whom, when, sizes). It cannot decrypt E2E-protected
+  envelope or artifact plaintext, and cannot forge valid signed envelopes or
+  substitute artifact ciphertext without detection (hash/signature checks).
+  Unsigned pair-channel courtesy signals (e.g. `bond_fail`; §6.2 step 4) are
+  not authenticated relay-side and MAY be injected or dropped — see the
+  `bond_fail is courtesy-only` bullet above. Metadata privacy (sealed sender)
+  is a future extension (Appendix B), not a v1 property — do not claim it.
 - **Artifact fetch is unauthenticated.** `GET /artifact/{hash}` returns the
   stored ciphertext blob to any caller who knows the hash. The relay cannot
   decrypt artifact content; confidentiality rests on the per-artifact key
