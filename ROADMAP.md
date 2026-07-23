@@ -47,7 +47,7 @@ Breaking change; everything else builds on it. Land first.
 - [x] **M3.1** Extract `atest/1` (§9): `atest.challenge` / `atest.report` envelopes; runners become the atest implementation; Negotiation must work with zero runner infra. `label:protocol` `size:L`
 - [x] **M3.2** Security self-audit vs §11: injection containment (peer payloads presented as data, length caps), replay, decode-DoS, pairing single-use codes, gate flag provenance (A4). Findings → issues, fix P0/P1. `label:security` `size:M` — done 2026-07-23 (#36; P0/P1 #56–#59; optional #60–#61)
   — Audit findings filed and fixed: A4 `approval_code` replaces model-settable `via_human` (#56); untrusted peer presentation + length caps (#57); single-use pairing codes / `pairRetry` removed (#58); `budget_extend` human gate (#59). SPEC §11.2 relay wording narrowed for courtesy signals (#60); relay P2 hardening (#61). Second audit + focused tests PASS before close.
-- [ ] **M3.3** Adversarial e2e suite: tampered outer `to`, replayed seq, oversized envelope, unbonded sender, self-approval attempt, redelivered `nego.open` in every state. `label:testing` `size:M`
+- [x] **M3.3** Adversarial e2e suite: tampered outer `to`, replayed seq, oversized envelope, unbonded sender, self-approval attempt, redelivered `nego.open` in every state. `label:testing` `size:M`
 - [ ] **M3.4** Fresh-clone dogfood: two humans, two machines, real relay — pair, negotiate, co-sign, ratify a real deliverable. Log every papercut as an issue. `label:dx` `size:M`
 - [ ] **M3.5** SPEC 1.0 freeze: reconcile spec ↔ implementation drift found in M1–M3, resolve remaining wording, remove DRAFT banner. After this, wire changes need a version bump. `label:spec` `size:M`
 
