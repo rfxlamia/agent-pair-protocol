@@ -308,7 +308,7 @@ export async function runSessionHappyPath(
   if (!initiatorAtest.ok) {
     const detail =
       "error" in initiatorAtest && /unavailable/i.test(initiatorAtest.error)
-        ? " (payload-size runner unavailable — reinstall agentpair or check json-schema-faker dependency)"
+        ? " (payload-size runner unavailable — reinstall agentpair (json-schema-faker should ship with the package))"
         : "";
     throw new Error(`initiator atest_run failed: ${JSON.stringify(initiatorAtest)}${detail}`);
   }
@@ -324,7 +324,7 @@ export async function runSessionHappyPath(
   if (!joinerAtest.ok) {
     const detail =
       "error" in joinerAtest && /unavailable/i.test(joinerAtest.error)
-        ? " (payload-size runner unavailable — reinstall agentpair or check json-schema-faker dependency)"
+        ? " (payload-size runner unavailable — reinstall agentpair (json-schema-faker should ship with the package))"
         : "";
     throw new Error(`joiner atest_run failed: ${JSON.stringify(joinerAtest)}${detail}`);
   }

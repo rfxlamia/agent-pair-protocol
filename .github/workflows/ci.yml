@@ -59,4 +59,4 @@ jobs:
         run: pnpm test
 
       - name: Verify npm consumer install
-        run: bash scripts/verify-npm-consumer.sh
+        run: SKIP_BUILD=1 bash scripts/verify-npm-consumer.sh
