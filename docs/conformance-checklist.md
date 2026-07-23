@@ -23,7 +23,7 @@ Maps every normative **MUST** / **MUST NOT** in [SPEC.md](../SPEC.md) §1.1 (Cor
 
 **Golden vectors:** Third-party byte-match fixtures live in [`packages/protocol/fixtures/`](../packages/protocol/fixtures/) — see [`fixtures/README.md`](../packages/protocol/fixtures/README.md). CI runs `pnpm --filter @agentpair/protocol run verify-fixtures`.
 
-**E2E smoke (full stack):** `packages/mcp-server/src/e2e/happy-path.test.ts`, `profile-pairing.test.ts`, `spillover-roundtrip.test.ts` — pair → negotiate → ratify over a live relay.
+**E2E smoke (full stack):** `packages/mcp-server/src/e2e/happy-path.test.ts`, `profile-pairing.test.ts`, `spillover-roundtrip.test.ts` — pair → negotiate → ratify over a live relay. Adversarial defenses + `nego.open` redelivery matrix: `packages/mcp-server/src/e2e/adversarial.test.ts` (M3.3).
 
 ---
 
@@ -175,7 +175,7 @@ Tracked elsewhere in [ROADMAP.md](../ROADMAP.md):
 | Negotiation rules N1–N7 | §8 | M2.3–M2.5 (done); session tests in `state-machine.test.ts` |
 | Human gate `approval_code` provenance | §8.4, A4, §11.3 | M3.2 security audit |
 | Single-use pairing codes | §11.3 | covered — `packages/protocol/src/pairing/flow.test.ts` — `InMemoryPairingRegistry consume/tombstone`; `single-use burn + reject poll (T2)` |
-| Adversarial e2e (tampered outer `to`, replay, self-approval) | §11.2 | M3.3 |
+| Adversarial e2e (tampered outer `to`, replay, oversized, unbonded, self-approval, `nego.open` redelivery) | §11.2 | M3.3 — `packages/mcp-server/src/e2e/adversarial.test.ts` (states: pending/live/signed/closed/open_rejected; `open_expired` redelivery covered by `packages/protocol/src/session/state-machine.test.ts`) |
 
 ---
 
