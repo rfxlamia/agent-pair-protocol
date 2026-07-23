@@ -55,6 +55,7 @@ describe("nego.open pending redelivery freezes first-open terms", () => {
   });
 
   it("freezes store and pending-queue terms on same-thread redelivery; approve uses first open", async () => {
+    // createLinkedMachines already delivers alice handleOpen into bob — no extra first open.
     const opened = await aliceMachine.handleOpen({
       to: bobId,
       ...defaultOpenPayload,
@@ -62,22 +63,18 @@ describe("nego.open pending redelivery freezes first-open terms", () => {
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
 
-    const first = await bobMachine.handleIncomingEnvelope({
-      from: aliceId,
-      type: "nego.open",
-      thread: opened.thread,
-      payload: JSON.stringify(defaultOpenPayload),
-    });
-    expect(first.ok).toBe(true);
-
     const storeBefore = bobMachine.store.get(opened.thread);
     expect(storeBefore).toBeDefined();
     if (!storeBefore) return;
+    expect(storeBefore.status).toBe("pending");
 
     const pendingBefore = bobPending.list().find((p) => p.kind === "session_open");
     expect(pendingBefore?.kind).toBe("session_open");
     if (pendingBefore?.kind !== "session_open") return;
     expect(pendingBefore.goal).toBe(defaultOpenPayload.goal);
+    expect(pendingBefore.mandate).toEqual(defaultOpenPayload.mandate);
+    expect(pendingBefore.acceptance).toEqual(defaultOpenPayload.acceptance);
+    expect(pendingBefore.budget).toEqual(defaultOpenPayload.budget);
 
     const escalated = {
       ...defaultOpenPayload,
@@ -96,15 +93,15 @@ describe("nego.open pending redelivery freezes first-open terms", () => {
         human_required: [] as string[],
       },
     };
-    const second = await bobMachine.handleIncomingEnvelope({
+    const redelivered = await bobMachine.handleIncomingEnvelope({
       from: aliceId,
       type: "nego.open",
       thread: opened.thread,
       payload: JSON.stringify(escalated),
     });
-    expect(second.ok).toBe(true);
-    if (!second.ok) return;
-    expect(second.status).toBe("pending");
+    expect(redelivered.ok).toBe(true);
+    if (!redelivered.ok) return;
+    expect(redelivered.status).toBe("pending");
 
     const storeAfter = bobMachine.store.get(opened.thread);
     expect(storeAfter).toBeDefined();
@@ -123,6 +120,9 @@ describe("nego.open pending redelivery freezes first-open terms", () => {
     expect(pendingAfter?.kind).toBe("session_open");
     if (pendingAfter?.kind !== "session_open") return;
     expect(pendingAfter.goal).toBe(defaultOpenPayload.goal);
+    expect(pendingAfter.mandate).toEqual(defaultOpenPayload.mandate);
+    expect(pendingAfter.acceptance).toEqual(defaultOpenPayload.acceptance);
+    expect(pendingAfter.budget).toEqual(defaultOpenPayload.budget);
 
     const approve = await bobMachine.handleApproveOpen({
       pending_id: pendingBefore.id,
@@ -135,5 +135,7 @@ describe("nego.open pending redelivery freezes first-open terms", () => {
     expect(live.status).toBe("live");
     expect(live.goal).toBe(defaultOpenPayload.goal);
     expect(live.mandate).toEqual(defaultOpenPayload.mandate);
+    expect(live.acceptance).toEqual(defaultOpenPayload.acceptance);
+    expect(live.budget).toEqual(defaultOpenPayload.budget);
   });
 });

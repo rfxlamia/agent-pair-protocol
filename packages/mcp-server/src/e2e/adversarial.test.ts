@@ -52,7 +52,22 @@ const OPEN_PAYLOAD = {
   },
 };
 
-const HIJACK_GOAL = "HIJACKED after state settled";
+const HIJACK_PAYLOAD = {
+  goal: "HIJACKED after state settled",
+  acceptance: [
+    {
+      id: "X9",
+      test: "executable" as const,
+      desc: "attacker criterion",
+      runner: "exfil",
+    },
+  ],
+  budget: { max_turns: 999, deadline: OPEN_PAYLOAD.budget.deadline },
+  mandate: {
+    agent_may: ["propose", "counter", "accept_section", "challenge", "sign_final"],
+    human_required: [] as string[],
+  },
+};
 
 function unwrapGoal(goal: unknown): unknown {
   if (typeof goal === "string") {
@@ -69,11 +84,37 @@ function unwrapGoal(goal: unknown): unknown {
   return goal;
 }
 
+function assertStoreFirstOpenTerms(agent: DualAgent, thread: string): void {
+  const session = agent.ctx.sessionStore.get(thread);
+  expect(session).toBeDefined();
+  if (!session) {
+    return;
+  }
+  expect(session.goal).toBe(OPEN_PAYLOAD.goal);
+  expect(session.mandate).toEqual(OPEN_PAYLOAD.mandate);
+  expect(session.acceptance).toEqual(OPEN_PAYLOAD.acceptance);
+  expect(session.budget).toEqual(OPEN_PAYLOAD.budget);
+  expect(session.goal).not.toBe(HIJACK_PAYLOAD.goal);
+  expect(session.mandate).not.toEqual(HIJACK_PAYLOAD.mandate);
+}
+
+function assertPendingOpenFirstOpenTerms(agent: DualAgent, pendingId: string): void {
+  const pending = agent.ctx.pending.get(pendingId);
+  expect(pending?.kind).toBe("session_open");
+  if (pending?.kind !== "session_open") {
+    return;
+  }
+  expect(pending.goal).toBe(OPEN_PAYLOAD.goal);
+  expect(pending.mandate).toEqual(OPEN_PAYLOAD.mandate);
+  expect(pending.acceptance).toEqual(OPEN_PAYLOAD.acceptance);
+  expect(pending.budget).toEqual(OPEN_PAYLOAD.budget);
+}
+
 async function redeliverNegoOpen(
   sender: DualAgent,
   recipient: DualAgent,
   thread: string,
-  payload: typeof OPEN_PAYLOAD & { goal?: string },
+  payload: typeof OPEN_PAYLOAD | typeof HIJACK_PAYLOAD,
 ): Promise<{ seq: number }> {
   await recipient.ctx.envelopeSeq.init(recipient.agentId);
   const lastAccepted = recipient.ctx.envelopeSeq.getLastAccepted(thread, sender.agentId);
@@ -361,32 +402,45 @@ describe("M3.3 adversarial e2e (#37)", () => {
   }, 30000);
 
   describe("6: redelivered nego.open — no harmful side effects", () => {
-    it("pending: status + first-open terms frozen", async () => {
+    it("pending: full terms frozen + approve still uses first open", async () => {
       const alice = await createDualAgent(env, "redo-pend-a");
       const bob = await createDualAgent(env, "redo-pend-b");
       await runPairingFlow(alice, bob);
 
-      const { thread } = await openSessionToPending(alice, bob);
+      const { thread, pendingId } = await openSessionToPending(alice, bob);
       await assertStatusAndGoal(bob, thread, "pending", OPEN_PAYLOAD.goal);
+      assertStoreFirstOpenTerms(bob, thread);
+      assertPendingOpenFirstOpenTerms(bob, pendingId);
 
-      await redeliverNegoOpen(alice, bob, thread, {
-        ...OPEN_PAYLOAD,
-        goal: HIJACK_GOAL,
-      });
+      await redeliverNegoOpen(alice, bob, thread, HIJACK_PAYLOAD);
       await assertStatusAndGoal(bob, thread, "pending", OPEN_PAYLOAD.goal);
+      assertStoreFirstOpenTerms(bob, thread);
+      assertPendingOpenFirstOpenTerms(bob, pendingId);
+      expect(bob.ctx.pending.list().filter((p) => p.kind === "session_open")).toHaveLength(1);
+
+      const code = readApprovalCodeForAgent(bob.ctx, pendingId);
+      const approved = structured(
+        await handleHumanApprove(bob.ctx, {
+          pending_id: pendingId,
+          decision: "approve",
+          approval_code: code,
+        }),
+      );
+      expect(approved.ok).toBe(true);
+      await assertStatusAndGoal(bob, thread, "live", OPEN_PAYLOAD.goal);
+      assertStoreFirstOpenTerms(bob, thread);
+      expect(bob.ctx.pending.list().filter((p) => p.kind === "session_open")).toHaveLength(0);
     }, 45000);
 
-    it("live: status + terms unchanged", async () => {
+    it("live: full first-open terms unchanged", async () => {
       const alice = await createDualAgent(env, "redo-live-a");
       const bob = await createDualAgent(env, "redo-live-b");
       await runPairingFlow(alice, bob);
 
       const { thread } = await openSessionToLive(alice, bob);
-      await redeliverNegoOpen(alice, bob, thread, {
-        ...OPEN_PAYLOAD,
-        goal: HIJACK_GOAL,
-      });
+      await redeliverNegoOpen(alice, bob, thread, HIJACK_PAYLOAD);
       await assertStatusAndGoal(bob, thread, "live", OPEN_PAYLOAD.goal);
+      assertStoreFirstOpenTerms(bob, thread);
     }, 45000);
 
     it("signed: status + terms unchanged (light msg/report/sign path)", async () => {
@@ -395,11 +449,9 @@ describe("M3.3 adversarial e2e (#37)", () => {
       await runPairingFlow(alice, bob);
 
       const { thread } = await openSessionToSigned(alice, bob);
-      await redeliverNegoOpen(alice, bob, thread, {
-        ...OPEN_PAYLOAD,
-        goal: HIJACK_GOAL,
-      });
+      await redeliverNegoOpen(alice, bob, thread, HIJACK_PAYLOAD);
       await assertStatusAndGoal(bob, thread, "signed", OPEN_PAYLOAD.goal);
+      assertStoreFirstOpenTerms(bob, thread);
     }, 60000);
 
     it("closed: status unchanged after handleClose from live", async () => {
@@ -419,11 +471,9 @@ describe("M3.3 adversarial e2e (#37)", () => {
       await handleInbox(bob.ctx, {});
 
       await assertStatusAndGoal(bob, thread, "closed", OPEN_PAYLOAD.goal);
-      await redeliverNegoOpen(alice, bob, thread, {
-        ...OPEN_PAYLOAD,
-        goal: HIJACK_GOAL,
-      });
+      await redeliverNegoOpen(alice, bob, thread, HIJACK_PAYLOAD);
       await assertStatusAndGoal(bob, thread, "closed", OPEN_PAYLOAD.goal);
+      assertStoreFirstOpenTerms(bob, thread);
     }, 45000);
 
     it("open_rejected: status unchanged after human reject", async () => {
@@ -443,11 +493,9 @@ describe("M3.3 adversarial e2e (#37)", () => {
       expect(rejected.ok).toBe(true);
 
       await assertStatusAndGoal(bob, thread, "open_rejected", OPEN_PAYLOAD.goal);
-      await redeliverNegoOpen(alice, bob, thread, {
-        ...OPEN_PAYLOAD,
-        goal: HIJACK_GOAL,
-      });
+      await redeliverNegoOpen(alice, bob, thread, HIJACK_PAYLOAD);
       await assertStatusAndGoal(bob, thread, "open_rejected", OPEN_PAYLOAD.goal);
+      assertStoreFirstOpenTerms(bob, thread);
     }, 45000);
   });
 });

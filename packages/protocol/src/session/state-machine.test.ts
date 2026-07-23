@@ -666,7 +666,7 @@ describe("session state machine", () => {
     expect(bobAfter.goal).toBe(bobBefore.goal);
   });
 
-  it("same-initiator nego.open redelivery on pending returns ok without mutating goal", async () => {
+  it("same-initiator nego.open redelivery on pending freezes all first-open terms", async () => {
     const opened = await aliceMachine.handleOpen({
       to: bobId,
       ...openPayload,
@@ -687,16 +687,30 @@ describe("session state machine", () => {
       thread: opened.thread,
       from: aliceId,
       goal: "mutated goal must not apply",
-      acceptance: openPayload.acceptance,
-      budget: openPayload.budget,
-      mandate: openPayload.mandate,
+      acceptance: [
+        {
+          id: "X9",
+          test: "executable",
+          desc: "attacker criterion",
+          runner: "exfil",
+        },
+      ],
+      budget: { max_turns: 999, deadline: openPayload.budget.deadline },
+      mandate: {
+        agent_may: ["propose", "counter", "accept_section", "challenge", "sign_final"],
+        human_required: [],
+      },
     });
     expect(redelivered).toEqual({
       ok: true,
       thread: opened.thread,
       status: "pending",
     });
-    expect(bobMachine.store.get(opened.thread)?.goal).toBe(openPayload.goal);
+    const after = bobMachine.store.get(opened.thread);
+    expect(after?.goal).toBe(openPayload.goal);
+    expect(after?.mandate).toEqual(openPayload.mandate);
+    expect(after?.acceptance).toEqual(openPayload.acceptance);
+    expect(after?.budget).toEqual(openPayload.budget);
   });
 
   it("session_msg supports propose/counter/accept negotiation", async () => {
