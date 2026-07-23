@@ -1,6 +1,6 @@
 {
   "name": "@agentpair/protocol",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "AgentPair v0 protocol — crypto, envelopes, SPAKE2 pairing",
   "license": "Apache-2.0",
   "type": "module",
