@@ -2636,22 +2636,35 @@ describe("GET inbox challenge rate limit (isolated db)", () => {
     expect(body.error).toBe("rate_limit_exceeded");
   });
 
-  it("does not count authenticated inbox pulls against POST rate limit bucket", async () => {
+  it("keeps authenticated inbox pulls unthrottled when challenge issuance is exhausted", async () => {
     const relay = createRelayApp({
       rateLimitWindowMs: 60_000,
       rateLimitMax: 2,
     });
     const port = 13013;
     const base = `http://127.0.0.1:${port}`;
-    const server = serve({ fetch: relay.app.fetch, port });
+    const otherId = publicKeyToAgentId(generateKeyPair().publicKey);
+    let isolationServer: ServerType;
+
+    await new Promise<void>((resolve) => {
+      isolationServer = serve({ fetch: relay.app.fetch, port }, resolve);
+    });
 
     try {
-      for (let i = 0; i < 2; i++) {
-        const challengeRes = await fetch(`${base}/inbox/${bobId}?since=0`);
-        expect(challengeRes.status).toBe(401);
-      }
-      const blockedChallenge = await fetch(`${base}/inbox/${bobId}?since=0`);
+      const challengeRes = await fetch(`${base}/inbox/${bobId}?since=0`);
+      expect(challengeRes.status).toBe(401);
+      const { challenge } = (await challengeRes.json()) as { challenge: string };
+      const sig = signChallenge(challenge, bob.secretKey);
+
+      const secondChallenge = await fetch(`${base}/inbox/${otherId}?since=0`);
+      expect(secondChallenge.status).toBe(401);
+      const blockedChallenge = await fetch(`${base}/inbox/${otherId}?since=0`);
       expect(blockedChallenge.status).toBe(429);
+
+      const pullRes = await fetch(
+        `${base}/inbox/${bobId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+      );
+      expect(pullRes.status).toBe(200);
 
       const postRes = await fetch(`${base}/inbox/${bobId}`, {
         method: "POST",
@@ -2661,7 +2674,7 @@ describe("GET inbox challenge rate limit (isolated db)", () => {
       expect(postRes.status).not.toBe(429);
     } finally {
       await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
+        isolationServer.close((error) => {
           if (error) {
             reject(error);
             return;
