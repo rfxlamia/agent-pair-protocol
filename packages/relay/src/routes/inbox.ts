@@ -15,7 +15,7 @@ import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { RelayDatabase } from "../db/index.js";
-import type { createRateLimiter } from "../middleware/rate-limit.js";
+import type { RateLimitConsumer, createRateLimiter } from "../middleware/rate-limit.js";
 import { isSenderAllowed } from "./allowlist.js";
 
 const CHALLENGE_TTL_MS = 60 * 1000;
@@ -286,9 +286,12 @@ function filterVisibleInboxRows(
   return visibleRows;
 }
 
+const INBOX_CHALLENGE_ISSUE_BUCKET = "/inbox/:agentId:challenge-issue";
+
 export function createInboxRoutes(
   db: RelayDatabase,
   rateLimit: ReturnType<typeof createRateLimiter>,
+  challengeIssueRateLimit: RateLimitConsumer,
 ) {
   ensureInboxSchema(db);
   const inboxGcState = { lastGcAt: 0 };
@@ -398,7 +401,7 @@ export function createInboxRoutes(
     },
   );
 
-  routes.get("/inbox/:agentId", rateLimit, (c) => {
+  routes.get("/inbox/:agentId", (c) => {
     maybeGarbageCollectInbox(db, inboxGcState);
     const agentId = c.req.param("agentId");
     const since = normalizeSince(Number(c.req.query("since") ?? "0"));
@@ -406,6 +409,9 @@ export function createInboxRoutes(
     const sig = c.req.query("sig");
 
     if (!challenge || !sig) {
+      if (!challengeIssueRateLimit.tryConsume(c, INBOX_CHALLENGE_ISSUE_BUCKET)) {
+        return c.json({ error: "rate_limit_exceeded" }, 429);
+      }
       const body = issueChallenge(db, agentId);
       return c.json(body, 401);
     }

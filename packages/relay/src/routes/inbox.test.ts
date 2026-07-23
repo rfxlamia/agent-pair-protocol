@@ -14,7 +14,7 @@ import type { ServerType } from "@hono/node-server";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createRateLimiter } from "../middleware/rate-limit.js";
+import { createRateLimitConsumer, createRateLimiter } from "../middleware/rate-limit.js";
 import { createRelayApp } from "../server.js";
 import { padWireToSize, wireUtf8Length } from "../test/wire-padding.js";
 import { signChallenge } from "./allowlist.js";
@@ -2198,7 +2198,11 @@ describe("inbox absolute unix ttl (M1.2)", () => {
       .run(rowId, bobId, wire, aliceId, thread, 1, "core.msg", receivedAt);
 
     const rateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 100 });
-    createInboxRoutes(legacyDb, rateLimit);
+    const challengeIssueRateLimit = createRateLimitConsumer({
+      windowMs: 60_000,
+      maxRequests: 100,
+    });
+    createInboxRoutes(legacyDb, rateLimit, challengeIssueRateLimit);
 
     const row = legacyDb.prepare("SELECT expires_at FROM inbox WHERE id = ?").get(rowId) as {
       expires_at: number;
@@ -2630,5 +2634,41 @@ describe("GET inbox challenge rate limit (isolated db)", () => {
     expect(blocked.status).toBe(429);
     const body = (await blocked.json()) as { error: string };
     expect(body.error).toBe("rate_limit_exceeded");
+  });
+
+  it("does not count authenticated inbox pulls against POST rate limit bucket", async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 2,
+    });
+    const port = 13013;
+    const base = `http://127.0.0.1:${port}`;
+    const server = serve({ fetch: relay.app.fetch, port });
+
+    try {
+      for (let i = 0; i < 2; i++) {
+        const challengeRes = await fetch(`${base}/inbox/${bobId}?since=0`);
+        expect(challengeRes.status).toBe(401);
+      }
+      const blockedChallenge = await fetch(`${base}/inbox/${bobId}?since=0`);
+      expect(blockedChallenge.status).toBe(429);
+
+      const postRes = await fetch(`${base}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(postRes.status).not.toBe(429);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
   });
 });

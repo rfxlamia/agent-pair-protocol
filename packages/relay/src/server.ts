@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { type RelayDatabase, createDatabase } from "./db/index.js";
-import { createRateLimiter } from "./middleware/rate-limit.js";
+import { createRateLimitConsumer, createRateLimiter } from "./middleware/rate-limit.js";
 import { createAllowlistRoutes } from "./routes/allowlist.js";
 import { createArtifactRoutes } from "./routes/artifact.js";
 import { healthRoutes } from "./routes/health.js";
@@ -23,16 +23,18 @@ export function createRelayApp(config: RelayConfig = {}): RelayApp {
   const db = createDatabase(config.dbPath ?? ":memory:");
   const app = new Hono();
 
-  const rateLimit = createRateLimiter({
+  const rateLimitOptions = {
     windowMs: config.rateLimitWindowMs ?? 60_000,
     maxRequests: config.rateLimitMax ?? 60,
     trustProxy: config.trustProxy ?? false,
-  });
+  };
+  const rateLimit = createRateLimiter(rateLimitOptions);
+  const challengeIssueRateLimit = createRateLimitConsumer(rateLimitOptions);
 
   app.route("/", healthRoutes);
   app.route("/", createAllowlistRoutes(db));
   app.route("/", createPairRoutes(db, rateLimit));
-  app.route("/", createInboxRoutes(db, rateLimit));
+  app.route("/", createInboxRoutes(db, rateLimit, challengeIssueRateLimit));
   app.route("/", createArtifactRoutes(db, rateLimit));
 
   return { app, db };
