@@ -666,6 +666,39 @@ describe("session state machine", () => {
     expect(bobAfter.goal).toBe(bobBefore.goal);
   });
 
+  it("same-initiator nego.open redelivery on pending returns ok without mutating goal", async () => {
+    const opened = await aliceMachine.handleOpen({
+      to: bobId,
+      ...openPayload,
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) {
+      return;
+    }
+
+    const before = bobMachine.store.get(opened.thread);
+    expect(before?.status).toBe("pending");
+    expect(before?.goal).toBe(openPayload.goal);
+    if (!before) {
+      return;
+    }
+
+    const redelivered = await bobMachine.handleIncomingOpen({
+      thread: opened.thread,
+      from: aliceId,
+      goal: "mutated goal must not apply",
+      acceptance: openPayload.acceptance,
+      budget: openPayload.budget,
+      mandate: openPayload.mandate,
+    });
+    expect(redelivered).toEqual({
+      ok: true,
+      thread: opened.thread,
+      status: "pending",
+    });
+    expect(bobMachine.store.get(opened.thread)?.goal).toBe(openPayload.goal);
+  });
+
   it("session_msg supports propose/counter/accept negotiation", async () => {
     const thread = await approveOpenSession();
 

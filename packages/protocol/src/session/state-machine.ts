@@ -376,7 +376,15 @@ export function createSessionStateMachine(
       return { ok: false, error: "initiator_mismatch" };
     }
 
-    const preserveProgress = existing?.status === "pending";
+    // First-open terms are frozen while pending; same-initiator redelivery is a no-op.
+    if (existing?.status === "pending") {
+      return {
+        ok: true,
+        thread: input.thread,
+        status: "pending",
+      };
+    }
+
     const createdAt = existing?.createdAt ?? now();
     const session: SessionRecord = {
       thread: input.thread,
@@ -390,13 +398,13 @@ export function createSessionStateMachine(
       mandate: input.mandate,
       createdAt,
       expiresAt: createdAt + SESSION_OPEN_TTL_MS,
-      turnCount: preserveProgress ? existing.turnCount : 0,
-      peerMessages: preserveProgress ? existing.peerMessages : [],
-      lockedSections: preserveProgress ? existing.lockedSections : [],
-      testReports: preserveProgress ? existing.testReports : {},
-      challenges: preserveProgress ? existing.challenges : {},
-      signHashes: preserveProgress ? existing.signHashes : {},
-      ratifyApproved: preserveProgress ? existing.ratifyApproved : {},
+      turnCount: 0,
+      peerMessages: [],
+      lockedSections: [],
+      testReports: {},
+      challenges: {},
+      signHashes: {},
+      ratifyApproved: {},
     };
     upsert(session);
 
