@@ -14,7 +14,7 @@ import type { ServerType } from "@hono/node-server";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createRateLimiter } from "../middleware/rate-limit.js";
+import { createRateLimitConsumer, createRateLimiter } from "../middleware/rate-limit.js";
 import { createRelayApp } from "../server.js";
 import { padWireToSize, wireUtf8Length } from "../test/wire-padding.js";
 import { signChallenge } from "./allowlist.js";
@@ -2198,7 +2198,11 @@ describe("inbox absolute unix ttl (M1.2)", () => {
       .run(rowId, bobId, wire, aliceId, thread, 1, "core.msg", receivedAt);
 
     const rateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 100 });
-    createInboxRoutes(legacyDb, rateLimit);
+    const challengeIssueRateLimit = createRateLimitConsumer({
+      windowMs: 60_000,
+      maxRequests: 100,
+    });
+    createInboxRoutes(legacyDb, rateLimit, challengeIssueRateLimit);
 
     const row = legacyDb.prepare("SELECT expires_at FROM inbox WHERE id = ?").get(rowId) as {
       expires_at: number;
@@ -2586,5 +2590,98 @@ describe("POST /inbox §10 error alignment (M1.5)", () => {
     const emptyBody = (await emptyRes.json()) as { error: string };
     expect(noRowBody).toEqual(emptyBody);
     expect(noRowBody.error).toBe("recipient_not_allowed");
+  });
+});
+
+const GET_INBOX_RL_PORT = 13012;
+const GET_INBOX_RL_BASE = `http://127.0.0.1:${GET_INBOX_RL_PORT}`;
+
+describe("GET inbox challenge rate limit (isolated db)", () => {
+  let server: ServerType;
+  const bob = generateKeyPair();
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 2,
+    });
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: GET_INBOX_RL_PORT }, resolve);
+    });
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  it("returns 429 when challenge issuance exceeds rate limit", async () => {
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(`${GET_INBOX_RL_BASE}/inbox/${bobId}?since=0`);
+      expect(res.status).toBe(401);
+    }
+
+    const blocked = await fetch(`${GET_INBOX_RL_BASE}/inbox/${bobId}?since=0`);
+    expect(blocked.status).toBe(429);
+    const body = (await blocked.json()) as { error: string };
+    expect(body.error).toBe("rate_limit_exceeded");
+  });
+
+  it("keeps authenticated inbox pulls unthrottled when challenge issuance is exhausted", async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 2,
+    });
+    const port = 13013;
+    const base = `http://127.0.0.1:${port}`;
+    const otherId = publicKeyToAgentId(generateKeyPair().publicKey);
+    let isolationServer: ServerType;
+
+    await new Promise<void>((resolve) => {
+      isolationServer = serve({ fetch: relay.app.fetch, port }, resolve);
+    });
+
+    try {
+      const challengeRes = await fetch(`${base}/inbox/${bobId}?since=0`);
+      expect(challengeRes.status).toBe(401);
+      const { challenge } = (await challengeRes.json()) as { challenge: string };
+      const sig = signChallenge(challenge, bob.secretKey);
+
+      const secondChallenge = await fetch(`${base}/inbox/${otherId}?since=0`);
+      expect(secondChallenge.status).toBe(401);
+      const blockedChallenge = await fetch(`${base}/inbox/${otherId}?since=0`);
+      expect(blockedChallenge.status).toBe(429);
+
+      const pullRes = await fetch(
+        `${base}/inbox/${bobId}?since=0&challenge=${encodeURIComponent(challenge)}&sig=${encodeURIComponent(sig)}`,
+      );
+      expect(pullRes.status).toBe(200);
+
+      const postRes = await fetch(`${base}/inbox/${bobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(postRes.status).not.toBe(429);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        isolationServer.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
   });
 });

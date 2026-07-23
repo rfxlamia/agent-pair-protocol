@@ -35,7 +35,17 @@ export function isSenderAllowed(
     return false;
   }
 
-  const allowed = JSON.parse(row.allowed_json) as string[];
+  let allowed: unknown;
+  try {
+    allowed = JSON.parse(row.allowed_json);
+  } catch {
+    return false;
+  }
+
+  if (!Array.isArray(allowed)) {
+    return false;
+  }
+
   return allowed.includes(senderAgentId);
 }
 

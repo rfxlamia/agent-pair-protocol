@@ -1,4 +1,6 @@
+import { MAX_ENVELOPE_WIRE_BYTES } from "@agentpair/protocol";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { RelayDatabase } from "../db/index.js";
 import type { createRateLimiter } from "../middleware/rate-limit.js";
 
@@ -10,21 +12,29 @@ export function createPairRoutes(
 ) {
   const routes = new Hono();
 
-  routes.post("/pair/:sessionId", rateLimit, async (c) => {
-    const sessionId = c.req.param("sessionId");
-    const messageJson = await c.req.text();
-    const now = Date.now();
-    const expiresAt = now + PAIR_TTL_MS;
+  routes.post(
+    "/pair/:sessionId",
+    bodyLimit({
+      maxSize: MAX_ENVELOPE_WIRE_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+    rateLimit,
+    async (c) => {
+      const sessionId = c.req.param("sessionId");
+      const messageJson = await c.req.text();
+      const now = Date.now();
+      const expiresAt = now + PAIR_TTL_MS;
 
-    db.prepare(
-      `INSERT INTO pair_sessions (session_id, message_json, created_at, expires_at)
+      db.prepare(
+        `INSERT INTO pair_sessions (session_id, message_json, created_at, expires_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
          message_json = excluded.message_json`,
-    ).run(sessionId, messageJson, now, expiresAt);
+      ).run(sessionId, messageJson, now, expiresAt);
 
-    return c.body(null, 204);
-  });
+      return c.body(null, 204);
+    },
+  );
 
   routes.get("/pair/:sessionId", (c) => {
     const sessionId = c.req.param("sessionId");

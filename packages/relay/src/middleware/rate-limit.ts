@@ -102,29 +102,46 @@ export function evictStaleBuckets(
   }
 }
 
-export function createRateLimiter(options: RateLimitOptions): MiddlewareHandler {
+export interface RateLimitConsumer {
+  tryConsume(c: Context, bucketKey: string): boolean;
+}
+
+export function createRateLimitConsumer(options: RateLimitOptions): RateLimitConsumer {
   const buckets = new Map<string, Bucket>();
   const trustProxy = options.trustProxy ?? false;
 
+  return {
+    tryConsume(c: Context, bucketKey: string): boolean {
+      const now = Date.now();
+      evictStaleBuckets(buckets, now, options.windowMs);
+
+      const key = `${clientKey(c, trustProxy)}:${bucketKey}`;
+      const bucket = buckets.get(key);
+
+      if (!bucket || now - bucket.windowStart >= options.windowMs) {
+        buckets.set(key, { count: 1, windowStart: now });
+        return true;
+      }
+
+      if (bucket.count >= options.maxRequests) {
+        return false;
+      }
+
+      bucket.count += 1;
+      return true;
+    },
+  };
+}
+
+export function createRateLimiter(options: RateLimitOptions): MiddlewareHandler {
+  const consumer = createRateLimitConsumer(options);
+
   return async (c: Context, next: Next) => {
-    const now = Date.now();
-    evictStaleBuckets(buckets, now, options.windowMs);
-
     const routeKey = c.req.routePath || c.req.path;
-    const key = `${clientKey(c, trustProxy)}:${routeKey}`;
-    const bucket = buckets.get(key);
-
-    if (!bucket || now - bucket.windowStart >= options.windowMs) {
-      buckets.set(key, { count: 1, windowStart: now });
-      await next();
-      return;
-    }
-
-    if (bucket.count >= options.maxRequests) {
+    if (!consumer.tryConsume(c, routeKey)) {
       return c.json({ error: "rate_limit_exceeded" }, 429);
     }
 
-    bucket.count += 1;
     await next();
   };
 }
