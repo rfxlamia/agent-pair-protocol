@@ -110,8 +110,8 @@ function tamperBody(wire: string, patch: (body: EnvelopeBody) => void): string {
   return serializeOuterEnvelope(tampered);
 }
 
-describe("receiveEnvelope steps 0–6 (§4.3)", () => {
-  it("step 0: unknown wire version → unsupported_version, dispatch not called", async () => {
+describe("receiveEnvelope steps 1–6 (§4.3)", () => {
+  it("§4.1 wire version: unknown version at valid size → unsupported_version, dispatch not called", async () => {
     const { wire, bob, bobId } = makeValidWire();
     const deps = makeDeps(bob);
     const badWire = tamperOuter(wire, (outer) => {
@@ -131,6 +131,24 @@ describe("receiveEnvelope steps 0–6 (§4.3)", () => {
     const wire = "a".repeat(MAX_ENVELOPE_WIRE_BYTES + 1);
 
     const result = await receiveEnvelope(wire, "self", deps);
+
+    expect(result).toEqual({ ok: false, error: "envelope_too_large" });
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(deps.seqStore.commitAccepted).not.toHaveBeenCalled();
+  });
+
+  it("step 1: oversized wire with v:2 → envelope_too_large (not unsupported_version)", async () => {
+    const { wire, bob, bobId } = makeValidWire();
+    const deps = makeDeps(bob);
+    const badWire = padWireToSize(
+      tamperOuter(wire, (outer) => {
+        outer.v = 2;
+      }),
+      MAX_ENVELOPE_WIRE_BYTES + 1,
+    );
+    expect(wireUtf8Length(badWire)).toBeGreaterThan(MAX_ENVELOPE_WIRE_BYTES);
+
+    const result = await receiveEnvelope(badWire, bobId, deps);
 
     expect(result).toEqual({ ok: false, error: "envelope_too_large" });
     expect(deps.dispatch).not.toHaveBeenCalled();
@@ -286,7 +304,7 @@ describe("receiveEnvelope steps 0–6 (§4.3)", () => {
     expect(deps.seqStore.commitAccepted).not.toHaveBeenCalled();
   });
 
-  it("valid wire passing steps 0–6 continues to step 7+ (not rejected early)", async () => {
+  it("valid wire passing steps 1–6 continues to step 7+ (not rejected early)", async () => {
     const { wire, bob, bobId } = makeValidWire();
     const deps = makeDeps(bob);
 
