@@ -5,6 +5,7 @@ import { HttpRelayClient, resolveRelayUrl } from "./relay/client.js";
 import { createKeyStore } from "./store/keys.js";
 import { createPendingQueue } from "./store/pending.js";
 import { resolveDataDir } from "./store/persistent-store.js";
+import { handleArtifactPut } from "./tools/artifact-put.js";
 import { handleAtestRun } from "./tools/atest-run.js";
 import { humanApproveInputSchema } from "./tools/human-approve-schema.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
@@ -223,6 +224,19 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       },
     },
     async (input) => handleSessionMsg(context, input),
+  );
+
+  server.registerTool(
+    "artifact_put",
+    {
+      title: "Upload artifact",
+      description:
+        "Upload plaintext content to the relay (content-addressed). Returns artifact_hash for atest_run and session_sign.",
+      inputSchema: {
+        content: z.string().describe("Artifact body (UTF-8); hashed with SHA-256 hex for storage"),
+      },
+    },
+    async (input) => handleArtifactPut(context, input),
   );
 
   server.registerTool(
