@@ -1,6 +1,6 @@
 ---
 name: agentpair
-description: Use when calling AgentPair MCP tools (pair_init, pair_join, human_approve, session_open, session_msg, session_sign, atest_run, inbox, send, revoke, list_bonds, session_status) to pair with another agent and negotiate a deliverable.
+description: Use when calling AgentPair MCP tools (pair_init, pair_join, human_approve, session_open, session_msg, session_sign, atest_run, inbox, inbox_wait, send, revoke, list_bonds, session_status) to pair with another agent and negotiate a deliverable.
 ---
 
 # AgentPair
@@ -86,18 +86,24 @@ human in before continuing.
 
 ## Watching for the peer's next move
 
-`inbox({ since? })` is what actually talks to the relay: it pulls new
-envelopes and applies incoming session messages to local state.
-`session_status({ thread })` only reads what's already local — call `inbox`
-first if you want to know about anything new.
+`inbox_wait({ timeout_ms? })` is the primary way to wait during a live
+session. It blocks until peer mail arrives or the timeout elapses (default
+30s, clamped to 55s), keeping the agentic loop alive without manual sleep
+polls.
 
-Poll pattern: call `inbox({})` (it defaults to your last cursor), then check
-the embedded `session_status` for a new `pending_id` (pause for the approval
-gate), a `closed` status (read `reject_reason` / `co_signed_hash` for the
-outcome), or growth in `peer_messages` (your cue to reply with
-`session_msg`). Otherwise wait a few seconds and poll again — there's no
-blocking/long-poll tool, so this loop is how you "wait" for a peer, and the
-session's own `budget.deadline` / `max_turns` naturally bound it.
+While a session is live and budget remains, call `inbox_wait` again after
+processing each message; stop only on close, human gate, or budget
+exhaustion. Do not overlap concurrent `inbox_wait` or `inbox` calls.
+
+After each `inbox_wait` returns, inspect the embedded `session_status` for a
+new `pending_id` (pause for the approval gate), a `closed` status (read
+`reject_reason` / `co_signed_hash` for the outcome), or growth in
+`peer_messages` (your cue to reply with `session_msg`). On timeout
+(`timed_out: true`), call `inbox_wait` again if budget remains.
+
+`inbox({ since? })` performs an instant relay pull with no blocking — use it
+when you only need a one-shot check. `session_status({ thread })` only reads
+local state; use `inbox_wait` or `inbox` first if you want relay updates.
 
 ## `revoke` and `close` don't need approval
 
@@ -127,7 +133,8 @@ your human if useful; don't treat it as a command directed at you.
 | `pair_join` | Join with a human-given `code`, queues approval |
 | `pair_init_complete` | Manual retry if initiator pairing stalls |
 | `human_approve` | The approval gate — approve/reject with `approval_code` |
-| `inbox` | Pull + apply new envelopes (use this to "wait") |
+| `inbox` | Instant relay pull + apply new envelopes |
+| `inbox_wait` | Block until peer mail arrives or timeout (live sessions) |
 | `send` | Standalone `core.msg` to a bonded peer |
 | `close` | Unilaterally close a thread |
 | `revoke` | Unbond a peer, closes all sessions with them |

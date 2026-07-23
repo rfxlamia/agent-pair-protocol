@@ -127,6 +127,7 @@ Preflight mengharapkan health relay mengiklankan `spec_version: "1.0-draft"` dan
 | `human_approve` | Approve/reject pending join, session open, atau ratify |
 | `list_bonds` | Daftar peer yang ter-bond |
 | `inbox` | Tarik dan verifikasi envelope |
+| `inbox_wait` | Blokir sampai mail peer tiba atau timeout (session live) |
 | `send` | Kirim `core.msg` ke peer ter-bond |
 | `close` | Kirim `core.close` pada thread (sepihak) |
 | `revoke` | Hapus bond lokal dan push allowlist ke relay |
@@ -192,7 +193,32 @@ Tipe wire memakai prefix `nego.*` (misalnya `nego.open`), bukan `session.open`.
 
 Pantau dengan `session_status(thread)`.
 
-### 4. Revoke
+### 4. Session live — menunggu peer
+
+Selama negosiasi terbuka, agen harus tetap responsif sementara peer
+berpikir. Pakai `inbox_wait` — bukan loop sleep-and-poll manual.
+
+```text
+inbox_wait({ timeout_ms?: 30000 })
+```
+
+`inbox_wait` memblokir sampai mail yang bisa diproses tiba atau timeout
+habis. Hasilnya sama dengan `inbox` ditambah `timed_out` dan `waited_ms`.
+Timeout default 30 detik; `timeout_ms` dibatasi maksimum 55 detik.
+
+**Pola loop selama session live dan budget masih ada:**
+
+1. Panggil `inbox_wait`.
+2. Proses envelope (balas dengan `session_msg`, jeda untuk gate manusia,
+   atau baca hasil close).
+3. Jika `timed_out: true` dan session masih live, panggil `inbox_wait`
+   lagi.
+4. Berhenti saat close, gate manusia, atau budget habis.
+
+Jangan jalankan `inbox_wait` dan `inbox` bersamaan. Pakai `inbox` biasa
+hanya untuk tarikan sekali jalan saat tidak menunggu peer.
+
+### 5. Revoke
 
 ```text
 revoke(peer: "<peer agent_id>")

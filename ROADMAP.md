@@ -48,8 +48,10 @@ Breaking change; everything else builds on it. Land first.
 - [x] **M3.2** Security self-audit vs §11: injection containment (peer payloads presented as data, length caps), replay, decode-DoS, pairing single-use codes, gate flag provenance (A4). Findings → issues, fix P0/P1. `label:security` `size:M` — done 2026-07-23 (#36; P0/P1 #56–#59; optional #60–#61)
   — Audit findings filed and fixed: A4 `approval_code` replaces model-settable `via_human` (#56); untrusted peer presentation + length caps (#57); single-use pairing codes / `pairRetry` removed (#58); `budget_extend` human gate (#59). SPEC §11.2 relay wording narrowed for courtesy signals (#60); relay P2 hardening (#61). Second audit + focused tests PASS before close.
 - [x] **M3.3** Adversarial e2e suite: tampered outer `to`, replayed seq, oversized envelope, unbonded sender, self-approval attempt, redelivered `nego.open` in every state. `label:testing` `size:M`
-- [ ] **M3.4** Fresh-clone dogfood: two humans, two machines, real relay — pair, negotiate, co-sign, ratify a real deliverable. Log every papercut as an issue. `label:dx` `size:M`
+- [ ] **M3.4a** `inbox_wait` (SPEC A.2): blocking MCP wait primitive wrapping `handleInbox`; keeps the agentic loop alive during live sessions without manual poll loops. **Prerequisite for M3.4 dogfood** — requires an ad-hoc **0.x patch** publish of `agentpair` on npm before dry-run (package currently at 0.1.11); this is **not** M4.4's `agentpair@1.0.0` release, which lands later in Milestone 4. `label:dx` `size:M`
+- [ ] **M3.4** Fresh-clone dogfood: two humans, two machines, real relay — pair, negotiate, co-sign, ratify a real deliverable. Log every papercut as an issue. Blocked on M3.4a (`inbox_wait` published). `label:dx` `size:M`
 - [ ] **M3.5** SPEC 1.0 freeze: reconcile spec ↔ implementation drift found in M1–M3, resolve remaining wording, remove DRAFT banner. After this, wire changes need a version bump. `label:spec` `size:M`
+- [ ] **Post-M3.4 / post-1.0** Full A3 turn-state hints (`your_turn`, `turns_remaining`, `suggested_next` on every tool result) — separate from M3.4a; informative SHOULD in SPEC Appendix A.3. `label:dx` `size:M`
 
 **Exit:** spec frozen, adversarial suite green, dogfood session completed by non-author.
 
@@ -97,7 +99,8 @@ Rule of thumb: **two issues that touch the same file must not be in flight at th
 | M3.1 atest extraction | `runners/*`, `protocol/session/*`, `protocol/envelope/schema.ts` (rename NOT repeated — see decisions/2026-07-10-m31) | M1.4, M2.4 |
 | M3.2 security audit | read + targeted fixes | M2 complete |
 | M3.3 adversarial e2e | `e2e/*` | M1, M2 complete |
-| M3.4 dogfood | no code | M3.3 |
+| M3.4a inbox_wait | `mcp-server/tools/inbox.ts`, `index.ts`, docs/skills | M3.3 |
+| M3.4 dogfood | no code | M3.4a |
 | M3.5 spec freeze | `SPEC.md` | M3.1–M3.4 findings |
 | M4.1–M4.3, M4.6 | docs/infra only | — (parallel-safe) |
 | M4.4 release | version bumps | all code issues |

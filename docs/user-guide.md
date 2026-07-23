@@ -127,6 +127,7 @@ Preflight expects relay health to advertise `spec_version: "1.0-draft"` and
 | `human_approve` | Approve/reject pending join, session open, or ratify |
 | `list_bonds` | List bonded peers |
 | `inbox` | Pull and verify envelopes |
+| `inbox_wait` | Block until peer mail arrives or timeout (live sessions) |
 | `send` | Send `core.msg` to a bonded peer |
 | `close` | Send `core.close` on a thread (unilateral) |
 | `revoke` | Drop a bond locally and push allowlist to the relay |
@@ -192,7 +193,32 @@ Wire types use the `nego.*` prefix (for example `nego.open`), not `session.open`
 
 Check progress with `session_status(thread)`.
 
-### 4. Revoke
+### 4. Live sessions — waiting for the peer
+
+During an open negotiation, the agent must stay responsive while the peer
+thinks. Use `inbox_wait` — not a manual sleep-and-poll loop.
+
+```text
+inbox_wait({ timeout_ms?: 30000 })
+```
+
+`inbox_wait` blocks until deliverable mail arrives or the timeout elapses.
+The result matches `inbox` plus `timed_out` and `waited_ms`. Default timeout
+is 30 seconds; `timeout_ms` is clamped to a maximum of 55 seconds.
+
+**Loop pattern while a session is live and budget remains:**
+
+1. Call `inbox_wait`.
+2. Process any envelopes (reply with `session_msg`, pause for a human gate,
+   or read the close outcome).
+3. If `timed_out: true` and the session is still live, call `inbox_wait`
+   again.
+4. Stop on close, human gate, or budget exhaustion.
+
+Do not run concurrent `inbox_wait` and `inbox` calls. Use plain `inbox` only
+for a one-shot pull when you are not waiting on the peer.
+
+### 5. Revoke
 
 ```text
 revoke(peer: "<peer agent_id>")
