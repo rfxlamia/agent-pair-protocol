@@ -10,6 +10,7 @@ import { humanApproveInputSchema } from "./tools/human-approve-schema.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
 import { handleClose, handleInbox, handleSend } from "./tools/inbox.js";
 import { handleListBonds } from "./tools/list-bonds.js";
+import { pairInitCompleteInputSchema, pairInitInputSchema } from "./tools/pair-input-schema.js";
 import type { AgentContext } from "./tools/pair.js";
 import { createAgentContext } from "./tools/pair.js";
 import {
@@ -64,12 +65,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       title: "Initialize pairing",
       description:
         "Start pairing with scope and bond mode; returns a human-shareable code. Initiator completion runs automatically in the background.",
-      inputSchema: {
-        scope: z.array(z.string()).describe("Capability scope for the bond"),
-        mode: z
-          .enum(["ephemeral_until_session_closes", "bonded_contact"])
-          .describe("Bond lifetime mode"),
-      },
+      inputSchema: pairInitInputSchema.shape,
     },
     async (input) => handlePairInit(context, input),
   );
@@ -92,9 +88,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       title: "Complete initiator pairing",
       description:
         "Retry initiator-side SPAKE2 completion after pair_init. Normally automatic; use only if pairing stalled.",
-      inputSchema: {
-        code: z.string().describe("Pairing code from pair_init"),
-      },
+      inputSchema: pairInitCompleteInputSchema.shape,
     },
     async (input) => handlePairInitCompleteTool(context, input),
   );

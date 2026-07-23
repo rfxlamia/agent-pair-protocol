@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalProfilesField } from "./profiles-schema.js";
 
 export const humanApproveInputSchema = z.object({
   pending_id: z.string(),
@@ -7,7 +8,7 @@ export const humanApproveInputSchema = z.object({
     .string()
     .optional()
     .describe("Out-of-band approval code from the human operator"),
-  profiles: z.array(z.string()).optional(),
+  profiles: optionalProfilesField,
 });
 
 export type HumanApproveInput = z.infer<typeof humanApproveInputSchema>;

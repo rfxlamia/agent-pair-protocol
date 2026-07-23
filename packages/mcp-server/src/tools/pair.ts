@@ -360,9 +360,12 @@ async function runPairJoinApproval(
   });
 }
 
-export async function handlePairInitCompleteTool(ctx: AgentContext, input: { code: string }) {
+export async function handlePairInitCompleteTool(
+  ctx: AgentContext,
+  input: { code: string; profiles?: string[] },
+) {
   try {
-    const flow = await runInitiatorCompletionOnce(ctx, input.code);
+    const flow = await runInitiatorCompletionOnce(ctx, input.code, input.profiles);
     return pairFlowToolResult(flow);
   } catch {
     const result = {

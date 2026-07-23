@@ -23,6 +23,8 @@ import {
 } from "./pair.js";
 import { assertNoSecrets } from "./util.js";
 
+const ATEST_PROFILES = ["core/1", "nego/1", "atest/1"] as const;
+
 const TEST_PORT = 13110;
 const RELAY_URL = `http://127.0.0.1:${TEST_PORT}`;
 
@@ -141,6 +143,111 @@ describe("mcp pair tools", () => {
 
     expect(alice.allowlist.get(aliceId)).toContain(bobId);
     expect(bob.allowlist.get(bobId)).toContain(aliceId);
+  }, 20000);
+
+  it("bond includes atest/1 when both sides advertise it at pairing", async () => {
+    const alice = await makeAgent("alice-atest");
+    const bob = await makeAgent("bob-atest");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+        profiles: [...ATEST_PROFILES],
+      }),
+    );
+    expect(initResult.ok).toBe(true);
+    if (!initResult.ok) {
+      return;
+    }
+
+    const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(joinQueued.ok).toBe(true);
+    if (!joinQueued.ok) {
+      return;
+    }
+
+    const completeInitPromise = handlePairInitComplete(alice, {
+      code: initResult.code,
+      profiles: [...ATEST_PROFILES],
+    });
+
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
+    const approved = structured(
+      await handleHumanApprove(bob, {
+        pending_id: joinQueued.pending_id,
+        decision: "approve",
+        approval_code: joinApprovalCode,
+        profiles: [...ATEST_PROFILES],
+      }),
+    );
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) {
+      return;
+    }
+
+    const initComplete = await completeInitPromise;
+    expect(initComplete.status).toBe("bonded");
+
+    const aliceKeys = await alice.keyStore.loadOrCreate();
+    const bobKeys = await bob.keyStore.loadOrCreate();
+    const { publicKeyToAgentId } = await import("@agentpair/protocol");
+    const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+    const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+    const bondProfiles = alice.bonds.find(aliceId, bobId)?.profiles;
+    expect(bondProfiles).toEqual(expect.arrayContaining([...ATEST_PROFILES]));
+    expect(bondProfiles).toHaveLength(ATEST_PROFILES.length);
+    expect(bob.bonds.find(bobId, aliceId)?.profiles).toEqual(bondProfiles);
+  }, 20000);
+
+  it("drops atest/1 from bond when only joiner advertises it", async () => {
+    const alice = await makeAgent("alice-nego-only");
+    const bob = await makeAgent("bob-atest-only");
+
+    const initResult = structured(
+      await handlePairInit(alice, {
+        scope: ["session.negotiate"],
+        mode: "bonded_contact",
+      }),
+    );
+    expect(initResult.ok).toBe(true);
+    if (!initResult.ok) {
+      return;
+    }
+
+    const joinQueued = structured(await handlePairJoin(bob, { code: initResult.code }));
+    expect(joinQueued.ok).toBe(true);
+    if (!joinQueued.ok) {
+      return;
+    }
+
+    const completeInitPromise = handlePairInitComplete(alice, { code: initResult.code });
+
+    const joinApprovalCode = readApprovalCodeForAgent(bob, joinQueued.pending_id);
+    const approved = structured(
+      await handleHumanApprove(bob, {
+        pending_id: joinQueued.pending_id,
+        decision: "approve",
+        approval_code: joinApprovalCode,
+        profiles: [...ATEST_PROFILES],
+      }),
+    );
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) {
+      return;
+    }
+
+    await completeInitPromise;
+
+    const aliceKeys = await alice.keyStore.loadOrCreate();
+    const bobKeys = await bob.keyStore.loadOrCreate();
+    const { publicKeyToAgentId, REFERENCE_PROFILES } = await import("@agentpair/protocol");
+    const aliceId = publicKeyToAgentId(aliceKeys.publicKey);
+    const bobId = publicKeyToAgentId(bobKeys.publicKey);
+
+    expect(alice.bonds.find(aliceId, bobId)?.profiles).toEqual([...REFERENCE_PROFILES]);
+    expect(bob.bonds.find(bobId, aliceId)?.profiles).toEqual([...REFERENCE_PROFILES]);
   }, 20000);
 
   it("pair_init auto-completes in background without explicit pair_init_complete", async () => {
