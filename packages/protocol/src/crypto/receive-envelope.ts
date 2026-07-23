@@ -75,15 +75,15 @@ export async function receiveEnvelope(
   selfId: string,
   deps: ReceiveEnvelopeDeps,
 ): Promise<ReceiveEnvelopeResult> {
-  // Step 0: known wire version
+  // Step 1 (§4.3): pre-decode wire size cap — before any JSON.parse
+  if (utf8ToBytes(wire).length > MAX_ENVELOPE_WIRE_BYTES) {
+    return { ok: false, error: "envelope_too_large" };
+  }
+
+  // §4.1 wire version gate (between §4.3 steps 1 and 2)
   const outerVersion = parseOuterVersion(wire);
   if (outerVersion !== null && outerVersion !== 1) {
     return { ok: false, error: "unsupported_version" };
-  }
-
-  // Step 1: pre-decode wire size cap
-  if (utf8ToBytes(wire).length > MAX_ENVELOPE_WIRE_BYTES) {
-    return { ok: false, error: "envelope_too_large" };
   }
 
   // Step 2: strict-decode outer + parse body JSON
