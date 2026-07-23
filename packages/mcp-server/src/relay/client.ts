@@ -9,6 +9,7 @@ import {
   sign,
 } from "@agentpair/protocol";
 import { utf8ToBytes } from "@noble/ciphers/utils.js";
+import { parseRetryAfterMs } from "./inbox-pull-errors.js";
 import { ensurePreflight, observeRelayResponse } from "./preflight.js";
 
 const DEFAULT_RELAY_URL = "http://127.0.0.1:3001";
@@ -166,7 +167,7 @@ export class HttpRelayClient implements PairingRelayClient {
         }>;
         filtered_count?: number;
       }
-    | { ok: false; error: string }
+    | { ok: false; error: string; retry_after_ms?: number }
   > {
     await this.guardPreflight();
     const agentId = publicKeyToAgentId(keyPair.publicKey);
@@ -181,6 +182,14 @@ export class HttpRelayClient implements PairingRelayClient {
     );
     if (challengeRes.status !== 401) {
       this.noteRelayResponse(challengeRes.status);
+      if (challengeRes.status === 429) {
+        const retry_after_ms = parseRetryAfterMs(challengeRes.headers.get("Retry-After"));
+        return {
+          ok: false,
+          error: "inbox_pull_failed_429",
+          ...(retry_after_ms !== undefined ? { retry_after_ms } : {}),
+        };
+      }
       return { ok: false, error: "unexpected_challenge_status" };
     }
 
@@ -198,6 +207,14 @@ export class HttpRelayClient implements PairingRelayClient {
 
     if (!pullRes.ok) {
       this.noteRelayResponse(pullRes.status);
+      if (pullRes.status === 429) {
+        const retry_after_ms = parseRetryAfterMs(pullRes.headers.get("Retry-After"));
+        return {
+          ok: false,
+          error: "inbox_pull_failed_429",
+          ...(retry_after_ms !== undefined ? { retry_after_ms } : {}),
+        };
+      }
       return { ok: false, error: `inbox_pull_failed_${pullRes.status}` };
     }
 
