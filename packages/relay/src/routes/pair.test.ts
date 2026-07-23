@@ -1,3 +1,4 @@
+import { MAX_ENVELOPE_WIRE_BYTES } from "@agentpair/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRelayApp } from "../server.js";
 
@@ -94,5 +95,31 @@ describe("pair relay routes — fixed TTL and §10 error codes", () => {
     expect(missingRes.status).toBe(404);
     const missingBody = (await missingRes.json()) as { error: string };
     expect(missingBody.error).toBe("pair_not_found");
+  });
+
+  it("returns 413 payload_too_large when POST body exceeds pair body limit", async () => {
+    const { app } = createRelayApp();
+    const oversized = "a".repeat(MAX_ENVELOPE_WIRE_BYTES + 1);
+
+    const res = await app.request("/pair/oversized-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: oversized,
+    });
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("payload_too_large");
+  });
+
+  it("accepts POST body at exactly MAX_ENVELOPE_WIRE_BYTES", async () => {
+    const { app } = createRelayApp();
+    const exact = "a".repeat(MAX_ENVELOPE_WIRE_BYTES);
+
+    const res = await app.request("/pair/exact-size-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: exact,
+    });
+    expect(res.status).toBe(204);
   });
 });

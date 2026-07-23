@@ -2,11 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createOuterEnvelope,
   decodeBase64UrlStrict,
   encodeAllowlistPush,
   generateKeyPair,
   publicKeyToAgentId,
+  serializeOuterEnvelope,
 } from "@agentpair/protocol";
+import { utf8ToBytes } from "@noble/ciphers/utils.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRelayApp } from "../server.js";
 import { isSenderAllowed, signChallenge } from "./allowlist.js";
@@ -259,5 +262,77 @@ describe("allowlist relay routes — sign-the-blob cutover", () => {
     expect(res.status).toBe(403);
     const payload = (await res.json()) as { error: string };
     expect(payload.error).toBe("invalid_signature");
+  });
+
+  it("returns false when allowed_json is corrupted (fail-closed)", async () => {
+    const { app, db } = createRelayApp();
+    const body = encodeAllowlistPush(ownerId, [peerId], owner.secretKey);
+
+    const res = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(204);
+
+    db.prepare("UPDATE allowlists SET allowed_json = ? WHERE agent_id = ?").run(
+      "not-json",
+      ownerId,
+    );
+    expect(isSenderAllowed(db, ownerId, peerId)).toBe(false);
+  });
+
+  it("returns false when allowed_json parses to non-array (fail-closed)", async () => {
+    const { app, db } = createRelayApp();
+    const body = encodeAllowlistPush(ownerId, [peerId], owner.secretKey);
+
+    const res = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(204);
+
+    db.prepare("UPDATE allowlists SET allowed_json = ? WHERE agent_id = ?").run(
+      JSON.stringify({ peer: peerId }),
+      ownerId,
+    );
+    expect(isSenderAllowed(db, ownerId, peerId)).toBe(false);
+  });
+
+  it("POST inbox returns 403 recipient_not_allowed when allowlist JSON is corrupted", async () => {
+    const { app, db } = createRelayApp();
+    const body = encodeAllowlistPush(ownerId, [peerId], owner.secretKey);
+
+    const putRes = await app.request(`/allowlist/${ownerId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(putRes.status).toBe(204);
+
+    db.prepare("UPDATE allowlists SET allowed_json = ? WHERE agent_id = ?").run(
+      "not-json",
+      ownerId,
+    );
+
+    const envelope = createOuterEnvelope({
+      sender: peer,
+      recipientAgentId: ownerId,
+      type: "core.msg",
+      thread: "550e8400-e29b-41d4-a716-446655440000",
+      seq: 1,
+      ttl: Math.floor(Date.now() / 1000) + 3600,
+      payload: utf8ToBytes("hello"),
+    });
+
+    const postRes = await app.request(`/inbox/${ownerId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeOuterEnvelope(envelope),
+    });
+    expect(postRes.status).toBe(403);
+    const payload = (await postRes.json()) as { error: string };
+    expect(payload.error).toBe("recipient_not_allowed");
   });
 });

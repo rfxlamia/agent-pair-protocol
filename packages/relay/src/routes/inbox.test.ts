@@ -2588,3 +2588,47 @@ describe("POST /inbox §10 error alignment (M1.5)", () => {
     expect(noRowBody.error).toBe("recipient_not_allowed");
   });
 });
+
+const GET_INBOX_RL_PORT = 13012;
+const GET_INBOX_RL_BASE = `http://127.0.0.1:${GET_INBOX_RL_PORT}`;
+
+describe("GET inbox challenge rate limit (isolated db)", () => {
+  let server: ServerType;
+  const bob = generateKeyPair();
+  const bobId = publicKeyToAgentId(bob.publicKey);
+
+  beforeAll(async () => {
+    const relay = createRelayApp({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 2,
+    });
+
+    await new Promise<void>((resolve) => {
+      server = serve({ fetch: relay.app.fetch, port: GET_INBOX_RL_PORT }, resolve);
+    });
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  it("returns 429 when challenge issuance exceeds rate limit", async () => {
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(`${GET_INBOX_RL_BASE}/inbox/${bobId}?since=0`);
+      expect(res.status).toBe(401);
+    }
+
+    const blocked = await fetch(`${GET_INBOX_RL_BASE}/inbox/${bobId}?since=0`);
+    expect(blocked.status).toBe(429);
+    const body = (await blocked.json()) as { error: string };
+    expect(body.error).toBe("rate_limit_exceeded");
+  });
+});

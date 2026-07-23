@@ -398,7 +398,7 @@ export function createInboxRoutes(
     },
   );
 
-  routes.get("/inbox/:agentId", (c) => {
+  routes.get("/inbox/:agentId", rateLimit, (c) => {
     maybeGarbageCollectInbox(db, inboxGcState);
     const agentId = c.req.param("agentId");
     const since = normalizeSince(Number(c.req.query("since") ?? "0"));
