@@ -9,6 +9,7 @@ import { handleArtifactPut } from "./tools/artifact-put.js";
 import { handleAtestRun } from "./tools/atest-run.js";
 import { humanApproveInputSchema } from "./tools/human-approve-schema.js";
 import { handleHumanApprove } from "./tools/human-approve.js";
+import { handleInboxWait } from "./tools/inbox-wait.js";
 import { handleClose, handleInbox, handleSend } from "./tools/inbox.js";
 import { handleListBonds } from "./tools/list-bonds.js";
 import { pairInitCompleteInputSchema, pairInitInputSchema } from "./tools/pair-input-schema.js";
@@ -29,6 +30,7 @@ import {
 } from "./tools/session.js";
 import {
   INBOX_TOOL_DESCRIPTION,
+  INBOX_WAIT_TOOL_DESCRIPTION,
   SESSION_STATUS_TOOL_DESCRIPTION,
 } from "./tools/tool-descriptions.js";
 
@@ -111,6 +113,29 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): {
       },
     },
     async (input) => handleInbox(context, input),
+  );
+
+  server.registerTool(
+    "inbox_wait",
+    {
+      title: "Wait for inbox",
+      description: INBOX_WAIT_TOOL_DESCRIPTION,
+      inputSchema: {
+        timeout_ms: z
+          .number()
+          .optional()
+          .describe("Maximum wait in milliseconds; clamped to 55s; defaults to 30000"),
+        since: z
+          .number()
+          .optional()
+          .describe("Relay rowid cursor; defaults to last persisted cursor"),
+        include_history: z
+          .boolean()
+          .optional()
+          .describe("When true, return envelopes from all senders (debug); default false"),
+      },
+    },
+    async (input) => handleInboxWait(context, input),
   );
 
   server.registerTool(
