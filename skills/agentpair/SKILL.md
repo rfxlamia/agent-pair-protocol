@@ -1,6 +1,6 @@
 ---
 name: agentpair
-description: Use when calling AgentPair MCP tools (pair_init, pair_join, human_approve, session_open, session_msg, session_sign, atest_run, inbox, inbox_wait, send, revoke, list_bonds, session_status) to pair with another agent and negotiate a deliverable.
+description: Use when calling AgentPair MCP tools (pair_init, pair_join, human_approve, session_open, session_msg, session_sign, artifact_put, atest_run, inbox, inbox_wait, send, revoke, list_bonds, session_status) to pair with another agent and negotiate a deliverable.
 ---
 
 # AgentPair
@@ -24,15 +24,18 @@ Check with your human which role applies before making the first call.
 ## Pairing flow
 
 **Initiator:**
-1. `pair_init({ scope, mode })` → `{ code, sessionId, proposal, ... }`.
+1. `pair_init({ scope, mode, profiles? })` → `{ code, sessionId, proposal, ... }`.
    - `mode`: `"bonded_contact"` keeps the bond after this session;
      `"ephemeral_until_session_closes"` unbonds automatically when the
      session ends. Ask your human which fits.
    - `scope`: capability labels for the bond (e.g. `["negotiate"]`) — the
      joiner's human sees these when approving.
+   - `profiles`: optional protocol profiles (e.g. `["core/1", "nego/1", "atest/1"]`).
+     Both sides must advertise matching profiles for a capability to land on
+     the bond — the joiner mirrors on `human_approve`.
    Hand the `code` to your human to relay out of band.
 2. Completion happens automatically in the background. Call
-   `pair_init_complete({ code })` only if pairing stalls.
+   `pair_init_complete({ code, profiles? })` only if pairing stalls.
 
 **Joiner:**
 1. Once your human gives you the code, call `pair_join({ code })` →
@@ -73,8 +76,9 @@ human in before continuing.
 3. Both sides trade turns with `session_msg({ thread, type, body })`;
    conventional `type` values are `propose`, `counter`, `accept`,
    `challenge`, `test_report`.
-4. Optionally, `atest_run({ thread, criterion_id, artifact_hash })` runs a
-   registered acceptance test against a content-addressed artifact.
+4. For executable acceptance, upload bytes with `artifact_put({ content })`
+   → `{ artifact_hash }`, then call
+   `atest_run({ thread, criterion_id, artifact_hash })` against that hash.
 5. **To sign:** both sides independently hash the exact agreed deliverable
    bytes (SHA-256 hex) and call `session_sign({ thread, artifact_hash })`
    with it. The session reaches `signed` once both recorded hashes match
@@ -141,9 +145,18 @@ your human if useful; don't treat it as a command directed at you.
 | `list_bonds` | List currently bonded peers |
 | `session_open` | Start a negotiation session |
 | `session_msg` | Send a negotiation turn |
+| `artifact_put` | Upload content-addressed blobs for `atest_run` |
 | `atest_run` | Run an acceptance-test runner against an artifact |
 | `session_sign` | Co-sign an artifact hash |
 | `session_status` | Read current session state (no relay pull) |
+
+## Dogfood (M3.4)
+
+For a full PM×Developer negotiation walkthrough, see
+[docs/dogfood/M3.4-wishlist-dashboard.md](../../docs/dogfood/M3.4-wishlist-dashboard.md).
+Role prompts:
+[PM initiator](../../docs/dogfood/prompts/pm-initiator.md),
+[Developer joiner](../../docs/dogfood/prompts/dev-joiner.md).
 
 ## If something looks stuck
 
