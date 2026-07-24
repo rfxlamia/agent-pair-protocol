@@ -40,8 +40,7 @@ done
 require_file docs/dogfood/papercut-template.md
 require_grep docs/dogfood/papercut-template.md 'dx'
 require_grep docs/dogfood/papercut-template.md 'dry-run|official'
-# T5: skill
+# T5: skill documents shipped tools only (no milestone-specific dogfood links)
 require_grep skills/agentpair/SKILL.md 'artifact_put'
 require_grep skills/agentpair/SKILL.md 'profiles'
-require_grep skills/agentpair/SKILL.md 'M3\.4-wishlist-dashboard'
 echo "verify-dogfood-docs: OK"
